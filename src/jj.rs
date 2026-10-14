@@ -151,6 +151,11 @@ impl JjOutput {
         std::str::from_utf8(&self.output.stdout).context("JJ output was not valid UTF-8")
     }
 
+    /// Raw file contents, including binary data, from public `jj file show` queries.
+    pub fn stdout_bytes(&self) -> &[u8] {
+        &self.output.stdout
+    }
+
     pub fn trimmed_stdout(&self) -> Result<String> {
         Ok(self.stdout()?.trim().to_owned())
     }

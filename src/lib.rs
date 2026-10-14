@@ -9,6 +9,7 @@ pub mod links;
 pub(crate) mod manager;
 pub(crate) mod metadata;
 pub mod observe;
+pub mod reseed;
 pub(crate) mod ownership;
 pub(crate) mod paths;
 pub(crate) mod shell;
