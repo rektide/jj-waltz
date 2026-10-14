@@ -96,6 +96,9 @@ impl Repo {
             .env("JJ_USER", "Reseed Test")
             .env("JJ_EMAIL", "reseed@example.invalid")
             .env("JJ_EDITOR", "true");
+        if program == "jj" {
+            cmd.args(["--config", "git.colocate=false"]);
+        }
         cmd
     }
 
@@ -240,12 +243,13 @@ impl Repo {
     fn interrupt_reseed(&self, source: &Path, boundary: &str, extra: &[&str]) {
         let proxy = self.temp.path().join(format!("proxy-{boundary}"));
         fs::create_dir(&proxy).unwrap();
-        let real_jj = success(
-            Command::new("sh")
-                .args(["-c", "command -v jj"])
-                .output()
-                .unwrap(),
-        );
+        // A mise shim can rediscover the injected proxy and recurse forever.
+        // Resolve the native executable instead, preserving release-matrix PATH.
+        let real_jj = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|directory| directory.join("jj"))
+            .filter_map(|path| fs::canonicalize(path).ok())
+            .find(|path| path.is_file() && path.file_name().is_none_or(|name| name != "mise"))
+            .expect("native jj executable on PATH");
         let marker = proxy.join("interrupted");
         // Fail only after native JJ succeeds: the operation exists but jw has
         // not received success and therefore may not have recorded its result.
@@ -457,7 +461,15 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
     fs::write(a.join("old-only"), "old\n").unwrap();
     repo.id(&a, "@");
     repo.jj_at(&a, &["bookmark", "create", "feature-bookmark"]);
-    let bookmarks = repo.jj_at(&repo.root, &["bookmark", "list", "-T", "name ++ commit_id"]);
+    let bookmarks = repo.jj_at(
+        &repo.root,
+        &[
+            "bookmark",
+            "list",
+            "-T",
+            "name ++ normal_target.commit_id()",
+        ],
+    );
     let lifecycle = repo.lifecycle();
     assert!(
         !lifecycle.is_empty(),
@@ -508,7 +520,15 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
         );
         assert_eq!(repo.lifecycle(), lifecycle);
         assert_eq!(
-            repo.jj_at(&repo.root, &["bookmark", "list", "-T", "name ++ commit_id"]),
+            repo.jj_at(
+                &repo.root,
+                &[
+                    "bookmark",
+                    "list",
+                    "-T",
+                    "name ++ normal_target.commit_id()"
+                ]
+            ),
             bookmarks
         );
     }
@@ -633,6 +653,7 @@ fn copied_payload_rejects_nested_metadata_and_symlink_parent_escape() {
     fs::create_dir_all(outside.join("pkg/cache")).unwrap();
     fs::write(outside.join("pkg/cache/sentinel"), "untouched").unwrap();
     symlink(&outside, target.join("packages")).unwrap();
+    let before = repo.id(&target, "@");
     repo.unchanged_failure(
         &target,
         repo.reseed(
@@ -653,7 +674,7 @@ fn sparse_target_is_rejected_without_changing_patterns_or_checkout() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
-    repo.jj_at(&target, &["sparse", "set", "--clear", "modified"]);
+    repo.jj_at(&target, &["sparse", "set", "--clear", "--add", "modified"]);
     let before = repo.id(&target, "@");
     let patterns = repo.jj_at(&target, &["sparse", "list"]);
     let root = identity(&target);
@@ -1277,7 +1298,7 @@ fn resume_after_lost_new_result_reuses_created_child_and_preserves_bookmarks() {
             "bookmark",
             "list",
             "-T",
-            "name ++ commit_id",
+            "name ++ normal_target.commit_id()",
         ],
     );
     let root = identity(&target);
@@ -1341,7 +1362,7 @@ fn resume_after_lost_new_result_reuses_created_child_and_preserves_bookmarks() {
                 "bookmark",
                 "list",
                 "-T",
-                "name ++ commit_id"
+                "name ++ normal_target.commit_id()"
             ]
         ),
         bookmarks
