@@ -568,6 +568,99 @@ fn absolute_source_bound_ignored_symlink_is_rejected_or_explicitly_reported() {
 }
 
 #[test]
+fn reset_refuses_to_overwrite_retained_ignored_secret_without_replace_content() {
+    let Some(mut repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::write(target.join(".env"), "target secret\n").unwrap();
+    let before = repo.id(&target, "@");
+    let root = identity(&target);
+    let jj = identity(&target.join(".jj"));
+    repo.jj_at(&source, &["new"]);
+    fs::write(
+        source.join(".gitignore"),
+        "cache/\n.jwreseed.local.toml\npackages/\n",
+    )
+    .unwrap();
+    fs::write(source.join(".env"), "new tracked environment\n").unwrap();
+    repo.baseline = repo.id(&source, "@");
+    repo.unchanged_failure(
+        &target,
+        repo.reseed(&["feature"], &source, &["--at", &repo.baseline]),
+        &before,
+    );
+    assert_eq!(
+        fs::read_to_string(target.join(".env")).unwrap(),
+        "target secret\n"
+    );
+    assert_eq!(identity(&target), root);
+    assert_eq!(identity(&target.join(".jj")), jj);
+    success(repo.reseed(
+        &["feature"],
+        &source,
+        &["--at", &repo.baseline, "--replace-content"],
+    ));
+    assert_eq!(
+        fs::read_to_string(target.join(".env")).unwrap(),
+        "new tracked environment\n"
+    );
+    assert_eq!(repo.id(&target, "@-"), repo.baseline);
+    assert_eq!(identity(&target), root);
+    assert_eq!(identity(&target.join(".jj")), jj);
+}
+
+#[test]
+fn reset_refuses_retained_ignored_directory_obstructing_new_tracked_file() {
+    let Some(mut repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::write(
+        target.join(".gitignore"),
+        "cache/\n.env\n.jwreseed.local.toml\npackages/\nobstruction/\n",
+    )
+    .unwrap();
+    let before = repo.id(&target, "@");
+    fs::create_dir(target.join("obstruction")).unwrap();
+    fs::write(
+        target.join("obstruction/private"),
+        "retained untracked content\n",
+    )
+    .unwrap();
+    let root = identity(&target);
+    let jj = identity(&target.join(".jj"));
+    repo.jj_at(&source, &["new"]);
+    fs::write(source.join("obstruction"), "new tracked file\n").unwrap();
+    repo.baseline = repo.id(&source, "@");
+    repo.unchanged_failure(
+        &target,
+        repo.reseed(&["feature"], &source, &["--at", &repo.baseline]),
+        &before,
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("obstruction/private")).unwrap(),
+        "retained untracked content\n"
+    );
+    success(repo.reseed(
+        &["feature"],
+        &source,
+        &["--at", &repo.baseline, "--replace-content"],
+    ));
+    assert_eq!(
+        fs::read_to_string(target.join("obstruction")).unwrap(),
+        "new tracked file\n"
+    );
+    assert_eq!(repo.id(&target, "@-"), repo.baseline);
+    assert_eq!(identity(&target), root);
+    assert_eq!(identity(&target.join(".jj")), jj);
+}
+
+#[test]
 fn local_groups_deduplicate_and_cli_can_disable_configured_ignored_copy() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
