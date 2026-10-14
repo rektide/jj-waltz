@@ -346,6 +346,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             );
         }
         let source_entries = entries(&source_client, &source_operation, &source_commit)?;
+        let source_stamp = stamp(&source)?;
         verify_disk(
             &source_client,
             &source_operation,
@@ -353,7 +354,6 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             &source,
             &source_entries,
         )?;
-        let source_stamp = stamp(&source)?;
         let base = request
             .at
             .as_ref()
@@ -378,6 +378,9 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
         for path in &ignored {
             source_rules.require_ignored(path)?;
             cow::validate_tree(&source.join(path))?;
+        }
+        if stamp(&source)? != source_stamp || current_commit(&source_client)?.1 != source_wc {
+            bail!("source changed during initial verified capture; pause writers before retrying");
         }
         let facts = client.workspace_target_facts_at(&operation)?;
         for name in &names {
@@ -1779,6 +1782,8 @@ fn validate_identities(plan: &Pending) -> Result<()> {
 }
 
 fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
+    plan.source_identity.verify(&plan.source)?;
+    plan.source_jj_identity.verify(&plan.source.join(".jj"))?;
     if link_config_bytes(&plan.config_root)? != plan.link_config {
         bail!("workspace link configuration changed since frozen plan; pending retained");
     }
@@ -1787,38 +1792,57 @@ fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
     let operation = source.operation_id()?;
     let current = source.resolve_one_at(&operation, "@")?.commit_id;
     let before = stamp(&plan.source)?;
-    if !resume && (current != plan.validated_source_wc_commit || before != plan.source_stamp) {
+    let unchanged = current == plan.validated_source_wc_commit && before == plan.source_stamp;
+    if !resume && !unchanged {
         bail!("source contents changed; restore the frozen source before --resume");
     }
-    if resume && !changed_paths(&source, &operation, &current, &plan.source_commit)?.is_empty() {
-        bail!("source tracked revision differs from the frozen tree; restore it before --resume");
+    // Reuse only a previously verified tree/payload bound to exact filesystem
+    // stamps and WC identity. Changed source recovery still performs the full
+    // frozen byte/type/mode and dependency digest proof before updating stamps.
+    if !unchanged || !plan.ignored.is_empty() {
+        let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
+        if !unchanged {
+            if !changed_paths(&source, &operation, &current, &plan.source_commit)?.is_empty() {
+                bail!(
+                    "source tracked revision differs from the frozen tree; restore it before --resume"
+                );
+            }
+            #[cfg(test)]
+            SOURCE_LOGICAL_CHECKS.with(|count| count.set(count.get() + 1));
+            verify_disk(
+                &source,
+                &plan.source_operation,
+                &plan.source_commit,
+                &plan.source,
+                &entries,
+            )?;
+            if payload_digest(&plan.source, &plan.ignored)? != plan.source_payload_digest {
+                bail!(
+                    "source ignored payload differs from the frozen plan; restore its bytes/types/modes before --resume"
+                );
+            }
+        }
+        if !plan.ignored.is_empty() {
+            // Backend/global excludes live outside the source tree stamp. Read
+            // their effective rules again even when tracked/payload bytes are
+            // reusable; do not cache authorization to copy ignored data.
+            let rules = IgnoreRules::new(
+                &source,
+                &plan.source_operation,
+                &plan.source_commit,
+                &entries,
+                true,
+            )?;
+            for path in &plan.ignored {
+                rules.require_ignored(path)?;
+            }
+        }
     }
-    let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
-    verify_disk(
-        &source,
-        &plan.source_operation,
-        &plan.source_commit,
-        &plan.source,
-        &entries,
-    )?;
-    let rules = IgnoreRules::new(
-        &source,
-        &plan.source_operation,
-        &plan.source_commit,
-        &entries,
-        true,
-    )?;
-    for path in &plan.ignored {
-        rules.require_ignored(path)?;
-    }
-    if payload_digest(&plan.source, &plan.ignored)? != plan.source_payload_digest {
-        bail!(
-            "source ignored payload differs from the frozen plan; restore its bytes/types/modes before --resume"
-        );
-    }
-    if stamp(&plan.source)? != before {
+    if stamp(&plan.source)? != before || current_commit(&source)?.1 != current {
         bail!("source changed during content validation; pause writers before retrying");
     }
+    plan.source_identity.verify(&plan.source)?;
+    plan.source_jj_identity.verify(&plan.source.join(".jj"))?;
     if resume {
         plan.source_stamp = before;
         plan.validated_source_wc_commit = current;
@@ -2259,6 +2283,7 @@ thread_local! {
     static FAIL_AFTER_EXPANSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_NEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_DURING_REPAIR: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SOURCE_LOGICAL_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 fn fault(phase: Phase) -> Result<()> {
     #[cfg(test)]
@@ -2927,6 +2952,77 @@ mod tests {
             b"fresh dependency\n"
         );
         assert!(store.pending("worker").unwrap().is_none());
+    }
+
+    #[test]
+    fn unchanged_verified_source_reuses_proof_but_changes_require_logical_restoration() {
+        let Some((_temporary, _store, mut plan)) = fixture(false) else {
+            return;
+        };
+        SOURCE_LOGICAL_CHECKS.with(|count| count.set(0));
+        validate_source(&mut plan, false).unwrap();
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 0);
+        fs::write(plan.source.join("shared"), b"changed tracked bytes\n").unwrap();
+        assert!(validate_source(&mut plan, false).is_err());
+        assert!(validate_source(&mut plan, true).is_err());
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 1);
+        fs::write(plan.source.join("shared"), b"shared baseline\n").unwrap();
+        validate_source(&mut plan, true).unwrap();
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 2);
+        validate_source(&mut plan, false).unwrap();
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 2);
+        fs::write(
+            plan.source.join("cache/dependency"),
+            b"changed ignored dependency\n",
+        )
+        .unwrap();
+        assert!(validate_source(&mut plan, false).is_err());
+        assert!(validate_source(&mut plan, true).is_err());
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 3);
+        fs::write(plan.source.join("cache/dependency"), b"fresh dependency\n").unwrap();
+        validate_source(&mut plan, true).unwrap();
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 4);
+        validate_source(&mut plan, false).unwrap();
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 4);
+    }
+
+    #[test]
+    fn verified_source_fast_path_still_rechecks_backend_ignored_rules() {
+        let Some((_temporary, _store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let source = JjClient::new(&plan.source);
+        source.run(["new"]).unwrap();
+        let selected = PathBuf::from(format!("jw-private-cache-{}", std::process::id()));
+        fs::rename(plan.source.join("cache"), plan.source.join(&selected)).unwrap();
+        fs::write(plan.source.join(".gitignore"), ".env\n").unwrap();
+        let backend = PathBuf::from(
+            source
+                .run(["--ignore-working-copy", "git", "root"])
+                .unwrap()
+                .trimmed_stdout()
+                .unwrap(),
+        );
+        fs::create_dir_all(backend.join("info")).unwrap();
+        let exclude = backend.join("info/exclude");
+        fs::write(&exclude, format!("{}/\n", selected.display())).unwrap();
+        snapshot(&source).unwrap();
+        let (operation, commit) = current_commit(&source).unwrap();
+        let source_entries = entries(&source, &operation, &commit).unwrap();
+        verify_disk(&source, &operation, &commit, &plan.source, &source_entries).unwrap();
+        plan.source_operation = operation;
+        plan.source_commit = commit.clone();
+        plan.source_wc_commit = commit.clone();
+        plan.validated_source_wc_commit = commit;
+        plan.ignored = vec![selected];
+        plan.source_payload_digest = payload_digest(&plan.source, &plan.ignored).unwrap();
+        plan.source_stamp = stamp(&plan.source).unwrap();
+        SOURCE_LOGICAL_CHECKS.with(|count| count.set(0));
+        validate_source(&mut plan, false).unwrap();
+        fs::write(exclude, "").unwrap();
+        assert_eq!(stamp(&plan.source).unwrap(), plan.source_stamp);
+        assert!(validate_source(&mut plan, false).is_err());
+        assert_eq!(SOURCE_LOGICAL_CHECKS.with(std::cell::Cell::get), 0);
     }
 
     #[test]
