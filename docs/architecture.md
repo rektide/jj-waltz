@@ -191,6 +191,15 @@ An interrupted target is resumed from its pending record before ordinary
 snapshotting; partial prefill must never become intended user history. Batch
 recovery does not use repository-wide undo.
 
+Stock JJ rejects sparse mutation with `--ignore-working-copy`. Recovery therefore
+reconstructs and verifies the entire recorded desired tracked tree before a normal
+sparse-clear command can snapshot it. Identical files come from the frozen source;
+other recovery bytes come from frozen public JJ file queries. Sparse expansion
+runs normally while sparse-empty, where staged prefills are outside the snapshot
+selection. Scoped `snapshot.auto-track=none()` prevents unrelated retained files
+from entering the desired change. This is a public-CLI recovery protocol, not an
+import of JJ's private working-copy state.
+
 See the [operator guide](reseed.md) and
 [design](../design/workspace-reseed/reseed0.gpt6a.md) for policy and limitations.
 

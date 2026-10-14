@@ -382,7 +382,7 @@ struct ReseedCommand {
     /// Validate and explain the selected operation without reseeding files.
     #[arg(long)]
     dry_run: bool,
-    /// Finish recorded interrupted operations before snapshotting target files.
+    /// Safely finish an interrupted operation using its frozen pending plan.
     #[arg(long, conflicts_with_all = ["source", "source_at", "groups"])]
     resume: bool,
 }

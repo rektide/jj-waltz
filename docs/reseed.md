@@ -24,8 +24,9 @@ It neither fetches upstream changes nor installs dependencies.
 
 ## One-off use
 
-**No groups or configuration are required.** Prepare a source checkout whose
-tracked files match a baseline revision, then name the workspace to refill:
+**No groups or configuration are required.** Prepare a source workspace in the
+same JJ repository whose tracked files match a baseline revision, then name the
+workspace to refill:
 
 ```sh
 jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin'
@@ -62,6 +63,8 @@ jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin' \
 
 Quote patterns so your shell does not expand them. Selections must be ignored in
 the source and target and cannot overlap tracked files or administrative paths.
+Directory patterns support literal components, `*`, `?`, and recursive `**`;
+they never traverse symlinked directories.
 Missing matches are reported as skipped. Selected roots are **replaced**, so old
 entries disappear. They are not hard links or shared-directory symlinks: edits in
 one checkout do not alter the other.
@@ -117,6 +120,15 @@ identities are rejected. A colocated source is permitted; its metadata is never
 copied. Unsupported reflinking fails before clearing files rather than silently
 falling back to an ordinary copy. Watchman-enabled mutation is not supported.
 Resolve stale targets explicitly with JJ before retrying.
+
+`--from` names a workspace root. A relative CLI path is resolved from the calling
+directory; a relative configured `source` is resolved from the default workspace.
+Both the source path and `source_at` must be supplied explicitly or through the
+local configuration.
+
+The Git executable is used for isolated ignore-rule probes, including nested
+`.gitignore` files and backend/global excludes. These probes do not create Git
+metadata in a target workspace.
 
 `--dry-run` validates and reports the plan without clearing or refilling target
 contents. Planning can snapshot working copies to freeze their tracked work.
