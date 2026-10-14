@@ -3,9 +3,10 @@ use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -96,6 +97,8 @@ struct Pending {
     replace_content: bool,
     phase: Phase,
     source_stamp: Vec<Stamp>,
+    source_payload_digest: String,
+    validated_source_wc_commit: String,
     target_stamp: Vec<Stamp>,
     config_root: PathBuf,
     link_config: Vec<(String, Option<Vec<u8>>)>,
@@ -218,7 +221,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             );
         }
         for name in &names {
-            let pending = store
+            let mut pending = store
                 .pending(name)?
                 .with_context(|| format!("no pending reseed for {name}"))?;
             if inventory.root(name)?.canonicalize()? != pending.root
@@ -237,7 +240,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             validate_identities(&pending)?;
             ensure_quiescence(&JjClient::new(&pending.source))?;
             ensure_quiescence(&JjClient::new(&pending.root))?;
-            validate_source(&pending)?;
+            validate_source(&mut pending, true)?;
             validate_contents(&pending.root, false)?;
             cow::probe_between(&pending.source, &pending.root)?;
             plans.push(pending);
@@ -258,6 +261,8 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             .context("reseed requires --from or source in .jwreseed.local.toml")?;
         let source = if raw_source.is_absolute() {
             raw_source.clone()
+        } else if request.source.is_some() {
+            client.cwd().join(raw_source)
         } else {
             default.join(raw_source)
         }
@@ -277,6 +282,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
         }
         ensure_quiescence(&source_client)?;
         require_full(&source_client)?;
+        require_snapshot_disabled_sparse(&source_client)?;
         validate_contents(&source, true)?;
         let mut roots = BTreeSet::new();
         for name in &names {
@@ -295,7 +301,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             snapshot(&JjClient::new(root))?;
         }
         let operation = client.operation_id()?;
-        let source_operation = source_client.operation_id()?;
+        let source_operation = operation.clone();
         let source_wc = source_client
             .resolve_one_at(&source_operation, "@")?
             .commit_id;
@@ -304,7 +310,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             .as_ref()
             .or(config.source_at.as_ref())
             .map(String::as_str)
-            .unwrap_or("@");
+            .context("reseed requires --source-at or source_at in .jwreseed.local.toml")?;
         let source_commit = source_client
             .resolve_one_at(&source_operation, source_rev)?
             .commit_id;
@@ -343,6 +349,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             request.copy_ignored.as_slice()
         };
         let (ignored, skipped) = expand_ignored(&source, ignored_patterns)?;
+        let source_payload_digest = payload_digest(&source, &ignored)?;
         let source_rules = IgnoreRules::new(
             &source_client,
             &source_operation,
@@ -436,6 +443,8 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
                 replace_content: request.replace_content,
                 phase: Phase::Prepared,
                 source_stamp: source_stamp.clone(),
+                source_payload_digest: source_payload_digest.clone(),
+                validated_source_wc_commit: source_wc.clone(),
                 target_stamp: stamp(&root)?,
                 config_root: default.clone(),
                 link_config: link_config_bytes(&default)?,
@@ -454,13 +463,21 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             report.targets.push(ReseedOutcome {
                 name: plan.name.clone(),
                 status: ReseedStatus::Planned,
-                message: describe(&plan),
+                message: describe(&plan, true),
             });
             continue;
         }
+        let started = std::time::Instant::now();
         let outcome = execute(&store, &default, &mut plan, request.resume);
         let (status, message) = match outcome {
-            Ok(()) => (ReseedStatus::Succeeded, describe(&plan)),
+            Ok(()) => (
+                ReseedStatus::Succeeded,
+                format!(
+                    "{}; elapsed {} ms",
+                    describe(&plan, false),
+                    started.elapsed().as_millis()
+                ),
+            ),
             Err(error) => (
                 if store.pending(&plan.name)?.is_some() {
                     ReseedStatus::Pending
@@ -580,8 +597,8 @@ fn selections(request: &ReseedRequest, config: &LocalConfig) -> Result<Vec<Strin
         bail!("reseed requires literal workspace names or --group; never selects all implicitly");
     }
     for name in &names {
-        if name.is_empty() || ["@", "^", "-"].contains(&name.as_str()) || name.contains('\0') {
-            bail!("reseed requires literal workspace names, not selectors");
+        if name.is_empty() || name.contains('\0') {
+            bail!("reseed requires a nonempty literal workspace name without NUL");
         }
     }
     Ok(names)
@@ -622,9 +639,11 @@ fn validate_target(
         bail!("workspace {name} has external/colocated ownership");
     }
     crate::ownership::ensure_removal_allowed(client, name, Some(root), record.as_ref())?;
-    let target = JjClient::new(root);
-    let names = target.current_workspace_target_names()?;
-    if names.as_slice() != [name] {
+    // Several workspaces can deliberately point at the same commit. Commit-level
+    // current-working-copy predicates alone therefore do not identify a root.
+    if context.jj.workspace_name.as_deref() != Some(name)
+        || context.jj.workspace_root.as_deref() != Some(root)
+    {
         bail!("workspace root registration does not uniquely match {name}");
     }
     Ok(())
@@ -667,6 +686,20 @@ fn require_full(client: &JjClient) -> Result<()> {
             client.cwd().display()
         );
     }
+    Ok(())
+}
+
+fn require_snapshot_disabled_sparse(client: &JjClient) -> Result<()> {
+    // Adding the existing full pattern is nondestructive. Probe real behavior,
+    // not --help (JJ advertises the global flag even when sparse rejects it).
+    let output = client.run_unchecked(["--ignore-working-copy", "sparse", "set", "--add", "."])?;
+    if !output.success() {
+        bail!(
+            "JJ lacks snapshot-disabled sparse mutation required for safe reseed recovery; no target was changed: {}",
+            output.stderr()
+        );
+    }
+    diagnostics(output.stderr());
     Ok(())
 }
 
@@ -914,6 +947,59 @@ fn stamp(root: &Path) -> Result<Vec<Stamp>> {
     Ok(stamps)
 }
 
+/// Logical dependency snapshot identity survives inode/ctime changes when an
+/// operator restores the frozen source. Administrative and special files never
+/// become digest input (the same strict validation precedes hashing and copying).
+fn payload_digest(root: &Path, paths: &[PathBuf]) -> Result<String> {
+    fn visit(root: &Path, relative_path: &Path, hash: &mut Sha256) -> Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        relative(relative_path)?;
+        confined_parents(root, relative_path)?;
+        let path = root.join(relative_path);
+        let m = fs::symlink_metadata(&path)?;
+        let name = relative_path.as_os_str().as_bytes();
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name);
+        hash.update((m.mode() & 0o7777).to_le_bytes());
+        if m.is_dir() {
+            hash.update(b"D");
+            let mut children = fs::read_dir(&path)?.collect::<std::io::Result<Vec<_>>>()?;
+            children.sort_by_key(|e| e.file_name());
+            hash.update((children.len() as u64).to_le_bytes());
+            for child in children {
+                visit(root, &relative_path.join(child.file_name()), hash)?;
+            }
+        } else if m.is_file() {
+            hash.update(b"F");
+            hash.update(m.len().to_le_bytes());
+            let mut file = File::open(path)?;
+            let mut buffer = [0; 65536];
+            loop {
+                let count = file.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                hash.update(&buffer[..count]);
+            }
+        } else if m.file_type().is_symlink() {
+            hash.update(b"L");
+            let target = fs::read_link(path)?;
+            let target = target.as_os_str().as_bytes();
+            hash.update((target.len() as u64).to_le_bytes());
+            hash.update(target);
+        } else {
+            bail!("unsupported dependency entry: {}", path.display());
+        }
+        Ok(())
+    }
+    let mut hash = Sha256::new();
+    for path in paths {
+        cow::validate_tree(&root.join(path))?;
+        visit(root, path, &mut hash)?;
+    }
+    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 fn overlap(left: &Path, right: &Path) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
@@ -995,20 +1081,52 @@ fn preflight_links(
     Ok(())
 }
 
-fn describe(plan: &Pending) -> String {
+fn describe(plan: &Pending, planned: bool) -> String {
     let mode = plan
         .base_commit
         .as_ref()
         .map(|id| format!("new child of {id}"))
         .unwrap_or_else(|| format!("keep {}", plan.old_commit));
+    let clone_bytes: u64 = plan
+        .source_stamp
+        .iter()
+        .filter(|s| plan.clones.contains(&s.path) && s.mode & 0o170000 == 0o100000)
+        .map(|s| s.size)
+        .sum();
+    let payload = plan
+        .source_stamp
+        .iter()
+        .filter(|s| {
+            plan.ignored.iter().any(|p| s.path.starts_with(p)) && s.mode & 0o170000 == 0o100000
+        })
+        .collect::<Vec<_>>();
+    let ignored_bytes: u64 = payload.iter().map(|s| s.size).sum();
     format!(
-        "{mode}; {} tracked paths reflinked, {} ignored roots replaced{}{}",
-        plan.clones.len(),
-        plan.ignored.len(),
-        if plan.replace_content {
-            "; replace all non-administrative content"
+        "root {}; {mode}; {} {} tracked paths ({clone_bytes} bytes), {} {} paths; {} ignored roots [{}] ({} files, {ignored_bytes} bytes); {}{}",
+        plan.root.display(),
+        if planned {
+            "would reflink"
         } else {
-            ""
+            "reflinked"
+        },
+        plan.clones.len(),
+        if planned {
+            "JJ would materialize"
+        } else {
+            "JJ materialized"
+        },
+        plan.entries.len().saturating_sub(plan.clones.len()),
+        if planned { "would replace" } else { "replaced" },
+        plan.ignored
+            .iter()
+            .map(|p| format!("{:?}", p))
+            .collect::<Vec<_>>()
+            .join(", "),
+        payload.len(),
+        if plan.replace_content {
+            "replace all non-administrative content"
+        } else {
+            "retain unrelated ignored/untracked content"
         },
         if plan.skipped.is_empty() {
             String::new()
@@ -1348,18 +1466,20 @@ fn validate_identities(plan: &Pending) -> Result<()> {
     Ok(())
 }
 
-fn validate_source(plan: &Pending) -> Result<()> {
+fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
     if link_config_bytes(&plan.config_root)? != plan.link_config {
         bail!("workspace link configuration changed since frozen plan; pending retained");
     }
     let source = JjClient::new(&plan.source);
     require_full(&source)?;
     let operation = source.operation_id()?;
-    if source.resolve_one_at(&operation, "@")?.commit_id != plan.source_wc_commit {
-        bail!("source revision changed; restore the frozen source before --resume");
-    }
-    if stamp(&plan.source)? != plan.source_stamp {
+    let current = source.resolve_one_at(&operation, "@")?.commit_id;
+    let before = stamp(&plan.source)?;
+    if !resume && (current != plan.validated_source_wc_commit || before != plan.source_stamp) {
         bail!("source contents changed; restore the frozen source before --resume");
+    }
+    if resume && !changed_paths(&source, &operation, &current, &plan.source_commit)?.is_empty() {
+        bail!("source tracked revision differs from the frozen tree; restore it before --resume");
     }
     let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
     verify_disk(
@@ -1378,6 +1498,18 @@ fn validate_source(plan: &Pending) -> Result<()> {
     )?;
     for path in &plan.ignored {
         rules.require_ignored(path)?;
+    }
+    if payload_digest(&plan.source, &plan.ignored)? != plan.source_payload_digest {
+        bail!(
+            "source ignored payload differs from the frozen plan; restore its bytes/types/modes before --resume"
+        );
+    }
+    if stamp(&plan.source)? != before {
+        bail!("source changed during content validation; pause writers before retrying");
+    }
+    if resume {
+        plan.source_stamp = before;
+        plan.validated_source_wc_commit = current;
     }
     Ok(())
 }
@@ -1419,7 +1551,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         bail!("default workspace changed since frozen plan");
     }
     validate_identities(plan)?;
-    validate_source(plan)?;
+    validate_source(plan, resume)?;
     let client = JjClient::new(&plan.root);
     ensure_quiescence(&client)?;
     validate_contents(&plan.root, false)?;
@@ -1448,16 +1580,23 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             );
         }
         store.save(plan)?;
+    } else if plan.phase == Phase::Prepared {
+        require_full(&client)?;
+        if stamp(&plan.root)? != plan.target_stamp {
+            bail!(
+                "target contents changed after pending preparation; refused without deleting or snapshotting them"
+            );
+        }
     }
     // Remove placeholder prefills before clearing sparsity. A failed expansion
     // can leave JJ unable to delete a modified placeholder; both operations are
     // snapshot-disabled and followed by exact planned-path removal.
+    transition(store, plan, Phase::Clearing)?;
     if resume {
         for path in &plan.clones {
             remove_recorded_file(&plan.root, path, true)?;
         }
     }
-    transition(store, plan, Phase::Clearing)?;
     let output = client.run([
         "--ignore-working-copy",
         "--config=fsmonitor.backend=none",
@@ -1508,7 +1647,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         }
     }
     transition(store, plan, Phase::Filling)?;
-    validate_source(plan)?;
+    validate_source(plan, resume)?;
     for path in &plan.clones {
         confined_parents(&plan.root, path)?;
     }
@@ -1559,12 +1698,13 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         &rules,
     )?;
     transition(store, plan, Phase::CopyingIgnored)?;
-    validate_source(plan)?;
+    validate_source(plan, resume)?;
     for path in &plan.ignored {
         confined_parents(&plan.root, path)?;
         cow::remove_path(&plan.root.join(path))?;
         cow::clone_tree(&plan.source.join(path), &plan.root.join(path))?;
     }
+    validate_source(plan, resume)?;
     let link_report = links::apply_workspace_links(default, &plan.root)?;
     if link_report.has_entries() {
         plan.skipped.push(format!(
@@ -1669,15 +1809,16 @@ mod tests {
             ["b", "one-off", "a"]
         );
         assert!(selections(&ReseedRequest::default(), &config).is_err());
-        assert!(
+        assert_eq!(
             selections(
                 &ReseedRequest {
-                    names: vec!["@".into()],
+                    names: vec!["@".into(), "^".into(), "-".into()],
                     ..Default::default()
                 },
                 &config
             )
-            .is_err()
+            .unwrap(),
+            ["@", "^", "-"]
         );
     }
 
@@ -1808,8 +1949,8 @@ mod tests {
             source_wc_commit: source_commit.clone(),
             target_operation: operation.clone(),
             old_commit: old.clone(),
-            desired_commit: old,
-            base_commit: reset.then_some(source_commit),
+            desired_commit: old.clone(),
+            base_commit: reset.then_some(source_commit.clone()),
             sparse: vec![".".into()],
             clones,
             entries: target_entries,
@@ -1823,6 +1964,8 @@ mod tests {
             replace_content: false,
             phase: Phase::Prepared,
             source_stamp: stamp(&source).unwrap(),
+            source_payload_digest: payload_digest(&source, &["cache".into()]).unwrap(),
+            validated_source_wc_commit: source_commit.clone(),
             target_stamp: stamp(&target).unwrap(),
             config_root: source.clone(),
             link_config: link_config_bytes(&source).unwrap(),
@@ -1939,5 +2082,48 @@ mod tests {
         rules.require_ignored(Path::new("backend-cache")).unwrap();
         assert!(rules.require_ignored(Path::new("unignored")).is_err());
         assert!(rules.require_ignored_file(Path::new("cache")).is_err());
+    }
+
+    #[test]
+    fn prepared_resume_refuses_new_unsnapshotted_target_edits() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let default = plan.source.clone();
+        store.save(&plan).unwrap();
+        fs::write(plan.root.join("shared"), "new user work\n").unwrap();
+        let error = execute(&store, &default, &mut plan, true).unwrap_err();
+        assert!(format!("{error:#}").contains("target contents changed after pending preparation"));
+        assert_eq!(
+            fs::read(plan.root.join("shared")).unwrap(),
+            b"new user work\n"
+        );
+        assert_eq!(
+            store.pending("worker").unwrap().unwrap().phase,
+            Phase::Prepared
+        );
+    }
+
+    #[test]
+    fn restored_ignored_bytes_can_resume_despite_new_inode_and_ctime() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let default = plan.source.clone();
+        FAIL_AFTER_EXPANSION.with(|f| f.set(true));
+        assert!(execute(&store, &default, &mut plan, false).is_err());
+        FAIL_AFTER_EXPANSION.with(|f| f.set(false));
+        let dependency = plan.source.join("cache/dependency");
+        fs::write(&dependency, "changed dependencies\n").unwrap();
+        let mut pending = store.pending("worker").unwrap().unwrap();
+        assert!(execute(&store, &default, &mut pending, true).is_err());
+        fs::remove_file(&dependency).unwrap();
+        fs::write(&dependency, b"fresh dependency\n").unwrap();
+        execute(&store, &default, &mut pending, true).unwrap();
+        assert_eq!(
+            fs::read(pending.root.join("cache/dependency")).unwrap(),
+            b"fresh dependency\n"
+        );
+        assert!(store.pending("worker").unwrap().is_none());
     }
 }
