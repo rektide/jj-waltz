@@ -877,6 +877,10 @@ fn resume_after_sparse_expansion_does_not_snapshot_partial_prefill() {
     // Model an incomplete/invalid prefill at the expanded-but-unsnapshotted
     // boundary. Do not run an ordinary JJ command before recovery.
     fs::write(target.join("shared"), "partial prefill\n").unwrap();
+    // This differs from the source and was materialized by JJ, not cloned.
+    // Recovery must reconstruct frozen target bytes for both kinds of paths
+    // before a normal sparse mutation can snapshot the expanded checkout.
+    fs::write(target.join("modified"), "corrupted materialized feature\n").unwrap();
     success(
         repo.jw(&repo.root)
             .args(["reseed", "--resume", "feature"])
