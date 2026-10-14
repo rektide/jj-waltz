@@ -6,10 +6,12 @@
 //! workspace with empty sparse patterns, clones the source's tracked files into
 //! it, and lets JJ reconcile them against the creation base.
 //!
-//! The reseed helpers (`probe_between`, `validate_tree`, `clone_tree`, and
-//! `remove_path`) are the filesystem adapter for in-place reseeding. They prove
-//! cross-filesystem cloning up front, fail closed on administrative or special
-//! content, and never fall back to ordinary copying.
+//! The reseed helpers (`probe_between`, `validate_tree`, `validate_same_mount`,
+//! `clone_tree`, and `remove_path`) are the filesystem adapter for in-place
+//! reseeding. They prove cross-filesystem cloning up front, fail closed on
+//! administrative or special content and on mounted-filesystem boundaries, and
+//! never fall back to ordinary copying. On Linux, boundaries are detected
+//! through kernel mount IDs, so same-device bind mounts are rejected too.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -51,13 +53,25 @@ pub(crate) fn probe_between(source: &Path, destination: &Path) -> Result<()> {
 /// Inspection uses only `symlink_metadata`, never traversing a symlink. This
 /// rejects a symlink or non-directory root, `.jj` and `.git` administrative
 /// entries at any depth (nested repositories fail closed), special entries such
-/// as sockets, FIFOs, and devices, and entries whose device differs from the
-/// root's (mounted children). Same-device bind mounts are invisible to metadata
-/// and are not rejected. Only descendants are checked: whether `root` itself is
-/// a mount point is decided by its caller, such as [`remove_path`] comparing
-/// against the parent device.
+/// as sockets, FIFOs, and devices, and entries on a different mounted
+/// filesystem than their parent directory, checked with [`validate_same_mount`]
+/// at every node. Only descendants are checked: whether `root` itself is a
+/// mount point is left to its caller, keeping a mounted source or target root
+/// eligible.
 pub(crate) fn validate_tree(root: &Path) -> Result<()> {
     imp::validate_tree(root)
+}
+
+/// Check that `child` lives on the same mounted filesystem as `parent`.
+///
+/// Both paths are inspected without traversing symlinks, so a symlinked child
+/// is compared by its own inode. On Linux the comparison extends device numbers
+/// with kernel mount IDs from `statx(2)`, catching same-device bind mounts that
+/// device numbers alone would miss; when mount topology cannot be verified the
+/// check fails closed. macOS compares device numbers only, which is sufficient
+/// there because bind mounts are a Linux feature.
+pub(crate) fn validate_same_mount(parent: &Path, child: &Path) -> Result<()> {
+    imp::validate_same_mount(parent, child)
 }
 
 /// Strictly clone the tree at `source` to the not-yet-existing `destination`.
@@ -78,13 +92,18 @@ pub(crate) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
 /// Remove exactly the selected `path` and nothing else.
 ///
 /// A missing path succeeds so callers can clear idempotently. A selected
-/// symlink is unlinked without traversing it. A selected directory is verified
-/// before anything is removed: its final name must not be administrative
-/// (`.jj` or `.git` are never deleted through this helper), its device must
-/// match its parent's so a mounted selected leaf fails closed, and
-/// [`validate_tree`] must accept its contents, rejecting nested administrative
-/// entries, special files, and mounted children before the recursive removal.
-/// Same-device bind mounts are invisible to metadata and are not rejected.
+/// symlink is unlinked without traversing it, and a selected special entry
+/// (socket, FIFO, device) is rejected rather than deleted. A selected directory
+/// is verified before anything is removed or relaxed: its final name must not
+/// be administrative (`.jj` or `.git` are never deleted through this helper),
+/// [`validate_same_mount`] must accept it against its parent so a mounted
+/// selected leaf fails closed, and [`validate_tree`] must pass over its
+/// contents, rejecting nested administrative entries, special files, and
+/// mounted children. Only then are owner write and traverse bits added to the
+/// validated directories in the subtree — never to symlinks, never outside the
+/// selected path — so clones of read-only source directories can be replaced
+/// without the caller fixing modes first. Content swapped in after validation
+/// is not re-checked.
 pub(crate) fn remove_path(path: &Path) -> Result<()> {
     imp::remove_path(path)
 }
@@ -93,6 +112,8 @@ pub(crate) fn remove_path(path: &Path) -> Result<()> {
 mod imp {
     use anyhow::{Context, Result, bail, ensure};
     use std::collections::HashSet;
+    #[cfg(target_os = "linux")]
+    use std::ffi::CString;
     use std::ffi::OsStr;
     use std::fs::{self, Metadata};
     use std::io::ErrorKind;
@@ -237,10 +258,10 @@ mod imp {
             "refusing {}: it is not a directory",
             root.display()
         );
-        validate_directory(root, metadata.dev())
+        validate_directory(root)
     }
 
-    fn validate_directory(directory: &Path, device: u64) -> Result<()> {
+    fn validate_directory(directory: &Path) -> Result<()> {
         for entry in fs::read_dir(directory)
             .with_context(|| format!("failed to read {}", directory.display()))?
         {
@@ -258,13 +279,9 @@ mod imp {
                 // Cloned as a link; its target is never inspected.
                 continue;
             }
-            ensure!(
-                metadata.dev() == device,
-                "refusing {}: it is a mounted filesystem boundary",
-                path.display()
-            );
+            validate_same_mount(directory, &path)?;
             if file_type.is_dir() {
-                validate_directory(&path, device)?;
+                validate_directory(&path)?;
             } else {
                 ensure!(
                     file_type.is_file(),
@@ -274,6 +291,58 @@ mod imp {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn validate_same_mount(parent: &Path, child: &Path) -> Result<()> {
+        let parent_metadata = fs::symlink_metadata(parent)
+            .with_context(|| format!("failed to inspect {}", parent.display()))?;
+        let child_metadata = fs::symlink_metadata(child)
+            .with_context(|| format!("failed to inspect {}", child.display()))?;
+        ensure!(
+            parent_metadata.dev() == child_metadata.dev(),
+            "refusing {}: it is a mounted filesystem boundary",
+            child.display()
+        );
+        #[cfg(target_os = "linux")]
+        {
+            // Device numbers miss same-device bind mounts; the kernel mount ID
+            // does not. Failure to verify the topology fails closed.
+            ensure!(
+                linux_mount_id(parent)? == linux_mount_id(child)?,
+                "refusing {}: it is a mounted filesystem boundary",
+                child.display()
+            );
+        }
+        Ok(())
+    }
+
+    /// Kernel mount ID of the filesystem holding `path`, never traversing
+    /// symlinks. Requires Linux 5.8+ (`statx` with `STATX_MNT_ID`).
+    #[cfg(target_os = "linux")]
+    pub(super) fn linux_mount_id(path: &Path) -> Result<u64> {
+        let encoded = CString::new(path.as_os_str().as_encoded_bytes())
+            .with_context(|| format!("cannot inspect {}", path.display()))?;
+        let mut buffer: libc::statx = unsafe { std::mem::zeroed() };
+        let status = unsafe {
+            libc::statx(
+                libc::AT_FDCWD,
+                encoded.as_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW | libc::AT_NO_AUTOMOUNT,
+                libc::STATX_MNT_ID,
+                &mut buffer,
+            )
+        };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error())
+                .with_context(|| format!("cannot verify mount topology at {}", path.display()));
+        }
+        if buffer.stx_mask & libc::STATX_MNT_ID == 0 {
+            bail!(
+                "cannot verify mount topology at {}: the kernel does not report mount IDs",
+                path.display()
+            );
+        }
+        Ok(buffer.stx_mnt_id)
     }
 
     pub(super) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
@@ -346,28 +415,59 @@ mod imp {
             "refusing to remove {}: it is an administrative entry",
             path.display()
         );
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
             // Unlink exactly what was named; a symlink's target is never touched.
             return fs::remove_file(path)
                 .with_context(|| format!("failed to remove {}", path.display()));
         }
-        // Reject a mounted selected leaf: comparing descendants against this
+        if !file_type.is_dir() {
+            ensure!(
+                file_type.is_file(),
+                "refusing to remove {}: it is an unsupported special file",
+                path.display()
+            );
+            return fs::remove_file(path)
+                .with_context(|| format!("failed to remove {}", path.display()));
+        }
+        // Reject a mounted selected leaf: checking descendants against this
         // directory alone cannot see a mount rooted at the leaf itself.
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .with_context(|| format!("cannot determine the parent of {}", path.display()))?;
-        let parent_device = fs::symlink_metadata(parent)
-            .map(|metadata| metadata.dev())
-            .with_context(|| format!("cannot inspect {}", parent.display()))?;
-        ensure!(
-            metadata.dev() == parent_device,
-            "refusing to remove {}: it is a mounted filesystem boundary",
-            path.display()
-        );
+        validate_same_mount(parent, path)?;
         // validate_tree's messages already name the path and the reason.
         validate_tree(path)?;
+        ensure_removable(path)?;
         fs::remove_dir_all(path).with_context(|| format!("failed to remove {}", path.display()))
+    }
+
+    /// Grant owner write and traverse bits to every directory in the
+    /// already-validated `directory` tree. Cloned read-only source directories
+    /// must not block their authorized replacement, and the bits are added only
+    /// after validation so a rejected tree is never modified.
+    fn ensure_removable(directory: &Path) -> Result<()> {
+        let metadata = fs::symlink_metadata(directory)
+            .with_context(|| format!("failed to inspect {}", directory.display()))?;
+        let mode = metadata.permissions().mode() & 0o7777;
+        if mode & 0o300 != 0o300 {
+            fs::set_permissions(directory, fs::Permissions::from_mode(mode | 0o300))
+                .with_context(|| format!("failed to make {} removable", directory.display()))?;
+        }
+        for entry in fs::read_dir(directory)
+            .with_context(|| format!("failed to read {}", directory.display()))?
+        {
+            let path = entry
+                .with_context(|| format!("failed to read {}", directory.display()))?
+                .path();
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("failed to inspect {}", path.display()))?;
+            if metadata.file_type().is_dir() {
+                ensure_removable(&path)?;
+            }
+        }
+        Ok(())
     }
 
     /// Administrative entries belong to JJ or Git and are never cloned or
@@ -426,6 +526,10 @@ mod imp {
         bail!("tree validation is supported on macOS and Linux only")
     }
 
+    pub(super) fn validate_same_mount(_parent: &Path, _child: &Path) -> Result<()> {
+        bail!("mount boundary validation is supported on macOS and Linux only")
+    }
+
     pub(super) fn clone_tree(_source: &Path, _destination: &Path) -> Result<()> {
         bail!("copy-on-write cloning is supported on macOS and Linux only")
     }
@@ -438,6 +542,8 @@ mod imp {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use std::ffi::CString;
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::os::unix::net::UnixListener;
@@ -585,9 +691,9 @@ mod tests {
         let file = temp.path().join("file");
         fs::write(&file, "content\n").unwrap();
 
-        assert!(probe_between(&temp.path().join("missing"), &temp.path()).is_err());
+        assert!(probe_between(&temp.path().join("missing"), temp.path()).is_err());
         assert!(probe_between(&source, &temp.path().join("missing")).is_err());
-        assert!(probe_between(&file, &temp.path()).is_err());
+        assert!(probe_between(&file, temp.path()).is_err());
         assert!(probe_between(&source, &file).is_err());
     }
 
@@ -670,6 +776,49 @@ mod tests {
             fs::read_to_string(source.join("nested/tool.sh")).unwrap(),
             "#!/bin/sh\n"
         );
+    }
+
+    #[test]
+    fn clone_tree_clones_readonly_directories_repeatably_through_remove_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested/inner.txt"), "inner\n").unwrap();
+        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o555)).unwrap();
+
+        if !require_reflink(&source, temp.path()) {
+            fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let selected = temp.path().join("selected");
+        clone_tree(&source, &selected).expect("first clone");
+        let nested_mode = |path: &Path| {
+            fs::metadata(path.join("nested"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(nested_mode(&selected), 0o555);
+        assert_eq!(nested_mode(&source), 0o555);
+
+        // Replacement must succeed without the caller fixing any modes first.
+        remove_path(&selected).expect("remove readonly clone");
+        assert!(!selected.exists());
+        assert_eq!(nested_mode(&source), 0o555);
+
+        clone_tree(&source, &selected).expect("second clone");
+        assert_eq!(nested_mode(&selected), 0o555);
+        assert_eq!(nested_mode(&source), 0o555);
+        assert_eq!(
+            fs::read_to_string(selected.join("nested/inner.txt")).unwrap(),
+            "inner\n"
+        );
+
+        // Restore writable modes so the tempdir cleanup can descend.
+        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(selected.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
@@ -802,6 +951,77 @@ mod tests {
 
         let error = validate_tree(&root).unwrap_err();
         assert!(error.to_string().contains("special"), "{error:#}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_same_mount_accepts_children_and_rejects_distinct_mounts() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        fs::create_dir(&parent).unwrap();
+        let file = parent.join("file");
+        fs::write(&file, "content\n").unwrap();
+        let directory = parent.join("directory");
+        fs::create_dir(&directory).unwrap();
+        let link = parent.join("link");
+        symlink("file", &link).unwrap();
+
+        // A symlinked child is compared by its own inode, never traversed.
+        validate_same_mount(&parent, &parent).expect("identical paths");
+        validate_same_mount(&parent, &file).expect("file child");
+        validate_same_mount(&parent, &directory).expect("directory child");
+        validate_same_mount(&parent, &link).expect("symlink child");
+
+        // Kernel mount IDs resolve, agree within one filesystem, and separate
+        // distinct filesystems such as procfs.
+        assert!(imp::linux_mount_id(&parent).unwrap() > 0);
+        assert_eq!(
+            imp::linux_mount_id(&parent).unwrap(),
+            imp::linux_mount_id(&file).unwrap()
+        );
+        assert_ne!(
+            imp::linux_mount_id(&parent).unwrap(),
+            imp::linux_mount_id(Path::new("/proc")).unwrap()
+        );
+
+        // A child on another mounted filesystem fails closed, whichever stage
+        // of the comparison rejects it.
+        let error = validate_same_mount(&parent, Path::new("/proc")).unwrap_err();
+        assert!(
+            error.to_string().contains("mounted filesystem boundary"),
+            "{error:#}"
+        );
+
+        // Nested trees pass: every node is compared only against its parent,
+        // so the tree's own root being a mount stays acceptable.
+        fs::create_dir(directory.join("nested")).unwrap();
+        validate_tree(&directory).expect("nested tree");
+    }
+
+    #[test]
+    fn remove_path_rejects_special_leaf_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("socket");
+        UnixListener::bind(&socket).unwrap();
+        let error = remove_path(&socket).unwrap_err();
+        assert!(error.to_string().contains("special"), "{error:#}");
+        assert!(socket.exists());
+
+        #[cfg(target_os = "linux")]
+        {
+            let fifo = temp.path().join("fifo");
+            let encoded = CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(encoded.as_ptr(), 0o644) }, 0);
+            let error = remove_path(&fifo).unwrap_err();
+            assert!(error.to_string().contains("special"), "{error:#}");
+            assert!(fifo.exists());
+        }
+
+        // Regular leaves are still removed exactly.
+        let file = temp.path().join("file");
+        fs::write(&file, "content\n").unwrap();
+        remove_path(&file).expect("remove file");
+        assert!(!file.exists());
     }
 
     #[test]
