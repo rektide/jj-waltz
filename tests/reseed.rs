@@ -258,7 +258,8 @@ impl Repo {
             r#"#!/bin/sh
 hit=no
 case "$JW_INTERRUPT_BOUNDARY: $* " in
-  clear:*' sparse set '*' --clear '*) hit=yes;;
+  clear:*' sparse set '*)
+    case " $* " in *' --clear '*) hit=yes;; esac;;
   new:*' new '*) hit=yes;;
   expand:*' sparse reset '*|expand:*' sparse set '*)
     case " $* " in *' --clear '*) ;; *) hit=yes;; esac;;
