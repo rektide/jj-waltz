@@ -3,13 +3,15 @@ type: Guide
 title: Reseed an existing workspace in place
 description: One-off and batch copy-on-write reseeding, explicit replacement policy, and interrupted-operation recovery.
 resource: /docs/reseed.md
-status: draft
+status: maintained
 generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-14
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implementing workspace reseeding and clarifying optional groups and one-off use
+    title: Implemented and verified one-off and batch reseeding, safe recovery, and optional groups
+  - resource: "opencode://ses_ec376c0e6ffewASuAvkLjXLTTU"
+    title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Prepared-source contract and stock-JJ sparse-prefill design
   - resource: /CONTEXT.md
@@ -160,3 +162,19 @@ targets and exits nonzero for partial failure. Recovery never uses repository-wi
   explain why public sparse-prefill works and the verification obligations.
 - [Architecture](architecture.md#module-map) separates the command adapter,
   reseed coordination, JJ operations, filesystem cloning, links, and metadata.
+
+## Verification and limits
+
+The 22 [native integration cases](../tests/reseed.rs) were verified on Linux Btrfs
+with actual reflinks required, including FIEMAP shared-extents checks. The official
+JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0 release matrix covered one-off and batch use,
+source restoration, ignored replacement, symlink bytes, and interruption recovery.
+The final optimized build passed all 22 cases on both 0.39.0 and 0.46.0;
+0.44.0 and 0.45.1 were fully verified before the source-proof reuse optimization.
+Focused engine tests cover every write-ahead boundary and safe tracked-only type
+transitions. Existing integration regressions, Clippy, and formatting also passed.
+
+This is not a representative opencode throughput benchmark or proof of live
+Watchman behavior. Watchman-enabled mutation, sparse targets, and colocated targets
+remain unsupported. No live operator source or target was reseeded during these
+checks.
