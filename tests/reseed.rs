@@ -228,6 +228,16 @@ impl Repo {
         records
     }
 
+    fn prepare_links(&mut self, config: &str, extra_ignores: &str) {
+        // Configure before adding sibling source/target changes so the prepared
+        // source and frozen baseline include exactly the same tracked config.
+        let mut ignores = fs::read_to_string(self.root.join(".gitignore")).unwrap();
+        ignores.push_str(extra_ignores);
+        fs::write(self.root.join(".gitignore"), ignores).unwrap();
+        fs::write(self.root.join(".jwlinks.toml"), config).unwrap();
+        self.baseline = self.id(&self.root, "@");
+    }
+
     fn interrupt_reseed(&self, source: &Path, boundary: &str, extra: &[&str]) {
         let proxy = self.temp.path().join(format!("proxy-{boundary}"));
         fs::create_dir(&proxy).unwrap();
@@ -744,6 +754,159 @@ fn reset_refuses_retained_ignored_directory_obstructing_new_tracked_file() {
     assert_eq!(repo.id(&target, "@-"), repo.baseline);
     assert_eq!(identity(&target), root);
     assert_eq!(identity(&target.join(".jj")), jj);
+}
+
+#[test]
+fn required_private_self_target_is_preflight_rejected_when_replace_will_erase_it() {
+    let Some(mut repo) = Repo::new() else { return };
+    repo.prepare_links(
+        "[[link]]\nsource = \"private\"\ntarget = \"private\"\nrequired = true\n",
+        "private/\n",
+    );
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir(target.join("private")).unwrap();
+    fs::write(target.join("private/secret"), "private retained content\n").unwrap();
+    let before = repo.id(&target, "@");
+    let identities = [
+        identity(&target),
+        identity(&target.join(".jj")),
+        identity(&target.join("private")),
+    ];
+    let output = repo.reseed(&["feature"], &source, &["--replace-content"]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("required"),
+        "must report required-link future-state failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.unchanged_failure(&target, output, &before);
+    assert_eq!(
+        fs::read_to_string(target.join("private/secret")).unwrap(),
+        "private retained content\n"
+    );
+    assert_eq!(
+        [
+            identity(&target),
+            identity(&target.join(".jj")),
+            identity(&target.join("private"))
+        ],
+        identities
+    );
+}
+
+#[test]
+fn required_internal_link_target_is_preflight_rejected_when_replace_will_erase_it() {
+    let Some(mut repo) = Repo::new() else { return };
+    repo.prepare_links(
+        "[[link]]\nsource = \"dependency\"\ntarget = \"private/secret\"\nrequired = true\n",
+        "private/\ndependency\n",
+    );
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir(target.join("private")).unwrap();
+    fs::write(target.join("private/secret"), "private retained content\n").unwrap();
+    let before = repo.id(&target, "@");
+    let identities = [
+        identity(&target),
+        identity(&target.join(".jj")),
+        identity(&target.join("private")),
+    ];
+    let output = repo.reseed(&["feature"], &source, &["--replace-content"]);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("required"),
+        "must report required-link future-state failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    repo.unchanged_failure(&target, output, &before);
+    assert_eq!(
+        fs::read_to_string(target.join("private/secret")).unwrap(),
+        "private retained content\n"
+    );
+    assert!(!target.join("dependency").exists());
+    assert_eq!(
+        [
+            identity(&target),
+            identity(&target.join(".jj")),
+            identity(&target.join("private"))
+        ],
+        identities
+    );
+}
+
+#[test]
+fn required_link_target_in_copied_ignored_root_works_in_keep_replace_and_resume() {
+    for mode in ["keep", "replace", "resume"] {
+        let Some(mut repo) = Repo::new() else { return };
+        repo.prepare_links(
+            "[[link]]\nsource = \"dependency\"\ntarget = \"cache/fresh\"\nrequired = true\n",
+            // A directory-only dependency/ rule would NOT ignore the file
+            // symlink created at dependency; the non-slash pattern is required.
+            "dependency\n",
+        );
+        let source = repo.workspace("source");
+        let target = repo.workspace("feature");
+        if !repo.cow(&source, &target) {
+            return;
+        }
+        fs::create_dir(source.join("cache")).unwrap();
+        fs::write(source.join("cache/fresh"), vec![b'c'; 128 * 1024]).unwrap();
+        fs::write(target.join(".env"), "unselected secret\n").unwrap();
+        let before = repo.id(&target, "@");
+        let root = identity(&target);
+        let jj = identity(&target.join(".jj"));
+        assert!(!target.join("cache").exists());
+        let extra = if mode == "replace" {
+            vec!["--copy-ignored", "cache", "--replace-content"]
+        } else {
+            vec!["--copy-ignored", "cache"]
+        };
+        if mode == "resume" {
+            repo.interrupt_reseed(&source, "expand", &extra);
+            assert!(
+                !target.join("cache").exists(),
+                "fault must precede ignored copy"
+            );
+            success(
+                repo.jw(&repo.root)
+                    .args(["reseed", "--resume", "feature"])
+                    .output()
+                    .unwrap(),
+            );
+        } else {
+            success(repo.reseed(&["feature"], &source, &extra));
+        }
+        assert!(
+            fs::symlink_metadata(target.join("dependency"))
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "{mode}: must create the configured symlink"
+        );
+        assert_eq!(
+            fs::canonicalize(target.join("dependency")).unwrap(),
+            fs::canonicalize(target.join("cache/fresh")).unwrap(),
+            "{mode}: required target must resolve inside copied payload"
+        );
+        assert_eq!(
+            fs::read(target.join("dependency")).unwrap(),
+            vec![b'c'; 128 * 1024]
+        );
+        assert_eq!(
+            repo.id(&target, "@"),
+            before,
+            "{mode}: link must remain ignored"
+        );
+        assert_eq!(identity(&target), root);
+        assert_eq!(identity(&target.join(".jj")), jj);
+        assert_eq!(target.join(".env").exists(), mode != "replace");
+        assert_shared_extents(&source.join("cache/fresh"), &target.join("cache/fresh"));
+    }
 }
 
 #[test]
