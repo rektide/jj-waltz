@@ -1,3 +1,16 @@
+---
+type: Guide
+title: jj-waltz
+description: JJ workspace lifecycle, navigation, discovery, and copy-on-write reseeding.
+resource: /README.md
+status: maintained
+sources:
+  - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
+    title: Added one-off and batch reseeding command guidance
+  - resource: /design/workspace-reseed/reseed0.gpt6a.md
+    title: In-place reseeding behavior and safety contract
+---
+
 # jj-waltz
 
 `jj-waltz` is a Jujutsu workspace switcher with the short binary name `jw`.
@@ -47,6 +60,7 @@ to a warning rather than make local workspace management fail.
 - optional automatic bookmark creation for new workspaces
 - optional workspace links via `.jwlinks.toml` for sharing large ignored directories
 - optional copy-on-write workspace creation (`--cow`) on APFS, Btrfs, and XFS
+- `jw reseed <name>...` refills existing JJ-only workspaces in place with copy-on-write files
 - shell integration for `fish`, `zsh`, `bash`, `elvish`, and `powershell`
 - generated shell completions from the CLI definition
 
@@ -157,9 +171,28 @@ creation. With Watchman configured, or if JJ rejects the copied working-copy
 state, `jw` also recreates through the ordinary path. Every fallback preserves
 the current workspace’s sparse patterns.
 
-For repeated in-place CoW updates of existing workspaces, see the
-[workspace reseeding design](design/workspace-reseed/README.md). This is an
-implementation proposal, not an available command.
+### Reseed an existing workspace
+
+One-off use needs no groups or configuration:
+
+```sh
+jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin'
+```
+
+This preserves the target's snapshotted working-copy revision and feature changes,
+root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
+`--at 'dev@origin'` to start an empty child of that base instead. The source's
+tracked tree must match `--source-at`; prepare it with ordinary JJ commands first.
+
+Use `--copy-ignored node_modules` to replace an ignored dependency directory with
+a private CoW copy, or `--replace-content` to explicitly discard all other
+unrecorded target contents except `.jj`. Pause writers before reseeding.
+`--dry-run` explains the plan; `--resume` finishes an interrupted recorded operation.
+Unsupported CoW fails before clearing files rather than falling back to copying.
+
+See the [reseeding guide](docs/reseed.md) for optional configuration and groups,
+restrictions, and recovery, and the [design](design/workspace-reseed/README.md)
+for the sparse-prefill mechanism and acceptance checks.
 
 ## Shell setup
 

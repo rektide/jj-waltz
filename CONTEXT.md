@@ -1,3 +1,16 @@
+---
+type: Context
+title: jj-waltz domain context
+description: Workspace lifecycle vocabulary and safety contracts.
+resource: /CONTEXT.md
+status: maintained
+sources:
+  - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
+    title: Defined in-place reseeding separately from refresh and creation metadata
+  - resource: /design/workspace-reseed/reseed0.gpt6a.md
+    title: Reseeding identity, content, and recovery contract
+---
+
 # Domain context
 
 `jj-waltz` makes Jujutsu workspaces feel like named places a developer can create,
@@ -94,6 +107,15 @@ by itself a claim that a command exposing that concept already exists.
   Shared bookmarks are not eligible for incidental deletion.
 - **Removal selection** — the named workspaces chosen for a batch. Selection
   survives search and filter changes; hidden selections remain part of the batch.
+- **Reseed** — an explicit in-place refill of an existing workspace using a
+  prepared source's CoW files and JJ materialization of differences. It preserves
+  root, registration, and lifecycle identity; it is not status refresh or adoption.
+- **Prepared source** — a full, conflict-free source workspace whose snapshotted
+  tracked tree equals an exact selected baseline. Ignored dependency contents are
+  separate installed-source data, not proof of compatibility with a feature tree.
+- **Reseed pending record / receipt** — repository-scoped recovery intent for an
+  incomplete reseed / provenance of a completed one. Neither changes historical
+  creation-base metadata. Resume reads pending intent before target snapshotting.
 
 ## Invariants
 
@@ -127,6 +149,11 @@ by itself a claim that a command exposing that concept already exists.
 - JSON stdout contains only its versioned document; diagnostics use stderr.
 - Herdr provenance survives until Herdr close succeeds.
 - Shell adapters implement the same switching behavior.
+- Reseed selection is explicit: individual literal names work without groups or
+  local configuration. No selection ever implies all workspaces.
+- Reseed requires actual CoW capability before clearing contents; it never falls
+  back silently. Root and `.jj` survive failure, and partial prefill must not be
+  snapshotted as user work during resume.
 
 ## Milestone-zero command contract
 

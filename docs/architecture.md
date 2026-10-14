@@ -1,3 +1,16 @@
+---
+type: Architecture
+title: jj-waltz architecture
+description: Module ownership and workspace lifecycle safety boundaries.
+resource: /docs/architecture.md
+status: maintained
+sources:
+  - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
+    title: Integrated the public-CLI reseeding boundary into the existing module map
+  - resource: /design/workspace-reseed/reseed0.gpt6a.md
+    title: Reseed planning, prefill, verification, and durable recovery design
+---
+
 # Architecture
 
 `jj-waltz` keeps command syntax at adapters and puts behavior behind deep module
@@ -44,6 +57,12 @@ offline.
   listing tracked files and reading and writing JJ's local working-copy state,
   which is not a public interface: every copied state is validated by JJ and
   replaced on rejection.
+- `reseed` owns existing-workspace batch reseeding: explicit selection and local
+  configuration, frozen planning, sparse-prefill execution, ignored replacement,
+  verification, and repository-scoped pending records and receipts. It uses
+  public commands through `JjClient`, not creation's private `tree_state` copying.
+  Filesystem cloning and validation remain in `cow`; configured links remain in
+  `links`. Historical lifecycle metadata is not rewritten by reseeding.
 - `links` owns config merging, path confinement, link classification, preflight,
   and filesystem changes.
 - `shell` owns shared shell behavior. Each shell adapter varies syntax, not policy.
@@ -148,6 +167,29 @@ On an older repository that has never used per-repository configuration, JJ's
 documented `config path --repo` query may initialize an empty secure-config
 directory. Snapshot and doctor commands still leave the JJ operation and working
 copy unchanged.
+
+### In-place reseeding
+
+Reseeding records pending intent and successful receipts separately from creation
+metadata, beside the repository-scoped store. A reseed advisory lock serializes
+reseed callers, not editors, independent JJ commands, or build processes. These
+writers must be paused by the operator.
+
+Plans snapshot the prepared source and named targets before capturing exact
+revisions. A full, conflict-free prepared source must match the selected source
+tree. Full JJ-only targets retain root and `.jj` identity and registration. The
+primary checkout and source are never eligible targets. CoW probing, ignored-root
+validation, and filesystem/ownership checks precede destructive work.
+
+Execution clears sparsity, optionally creates a fresh child at a frozen base,
+prefills tree-identical paths, expands sparsity, and verifies the exact target
+revision. Configured ignored roots are copied only after tracked verification.
+An interrupted target is resumed from its pending record before ordinary
+snapshotting; partial prefill must never become intended user history. Batch
+recovery does not use repository-wide undo.
+
+See the [operator guide](reseed.md) and
+[design](../design/workspace-reseed/reseed0.gpt6a.md) for policy and limitations.
 
 ### Metadata repair
 
