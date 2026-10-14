@@ -907,6 +907,9 @@ fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
     }
     fs::write(target.join("modified"), "feature\n").unwrap();
     let before = repo.id(&target, "@");
+    // Source and target are sibling children of the immutable fixture baseline.
+    // Rewriting the source child therefore cannot rewrite the pending target.
+    let original_source_wc = repo.id(&source, "@");
     let root = identity(&target);
     let jj = identity(&target.join(".jj"));
     repo.interrupt_reseed(&source, "clear", &[]);
@@ -921,6 +924,11 @@ fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
         "source changed during interruption\n",
     )
     .unwrap();
+    let dirty_source_wc = repo.id(&source, "@");
+    assert_ne!(
+        dirty_source_wc, original_source_wc,
+        "fixture must snapshot a source rewrite"
+    );
     let refused = repo
         .jw(&repo.root)
         .args(["reseed", "--resume", "feature"])
@@ -962,7 +970,19 @@ fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
     assert_eq!(identity(&target), root);
     assert_eq!(identity(&target.join(".jj")), jj);
     assert!(!target.join("shared").exists());
-    fs::write(source.join("modified"), "baseline\n").unwrap();
+    // Restore through JJ rather than just rewriting bytes: timestamps, stat
+    // identity, and the source WC commit may all differ from the frozen receipt.
+    repo.jj_at(&source, &["restore", "--from", &repo.baseline]);
+    let restored_source_wc = repo.id(&source, "@");
+    assert_ne!(restored_source_wc, dirty_source_wc);
+    assert_ne!(
+        restored_source_wc, original_source_wc,
+        "fixture must restore the tree without restoring the old WC commit identity"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("modified")).unwrap(),
+        "baseline\n"
+    );
     success(
         repo.jw(&repo.root)
             .args(["reseed", "--resume", "feature"])
@@ -977,6 +997,23 @@ fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
     assert_eq!(identity(&target), root);
     assert_eq!(identity(&target.join(".jj")), jj);
     assert!(repo.pending_records().is_empty());
+    let frozen: serde_json::Value = serde_json::from_slice(&pending[0].1).unwrap();
+    let receipt_path = pending[0].0.with_file_name(
+        pending[0]
+            .0
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace(".pending.json", ".receipt.json"),
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap();
+    for field in ["source_operation", "source_commit", "source_wc_commit"] {
+        assert_eq!(
+            receipt[field], frozen[field],
+            "receipt must retain original {field} provenance"
+        );
+    }
     assert_shared_extents(&source.join("shared"), &target.join("shared"));
 }
 
