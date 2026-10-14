@@ -2,7 +2,6 @@
 //! must use a filesystem supporting reflinks (set JW_TEST_REQUIRE_COW in CI).
 #![cfg(unix)]
 
-use assert_cmd::prelude::*;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -103,7 +102,7 @@ impl Repo {
     fn jw(&self, cwd: &Path) -> Command {
         let mut cmd = self.command("jw", cwd);
         cmd = {
-            let mut binary = Command::cargo_bin("jw").unwrap();
+            let mut binary = Command::new(assert_cmd::cargo::cargo_bin!("jw"));
             binary
                 .current_dir(cwd)
                 .envs(cmd.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
