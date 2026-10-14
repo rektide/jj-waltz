@@ -365,6 +365,82 @@ fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
 }
 
 #[test]
+fn symlink_bytes_and_patch_like_names_survive_keep_and_expansion_recovery() {
+    let Some(mut repo) = Repo::new() else { return };
+    let cases = [
+        ("embedded-newline", "one\ntwo"),
+        ("trailing-newline", "tail\n"),
+        ("trailing-spaces", "tail  "),
+        ("patch-prefix", "+diff --git a/x b/y\n+@@ -0,0 +1,1 @@\n"),
+        ("symlink\n\"quote\" space", "quoted target\n"),
+        ("header\n@@ -0,0 +1,1 @@\n", "hunk-looking\n target \n"),
+    ];
+    for (name, target_bytes) in cases {
+        // Unchanged paths exercise source reads/cloning; sibling feature paths
+        // exercise frozen target reads/materialization and recovery.
+        symlink(target_bytes, repo.root.join(format!("unchanged-{name}"))).unwrap();
+        symlink("shared", repo.root.join(name)).unwrap();
+    }
+    repo.baseline = repo.id(&repo.root, "@");
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    for (name, target_bytes) in cases {
+        fs::remove_file(target.join(name)).unwrap();
+        symlink(target_bytes, target.join(name)).unwrap();
+    }
+    let before = repo.id(&target, "@");
+    let root = identity(&target);
+    let jj = identity(&target.join(".jj"));
+    success(repo.reseed(&["feature"], &source, &[]));
+    assert_eq!(repo.id(&target, "@"), before);
+    for (name, target_bytes) in cases {
+        assert_eq!(
+            fs::read_link(target.join(name)).unwrap(),
+            Path::new(target_bytes)
+        );
+        assert_eq!(
+            fs::read_link(target.join(format!("unchanged-{name}"))).unwrap(),
+            Path::new(target_bytes)
+        );
+    }
+    repo.interrupt_reseed(&source, "expand", &[]);
+    for (name, _) in cases {
+        fs::remove_file(target.join(name)).unwrap();
+        symlink("corrupted feature symlink", target.join(name)).unwrap();
+        let unchanged = target.join(format!("unchanged-{name}"));
+        fs::remove_file(&unchanged).unwrap();
+        symlink("corrupted cloned symlink", unchanged).unwrap();
+    }
+    success(
+        repo.jw(&repo.root)
+            .args(["reseed", "--resume", "feature"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        repo.id(&target, "@"),
+        before,
+        "recovery must not snapshot corrupted symlink bytes"
+    );
+    for (name, target_bytes) in cases {
+        assert_eq!(
+            fs::read_link(target.join(name)).unwrap(),
+            Path::new(target_bytes)
+        );
+        assert_eq!(
+            fs::read_link(target.join(format!("unchanged-{name}"))).unwrap(),
+            Path::new(target_bytes)
+        );
+    }
+    assert_eq!(identity(&target), root);
+    assert_eq!(identity(&target.join(".jj")), jj);
+    assert!(repo.pending_records().is_empty());
+}
+
+#[test]
 fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
     let Some(mut repo) = Repo::new() else { return };
     let source = repo.workspace("source");
