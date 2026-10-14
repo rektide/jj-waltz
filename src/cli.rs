@@ -59,6 +59,8 @@ enum Commands {
     Adopt(AdoptCommand),
     #[command(about = "Repair existing managed workspace metadata")]
     Repair(RepairCommand),
+    #[command(about = "Reseed existing workspaces in place with copy-on-write files")]
+    Reseed(ReseedCommand),
     #[command(about = "Print a workspace path")]
     Path(PathCommand),
     #[command(alias = "rm", about = "Forget a workspace")]
@@ -352,6 +354,40 @@ struct PathCommand {
 }
 
 #[derive(Debug, Args)]
+struct ReseedCommand {
+    /// Literal workspace names; groups are optional shortcuts.
+    #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
+    names: Vec<String>,
+    /// Select a named group from .jwreseed.local.toml (repeatable).
+    #[arg(long = "group", value_name = "GROUP")]
+    groups: Vec<String>,
+    /// Prepared source workspace root, overriding local configuration.
+    #[arg(long = "from", value_name = "PATH")]
+    source: Option<std::path::PathBuf>,
+    /// Require the prepared source's tracked tree to match this exact revision.
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
+    /// Start a fresh empty change at this base instead of keeping target revisions.
+    #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
+    at: Option<String>,
+    /// Replace these ignored directory roots (repeatable; overrides configured roots).
+    #[arg(long, value_name = "PATTERN", conflicts_with_all = ["no_copy_ignored", "resume"])]
+    copy_ignored: Vec<String>,
+    /// Disable copying configured ignored roots for this run.
+    #[arg(long, conflicts_with = "resume")]
+    no_copy_ignored: bool,
+    /// Delete unrecorded target contents except .jj before refilling.
+    #[arg(long, conflicts_with = "resume")]
+    replace_content: bool,
+    /// Validate and explain the selected operation without reseeding files.
+    #[arg(long)]
+    dry_run: bool,
+    /// Finish recorded interrupted operations before snapshotting target files.
+    #[arg(long, conflicts_with_all = ["source", "source_at", "groups"])]
+    resume: bool,
+}
+
+#[derive(Debug, Args)]
 struct RemoveCommand {
     #[arg(
         value_name = "NAME",
@@ -417,6 +453,7 @@ pub fn run() -> Result<()> {
         Commands::Doctor(cmd) => run_doctor(cmd),
         Commands::Adopt(cmd) => run_adopt(cmd),
         Commands::Repair(cmd) => run_repair(cmd),
+        Commands::Reseed(cmd) => run_reseed(cmd),
         Commands::Path(cmd) => run_path(cmd),
         Commands::Remove(cmd) => run_remove(cmd),
         Commands::Prune => run_prune(),
@@ -490,6 +527,96 @@ fn run_context(cmd: ContextCommand) -> Result<()> {
     match cmd.format {
         ContextFormat::Human => write_text(&render_context_human(&report)),
         ContextFormat::Json => write_json(&report),
+    }
+}
+
+fn run_reseed(cmd: ReseedCommand) -> Result<()> {
+    use crate::reseed::{ReseedRequest, ReseedStatus};
+
+    let report = crate::reseed::run(ReseedRequest {
+        names: cmd.names,
+        groups: cmd.groups,
+        source: cmd.source,
+        source_at: cmd.source_at,
+        at: cmd.at,
+        copy_ignored: cmd.copy_ignored,
+        no_copy_ignored: cmd.no_copy_ignored,
+        replace_content: cmd.replace_content,
+        dry_run: cmd.dry_run,
+        resume: cmd.resume,
+    })?;
+    println!(
+        "{}source: {} ({})",
+        if report.dry_run { "Dry-run " } else { "" },
+        report.source.display(),
+        report.source_commit_id
+    );
+    for target in &report.targets {
+        let label = match target.status {
+            ReseedStatus::Planned => "PLAN",
+            ReseedStatus::Succeeded => "OK",
+            ReseedStatus::Failed => "FAIL",
+            ReseedStatus::Pending => "PENDING",
+        };
+        println!("{label} {}: {}", target.name, target.message);
+    }
+    if report.has_failures() {
+        bail!("reseed did not complete for every target; use --resume for pending targets")
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod reseed_cli_tests {
+    use super::*;
+
+    #[test]
+    fn one_off_reseed_needs_no_group() {
+        let cli = Cli::try_parse_from([
+            "jw",
+            "reseed",
+            "feature",
+            "--from",
+            "/prepared",
+            "--source-at",
+            "dev@origin",
+        ])
+        .unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert_eq!(cmd.names, ["feature"]);
+        assert!(cmd.groups.is_empty());
+        assert!(cmd.at.is_none());
+    }
+
+    #[test]
+    fn reseed_resume_rejects_replacement_policy_changes() {
+        for option in ["--replace-content", "--no-copy-ignored"] {
+            assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option]).is_err());
+        }
+        for option in ["--at", "--from", "--source-at", "--group", "--copy-ignored"] {
+            assert!(
+                Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option, "value"])
+                    .is_err()
+            );
+        }
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", "--dry-run"]).is_ok());
+    }
+
+    #[test]
+    fn reseed_ignored_selection_flags_conflict() {
+        assert!(
+            Cli::try_parse_from([
+                "jw",
+                "reseed",
+                "feature",
+                "--copy-ignored",
+                "node_modules",
+                "--no-copy-ignored",
+            ])
+            .is_err()
+        );
     }
 }
 
