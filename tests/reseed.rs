@@ -28,20 +28,28 @@ fn success(output: Output) -> String {
 
 impl Repo {
     fn new() -> Option<Self> {
+        Self::new_with_colocation(false)
+    }
+
+    fn new_with_colocation(colocated: bool) -> Option<Self> {
         if !Command::new("jj")
             .arg("--version")
             .output()
             .is_ok_and(|o| o.status.success())
         {
             assert!(
-                std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
+                std::env::var_os("JW_TEST_REQUIRE_COW").is_none_or(|value| value.is_empty()),
                 "jj is required"
             );
             eprintln!("skipping reseed integration test: jj unavailable");
             return None;
         }
         // Keep fixtures on the checkout's filesystem, not an unrelated /tmp mount.
-        let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let scratch = std::env::current_dir()
+            .unwrap()
+            .join(".test-agent/reseed-tests");
+        fs::create_dir_all(&scratch).unwrap();
+        let temp = tempfile::tempdir_in(scratch).unwrap();
         let root = temp.path().join("repo");
         let config = temp.path().join("config");
         fs::create_dir_all(&config).unwrap();
@@ -53,7 +61,16 @@ impl Repo {
         };
         repo.jj_at(
             repo.temp.path(),
-            &["git", "init", "--no-colocate", repo.root.to_str().unwrap()],
+            &[
+                "git",
+                "init",
+                if colocated {
+                    "--colocate"
+                } else {
+                    "--no-colocate"
+                },
+                repo.root.to_str().unwrap(),
+            ],
         );
         fs::write(
             repo.root.join(".gitignore"),
@@ -129,7 +146,7 @@ impl Repo {
             }
             Err(error) => {
                 assert!(
-                    std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
+                    std::env::var_os("JW_TEST_REQUIRE_COW").is_none_or(|value| value.is_empty()),
                     "required reflink unavailable: {error}"
                 );
                 // Permission and unrelated IO failures must not silently skip.
@@ -461,6 +478,96 @@ fn copied_payload_rejects_nested_metadata_and_symlink_parent_escape() {
 }
 
 #[test]
+fn sparse_target_is_rejected_without_changing_patterns_or_checkout() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    repo.jj_at(&target, &["sparse", "set", "--clear", "modified"]);
+    let before = repo.id(&target, "@");
+    let patterns = repo.jj_at(&target, &["sparse", "list"]);
+    let root = identity(&target);
+    let jj = identity(&target.join(".jj"));
+    let output = repo.reseed(&["feature"], &source, &[]);
+    assert!(
+        !output.status.success(),
+        "sparse targets are outside the initial contract"
+    );
+    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.jj_at(&target, &["sparse", "list"]), patterns);
+    assert_eq!(
+        fs::read_to_string(target.join("modified")).unwrap(),
+        "baseline\n"
+    );
+    assert!(!target.join("shared").exists());
+    assert_eq!(identity(&target), root);
+    assert_eq!(identity(&target.join(".jj")), jj);
+}
+
+#[test]
+fn reset_revision_must_ignore_selected_payload_not_just_source_revision() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    // Only the target revision changes its ignore rules. Source baseline and
+    // source on-disk tree remain prepared and ignored-cache compatible.
+    fs::write(
+        target.join(".gitignore"),
+        ".env\n.jwreseed.local.toml\npackages/\n",
+    )
+    .unwrap();
+    let before = repo.id(&target, "@");
+    fs::create_dir(source.join("cache")).unwrap();
+    fs::write(source.join("cache/file"), "must stay ignored").unwrap();
+    repo.unchanged_failure(
+        &target,
+        repo.reseed(
+            &["feature"],
+            &source,
+            &["--at", &before, "--copy-ignored", "cache"],
+        ),
+        &before,
+    );
+    assert!(!target.join("cache").exists());
+}
+
+#[test]
+fn absolute_source_bound_ignored_symlink_is_rejected_or_explicitly_reported() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir(source.join("cache")).unwrap();
+    fs::write(source.join("cache/file"), "payload").unwrap();
+    symlink(source.join("cache/file"), source.join("cache/source-bound")).unwrap();
+    let before = repo.id(&target, "@");
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
+    let diagnostics = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() {
+        repo.unchanged_failure(&target, output, &before);
+    } else {
+        assert_eq!(repo.id(&target, "@"), before);
+        assert_eq!(
+            fs::read_link(target.join("cache/source-bound")).unwrap(),
+            source.join("cache/file")
+        );
+    }
+    assert!(
+        diagnostics.to_lowercase().contains("absolute"),
+        "diagnostics must explain the absolute-link hazard: {diagnostics}"
+    );
+    assert!(
+        diagnostics.contains("source-bound"),
+        "diagnostics must identify the offending link: {diagnostics}"
+    );
+}
+
+#[test]
 fn local_groups_deduplicate_and_cli_can_disable_configured_ignored_copy() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
@@ -557,8 +664,11 @@ fn special_workspace_names_are_literal_not_switch_tokens() {
 
 #[test]
 fn colocated_source_is_supported_but_colocated_primary_target_is_not() {
-    let Some(repo) = Repo::new() else { return };
-    repo.jj_at(&repo.root, &["git", "colocation", "enable"]);
+    // Init's --colocate works across the supported JJ matrix; the newer
+    // `git colocation enable` conversion command is not required here.
+    let Some(repo) = Repo::new_with_colocation(true) else {
+        return;
+    };
     assert!(repo.root.join(".git").exists());
     let target = repo.workspace("feature");
     if !repo.cow(&repo.root, &target) {
