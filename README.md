@@ -157,6 +157,10 @@ creation. With Watchman configured, or if JJ rejects the copied working-copy
 state, `jw` also recreates through the ordinary path. Every fallback preserves
 the current workspace’s sparse patterns.
 
+For repeated in-place CoW updates of existing workspaces, see the
+[workspace reseeding design](design/workspace-reseed/README.md). This is an
+implementation proposal, not an available command.
+
 ## Shell setup
 
 Initialize your shell so `jw switch`, `jw ^`, and `jw -` can change the
