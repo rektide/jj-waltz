@@ -275,7 +275,11 @@ impl WorkspaceMetadataStore {
         })
     }
 
-    fn ensure_initialized(&self) -> Result<()> {
+    /// Initialize only the authoritative repository manifest and empty record
+    /// directory. Sibling repository-scoped domains must call this before placing
+    /// data under the shared store; it never adopts a workspace or resets an
+    /// unreadable/nonempty manifest-less store.
+    pub(crate) fn ensure_initialized(&self) -> Result<()> {
         if !self.validate_existing_store()? {
             fs::create_dir_all(&self.root).with_context(|| {
                 format!("failed to create metadata store {}", self.root.display())

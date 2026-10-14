@@ -124,6 +124,7 @@ struct Store {
 impl Store {
     fn lock(client: &JjClient) -> Result<Self> {
         let config = client.repo_config_path()?;
+        WorkspaceMetadataStore::from_repo_config_path(&config)?.ensure_initialized()?;
         let parent = config
             .parent()
             .context("repository config has no parent")?
@@ -2740,6 +2741,57 @@ mod tests {
             store.pending("worker").unwrap().unwrap().phase,
             Phase::Prepared
         );
+    }
+
+    #[test]
+    fn native_unmanaged_workspaces_initialize_only_repository_manifest() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let client = JjClient::new(&plan.source);
+        let metadata =
+            WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path().unwrap())
+                .unwrap();
+        assert!(metadata.list().unwrap().is_empty());
+        assert!(metadata.get("worker").unwrap().is_none());
+        validate_target(
+            &client,
+            &metadata,
+            &plan.source,
+            &plan.source,
+            "worker",
+            &plan.root,
+        )
+        .unwrap();
+        let default = plan.source.clone();
+        execute(&store, &default, &mut plan, false).unwrap();
+        assert!(metadata.get("worker").unwrap().is_none());
+        assert!(metadata.list().unwrap().is_empty());
+        assert!(metadata.root().join("manifest.json").is_file());
+        assert!(
+            fs::read_dir(metadata.root().join("workspaces"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reseed_store_never_repairs_corrupt_or_nonempty_manifestless_metadata() {
+        let Some((_temporary, _store, plan)) = fixture(false) else {
+            return;
+        };
+        let client = JjClient::new(&plan.source);
+        let metadata =
+            WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path().unwrap())
+                .unwrap();
+        let manifest = metadata.root().join("manifest.json");
+        fs::write(&manifest, b"not valid json\n").unwrap();
+        assert!(Store::lock(&client).is_err());
+        assert_eq!(fs::read(&manifest).unwrap(), b"not valid json\n");
+        fs::remove_file(&manifest).unwrap();
+        assert!(Store::lock(&client).is_err());
+        assert!(!manifest.exists());
     }
 
     #[test]
