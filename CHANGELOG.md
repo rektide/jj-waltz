@@ -1,7 +1,30 @@
+---
+type: Changelog
+title: jj-waltz changelog
+description: Release history and unreleased workspace lifecycle changes.
+resource: /CHANGELOG.md
+status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-14
+sources:
+  - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
+    title: Added the unreleased in-place reseeding feature summary
+  - resource: /docs/reseed.md
+    title: One-off and batch reseeding, replacement policy, and recovery
+---
+
 # Changelog
 
 ## Unreleased
 
+- Add `jw reseed NAME...` for repeatable in-place CoW refills of full JJ-only
+  workspaces. Individual one-offs need no groups or configuration. Preserve
+  feature revisions by default, or explicitly start children with `--at`;
+  optionally replace named ignored dependency roots or all unrecorded contents.
+  Include local source/group shortcuts, dry-run plans, verified public-JJ sparse
+  prefill, and repository-scoped interruption recovery without private JJ state
+  copying. CoW capability and ownership checks fail closed before clearing files.
 - Prefer native `jj workspace remove` when the executable advertises it (JJ 0.46+),
   snapshotting dirty target changes before deletion while retaining ownership,
   manager review gates, unrelated Git registrations, and older-JJ fallback.

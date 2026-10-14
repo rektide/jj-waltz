@@ -178,6 +178,11 @@ metadata, beside the repository-scoped store. A reseed advisory lock serializes
 reseed callers, not editors, independent JJ commands, or build processes. These
 writers must be paused by the operator.
 
+The authoritative repository manifest is initialized before nested reseed storage
+is created. This also works for unmanaged native JJ workspaces: initializing the
+repository identity does not adopt a workspace or create lifecycle records.
+Existing corrupt or nonempty manifest-less stores are rejected rather than reset.
+
 Plans snapshot the prepared source and named targets before capturing exact
 revisions. A full, conflict-free prepared source must match the selected source
 tree. Full JJ-only targets retain root and `.jj` identity and registration. The

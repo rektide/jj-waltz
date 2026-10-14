@@ -129,6 +129,9 @@ local configuration.
 The Git executable is used for isolated ignore-rule probes, including nested
 `.gitignore` files and backend/global excludes. These probes do not create Git
 metadata in a target workspace.
+Symlinked `.gitignore` files are rejected when their rules cannot be verified.
+On Linux, mount-ID verification requires `statx` support (kernel 5.8 or newer);
+unavailable or blocked topology queries fail closed.
 
 `--dry-run` validates and reports the plan without clearing or refilling target
 contents. Planning can snapshot working copies to freeze their tracked work.

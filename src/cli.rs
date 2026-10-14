@@ -566,60 +566,6 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod reseed_cli_tests {
-    use super::*;
-
-    #[test]
-    fn one_off_reseed_needs_no_group() {
-        let cli = Cli::try_parse_from([
-            "jw",
-            "reseed",
-            "feature",
-            "--from",
-            "/prepared",
-            "--source-at",
-            "dev@origin",
-        ])
-        .unwrap();
-        let Some(Commands::Reseed(cmd)) = cli.command else {
-            panic!("expected reseed command")
-        };
-        assert_eq!(cmd.names, ["feature"]);
-        assert!(cmd.groups.is_empty());
-        assert!(cmd.at.is_none());
-    }
-
-    #[test]
-    fn reseed_resume_rejects_replacement_policy_changes() {
-        for option in ["--replace-content", "--no-copy-ignored"] {
-            assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option]).is_err());
-        }
-        for option in ["--at", "--from", "--source-at", "--group", "--copy-ignored"] {
-            assert!(
-                Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option, "value"])
-                    .is_err()
-            );
-        }
-        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", "--dry-run"]).is_ok());
-    }
-
-    #[test]
-    fn reseed_ignored_selection_flags_conflict() {
-        assert!(
-            Cli::try_parse_from([
-                "jw",
-                "reseed",
-                "feature",
-                "--copy-ignored",
-                "node_modules",
-                "--no-copy-ignored",
-            ])
-            .is_err()
-        );
-    }
-}
-
 fn render_context_human(report: &context::ContextReport) -> String {
     let mut output = String::new();
     writeln!(output, "path: {}", report.path.display()).expect("write string");
@@ -1289,4 +1235,58 @@ fn complete_workspaces(current: &OsStr) -> Vec<CompletionCandidate> {
             CompletionCandidate::new(candidate).help(Some(description.into()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod reseed_cli_tests {
+    use super::*;
+
+    #[test]
+    fn one_off_reseed_needs_no_group() {
+        let cli = Cli::try_parse_from([
+            "jw",
+            "reseed",
+            "feature",
+            "--from",
+            "/prepared",
+            "--source-at",
+            "dev@origin",
+        ])
+        .unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert_eq!(cmd.names, ["feature"]);
+        assert!(cmd.groups.is_empty());
+        assert!(cmd.at.is_none());
+    }
+
+    #[test]
+    fn reseed_resume_rejects_replacement_policy_changes() {
+        for option in ["--replace-content", "--no-copy-ignored"] {
+            assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option]).is_err());
+        }
+        for option in ["--at", "--from", "--source-at", "--group", "--copy-ignored"] {
+            assert!(
+                Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option, "value"])
+                    .is_err()
+            );
+        }
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", "--dry-run"]).is_ok());
+    }
+
+    #[test]
+    fn reseed_ignored_selection_flags_conflict() {
+        assert!(
+            Cli::try_parse_from([
+                "jw",
+                "reseed",
+                "feature",
+                "--copy-ignored",
+                "node_modules",
+                "--no-copy-ignored",
+            ])
+            .is_err()
+        );
+    }
 }
