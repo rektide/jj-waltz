@@ -68,8 +68,9 @@ one checkout do not alter the other.
 
 Dependencies reflect the prepared source's installed state. If a feature changes
 package manifests, run that project's frozen install in the feature workspace.
-Symlinks are copied without traversal; source-bound absolute links are not a
-self-contained dependency snapshot.
+Symlinks are copied without traversal; source-bound absolute links are reported
+because they are not a self-contained dependency snapshot. `jw` does not rewrite
+package-manager links.
 
 `--replace-content` explicitly authorizes deleting other unrecorded target
 contents, including `.env`, except `.jj`, before refilling. It does not copy

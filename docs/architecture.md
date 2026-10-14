@@ -4,6 +4,9 @@ title: jj-waltz architecture
 description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-14
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Integrated the public-CLI reseeding boundary into the existing module map

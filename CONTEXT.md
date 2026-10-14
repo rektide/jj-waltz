@@ -4,6 +4,9 @@ title: jj-waltz domain context
 description: Workspace lifecycle vocabulary and safety contracts.
 resource: /CONTEXT.md
 status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-14
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Defined in-place reseeding separately from refresh and creation metadata

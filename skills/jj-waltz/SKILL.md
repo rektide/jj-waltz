@@ -1,6 +1,9 @@
 ---
 name: jj-waltz
 description: Use when the user mentions jw, jj-waltz, or .jwlinks.toml; asks to manage jj workspaces or worktrees; or requests parallel work in separate workspaces.
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-14
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Added the reseeding route with explicit one-off use and recovery cautions

@@ -4,6 +4,9 @@ title: jj-waltz
 description: JJ workspace lifecycle, navigation, discovery, and copy-on-write reseeding.
 resource: /README.md
 status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-14
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Added one-off and batch reseeding command guidance
