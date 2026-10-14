@@ -1,8 +1,11 @@
 //! Frozen, in-place CoW reseeding through stock JJ's sparse checkout interface.
 //!
 //! The repository-scoped journal is intentionally separate from lifecycle metadata.
-//! A pending journal always wins over ordinary snapshotting: recovery first clears
-//! sparsity with `--ignore-working-copy`, then rebuilds the recorded desired tree.
+//! A pending journal always wins over ordinary snapshotting: recovery first
+//! rebuilds and verifies the recorded current tree from frozen public JJ queries.
+//! Only then may stock JJ's sparse commands snapshot that known-complete tree.
+//! Repair uses only frozen, snapshot-disabled queries; sparse mutations scope
+//! `snapshot.auto-track=none()`, and reset expands only from sparse-empty.
 
 use anyhow::Result;
 use std::path::PathBuf;

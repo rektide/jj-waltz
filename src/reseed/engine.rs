@@ -148,9 +148,9 @@ impl Store {
         Ok(Self { root, _lock: lock })
     }
     fn path(&self, name: &str, suffix: &str) -> PathBuf {
-        // Collision-free UTF-8 encoding, without treating literal names as paths.
-        let encoded = name
-            .as_bytes()
+        // Bound path length even for long literal names. The embedded exact name
+        // is validated on every read, so a digest collision never grants identity.
+        let encoded = Sha256::digest(name.as_bytes())
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
@@ -193,7 +193,25 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
-    let client = JjClient::current()?;
+    if std::env::var_os("GIT_CONFIG_PARAMETERS").is_some_and(|value| !value.is_empty())
+        || std::env::var_os("GIT_CONFIG_COUNT")
+            .is_some_and(|value| !value.is_empty() && value != "0")
+    {
+        bail!(
+            "unset active GIT_CONFIG_COUNT/GIT_CONFIG_PARAMETERS before reseed; JJ and the isolated ignore verifier may interpret those overrides differently"
+        );
+    }
+    let caller = JjClient::current()?;
+    let caller_cwd = caller.cwd().to_path_buf();
+    // Frozen file paths are repository-relative. Root all subsequent fileset
+    // queries too, even when jw was invoked from a workspace subdirectory.
+    let caller_root = PathBuf::from(
+        caller
+            .run(["--ignore-working-copy", "workspace", "root"])?
+            .trimmed_stdout()?,
+    )
+    .canonicalize()?;
+    let client = JjClient::new(caller_root);
     // Existing convenience inventory performs normal JJ commands. Do not use it
     // here: merely discovering a pending current workspace must not snapshot it.
     let inventory = Inventory::load(&client)?;
@@ -262,7 +280,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
         let source = if raw_source.is_absolute() {
             raw_source.clone()
         } else if request.source.is_some() {
-            client.cwd().join(raw_source)
+            caller_cwd.join(raw_source)
         } else {
             default.join(raw_source)
         }
@@ -280,9 +298,14 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
                 bail!("source has a pending reseed; resume it before using it as a source");
             }
         }
+        let source_rev = request
+            .source_at
+            .as_ref()
+            .or(config.source_at.as_ref())
+            .map(String::as_str)
+            .context("reseed requires --source-at or source_at in .jwreseed.local.toml")?;
         ensure_quiescence(&source_client)?;
         require_full(&source_client)?;
-        require_snapshot_disabled_sparse(&source_client)?;
         validate_contents(&source, true)?;
         let mut roots = BTreeSet::new();
         for name in &names {
@@ -305,12 +328,6 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
         let source_wc = source_client
             .resolve_one_at(&source_operation, "@")?
             .commit_id;
-        let source_rev = request
-            .source_at
-            .as_ref()
-            .or(config.source_at.as_ref())
-            .map(String::as_str)
-            .context("reseed requires --source-at or source_at in .jwreseed.local.toml")?;
         let source_commit = source_client
             .resolve_one_at(&source_operation, source_rev)?
             .commit_id;
@@ -400,6 +417,19 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
                 .map(|e| e.path.clone())
                 .collect::<Vec<_>>();
             let old_entries = entries(&client, &operation, &fact.commit_id)?;
+            verify_disk(
+                &JjClient::new(&root),
+                &operation,
+                &fact.commit_id,
+                &root,
+                &old_entries,
+            )?;
+            // Symlink extraction is a real CLI capability, not inferred from
+            // file-list typing. Prove both current and future trees before any
+            // target's sparse checkout or pending state is changed.
+            for entry in target_entries.iter().filter(|e| e.kind == "symlink") {
+                symlink_bytes(&client, &operation, tree_commit, &entry.path)?;
+            }
             preflight_obstructions(
                 &root,
                 &old_entries,
@@ -413,6 +443,20 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
                 &ignored,
                 request.replace_content,
                 &target_rules,
+                &FutureContent {
+                    root: &root,
+                    source: &source,
+                    entries: &target_entries,
+                    old_paths: &old_entries
+                        .iter()
+                        .map(|e| e.path.clone())
+                        .collect::<Vec<_>>(),
+                    ignored: &ignored,
+                    replace: request.replace_content,
+                    client: &client,
+                    operation: &operation,
+                    commit: tree_commit,
+                },
             )?;
             cow::probe_between(&source, &root)?;
             let mut warnings = skipped.clone();
@@ -689,20 +733,6 @@ fn require_full(client: &JjClient) -> Result<()> {
     Ok(())
 }
 
-fn require_snapshot_disabled_sparse(client: &JjClient) -> Result<()> {
-    // Adding the existing full pattern is nondestructive. Probe real behavior,
-    // not --help (JJ advertises the global flag even when sparse rejects it).
-    let output = client.run_unchecked(["--ignore-working-copy", "sparse", "set", "--add", "."])?;
-    if !output.success() {
-        bail!(
-            "JJ lacks snapshot-disabled sparse mutation required for safe reseed recovery; no target was changed: {}",
-            output.stderr()
-        );
-    }
-    diagnostics(output.stderr());
-    Ok(())
-}
-
 fn snapshot(client: &JjClient) -> Result<()> {
     let output = client.run(["--config=fsmonitor.backend=none", "status"])?;
     diagnostics(output.stderr());
@@ -839,7 +869,81 @@ fn file_bytes(client: &JjClient, operation: &str, commit: &str, path: &Path) -> 
         serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?
     );
     let output = client.run_at(operation, ["file", "show", "-r", commit, &fileset])?;
+    diagnostics(output.stderr());
     Ok(output.stdout_bytes().to_vec())
+}
+
+/// `file show` intentionally skips symlinks on supported stock JJ releases. A
+/// root-to-commit native Git diff exposes the complete symlink payload instead.
+/// Parse only an added 120000-mode file; never treat a warning/empty stdout as an
+/// empty target. Unsupported binary representations fail in source preflight.
+fn symlink_bytes(client: &JjClient, operation: &str, commit: &str, path: &Path) -> Result<Vec<u8>> {
+    let fileset = format!(
+        "file:{}",
+        serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?
+    );
+    let output = client.run_at(
+        operation,
+        [
+            "diff", "--from", "root()", "--to", commit, "--git", &fileset,
+        ],
+    )?;
+    diagnostics(output.stderr());
+    parse_added_symlink(output.stdout_bytes()).with_context(|| format!("JJ cannot expose the frozen symlink target at {}; capability gap detected before materialization", path.display()))
+}
+
+fn parse_added_symlink(diff: &[u8]) -> Result<Vec<u8>> {
+    let lines = diff
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
+    if !lines.contains(&b"new file mode 120000\n".as_slice()) {
+        bail!("JJ did not provide added symlink mode");
+    }
+    // Human headers are NOT C-quoted by JJ. A newline pathname can spoof a
+    // hunk inside them. The last full-addition hunk is authoritative: every
+    // subsequent payload line is +prefixed and cannot spoof an unprefixed @@.
+    let (index, count) = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line = std::str::from_utf8(line).ok()?.trim_end_matches('\n');
+            let range = line.strip_prefix("@@ -0,0 +1")?.strip_suffix(" @@")?;
+            let count = if range.is_empty() {
+                1
+            } else {
+                range.strip_prefix(',')?.parse::<usize>().ok()?
+            };
+            (count > 0).then_some((index, count))
+        })
+        .next_back()
+        .context("JJ did not provide a full-addition symlink hunk")?;
+    let body = lines.get(index + 1..).context("missing symlink body")?;
+    if body.len() < count {
+        bail!("truncated symlink diff body");
+    }
+    let mut result = Vec::new();
+    for line in &body[..count] {
+        result.extend_from_slice(
+            line.strip_prefix(b"+")
+                .context("symlink diff contains a non-addition")?,
+        );
+    }
+    match &body[count..] {
+        [] => {}
+        [line]
+            if *line == b"\\ No newline at end of file\n"
+                || *line == b"\\ No newline at end of file" =>
+        {
+            if result.pop() != Some(b'\n') {
+                bail!("malformed symlink diff newline marker");
+            }
+        }
+        _ => bail!("symlink diff contains extra data after its complete body"),
+    }
+    if result.is_empty() {
+        bail!("empty symlink targets are unsupported");
+    }
+    Ok(result)
 }
 
 fn verify_disk(
@@ -868,7 +972,12 @@ fn verify_disk(
             }
             fs::read(&path)?
         };
-        if bytes != file_bytes(client, operation, commit, &entry.path)? {
+        let expected = if entry.kind == "symlink" {
+            symlink_bytes(client, operation, commit, &entry.path)?
+        } else {
+            file_bytes(client, operation, commit, &entry.path)?
+        };
+        if bytes != expected {
             bail!(
                 "tracked bytes differ from frozen desired tree at {}; no snapshot performed",
                 path.display()
@@ -894,16 +1003,14 @@ fn confined_parents(root: &Path, path: &Path) -> Result<()> {
 }
 
 fn validate_contents(root: &Path, allow_git: bool) -> Result<()> {
-    let identity = Identity::read(root)?;
+    Identity::read(root)?;
     for child in fs::read_dir(root)? {
         let child = child?;
         if child.file_name() == ".jj" || (allow_git && child.file_name() == ".git") {
             continue;
         }
         let metadata = fs::symlink_metadata(child.path())?;
-        if metadata.dev() != identity.device {
-            bail!("mounted child is unsupported: {}", child.path().display());
-        }
+        cow::validate_same_mount(root, &child.path())?;
         if metadata.is_dir() {
             cow::validate_tree(&child.path())?;
         } else if !metadata.is_file() && !metadata.file_type().is_symlink() {
@@ -997,7 +1104,11 @@ fn payload_digest(root: &Path, paths: &[PathBuf]) -> Result<String> {
         cow::validate_tree(&root.join(path))?;
         visit(root, path, &mut hash)?;
     }
-    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 fn overlap(left: &Path, right: &Path) -> bool {
@@ -1021,6 +1132,9 @@ fn preflight_obstructions(
             path.push(component);
             match fs::symlink_metadata(root.join(&path)) {
                 Ok(m) if path == entry.path || !m.is_dir() => {
+                    if m.is_dir() && tracked_only_directory(root, &path, old)? {
+                        continue;
+                    }
                     if !old.iter().any(|e| e.path == path) {
                         bail!(
                             "untracked obstruction at {}; use --replace-content only if losing it is intended",
@@ -1037,6 +1151,24 @@ fn preflight_obstructions(
     Ok(())
 }
 
+fn tracked_only_directory(root: &Path, path: &Path, old: &[Entry]) -> Result<bool> {
+    let children = fs::read_dir(root.join(path))?.collect::<std::io::Result<Vec<_>>>()?;
+    if children.is_empty() {
+        return Ok(false);
+    }
+    for child in children {
+        let path = path.join(child.file_name());
+        if child.file_type()?.is_dir() {
+            if !tracked_only_directory(root, &path, old)? {
+                return Ok(false);
+            }
+        } else if !old.iter().any(|e| e.path == path) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn preflight_links(
     default: &Path,
     root: &Path,
@@ -1044,15 +1176,37 @@ fn preflight_links(
     ignored: &[PathBuf],
     replace: bool,
     rules: &IgnoreRules,
+    future: &FutureContent<'_>,
 ) -> Result<()> {
     if let Some(config) = links::load_link_config(default)? {
-        for check in links::inspect_loaded_workspace_links(&config, root) {
+        let checks = links::inspect_loaded_workspace_links(&config, root);
+        for (index, left) in checks.iter().enumerate() {
+            for right in checks.iter().skip(index + 1) {
+                if overlap(&left.source, &right.source) {
+                    bail!(
+                        "configured link sources overlap: {} and {}",
+                        left.source.display(),
+                        right.source.display()
+                    );
+                }
+            }
+        }
+        for check in checks {
             let path = check
                 .source
                 .strip_prefix(root)
                 .context("link source escapes target")?;
             relative(path)?;
+            let target_exists = future.exists(&check.target, 0)?;
+            if check.required && !target_exists {
+                bail!(
+                    "required link target will be absent after reseed: {}",
+                    check.target.display()
+                );
+            }
             // A source-equals-target override deliberately keeps a private directory.
+            // It performs no link mutation, but required existence must still be
+            // proved against the future tree (replace-content may erase it).
             if check.source == check.target {
                 continue;
             }
@@ -1064,9 +1218,6 @@ fn preflight_links(
                     path.display()
                 );
             }
-            if check.required && !check.target_exists {
-                bail!("required link target missing: {}", check.target.display());
-            }
             if !replace
                 && matches!(
                     check.state,
@@ -1075,10 +1226,161 @@ fn preflight_links(
             {
                 bail!("configured link conflict at {}", path.display());
             }
-            rules.require_ignored_file(path)?;
+            if target_exists {
+                rules.require_ignored_file(path)?;
+            }
         }
     }
     Ok(())
+}
+
+struct FutureContent<'a> {
+    root: &'a Path,
+    source: &'a Path,
+    entries: &'a [Entry],
+    old_paths: &'a [PathBuf],
+    ignored: &'a [PathBuf],
+    replace: bool,
+    client: &'a JjClient,
+    operation: &'a str,
+    commit: &'a str,
+}
+enum FutureNode {
+    Directory,
+    File,
+    Symlink(PathBuf),
+    Missing,
+}
+impl FutureContent<'_> {
+    fn exists(&self, path: &Path, depth: usize) -> Result<bool> {
+        if depth > 40 {
+            bail!(
+                "future link target contains a symlink cycle: {}",
+                path.display()
+            );
+        }
+        if path == self.root {
+            return Ok(true);
+        }
+        let Ok(relative) = path.strip_prefix(self.root) else {
+            return existing_target(path);
+        };
+        let components = relative.components().collect::<Vec<_>>();
+        let mut current = self.root.to_path_buf();
+        for (index, component) in components.iter().enumerate() {
+            match component {
+                Component::CurDir => continue,
+                Component::ParentDir => {
+                    current.pop();
+                    if !current.starts_with(self.root) {
+                        for component in &components[index + 1..] {
+                            current.push(component.as_os_str());
+                        }
+                        return existing_target(&current);
+                    }
+                }
+                Component::Normal(name) => current.push(name),
+                _ => bail!("invalid future target path"),
+            }
+            let relative = current.strip_prefix(self.root)?;
+            match self.node(relative)? {
+                FutureNode::Directory => {}
+                FutureNode::File => return Ok(index + 1 == components.len()),
+                FutureNode::Missing => return Ok(false),
+                FutureNode::Symlink(target) => {
+                    let mut target = if target.is_absolute() {
+                        target
+                    } else {
+                        current.parent().context("link has no parent")?.join(target)
+                    };
+                    for component in &components[index + 1..] {
+                        target.push(component.as_os_str());
+                    }
+                    return self.exists(&target, depth + 1);
+                }
+            }
+        }
+        Ok(true)
+    }
+    fn node(&self, path: &Path) -> Result<FutureNode> {
+        if path.as_os_str().is_empty() {
+            return Ok(FutureNode::Directory);
+        }
+        if let Some(entry) = self.entries.iter().find(|e| e.path == path) {
+            if entry.kind == "symlink" {
+                use std::os::unix::ffi::OsStringExt;
+                return Ok(FutureNode::Symlink(
+                    std::ffi::OsString::from_vec(symlink_bytes(
+                        self.client,
+                        self.operation,
+                        self.commit,
+                        path,
+                    )?)
+                    .into(),
+                ));
+            }
+            return Ok(FutureNode::File);
+        }
+        if self.entries.iter().any(|e| e.path.starts_with(path))
+            || self.ignored.iter().any(|p| p.starts_with(path))
+        {
+            return Ok(FutureNode::Directory);
+        }
+        if self.ignored.iter().any(|p| path.starts_with(p)) {
+            return node_on_disk(&self.source.join(path));
+        }
+        if self.replace || self.old_paths.iter().any(|p| p == path) {
+            return Ok(FutureNode::Missing);
+        }
+        let actual = self.root.join(path);
+        match node_on_disk(&actual)? {
+            FutureNode::Directory
+                if self.old_paths.iter().any(|p| p.starts_with(path))
+                    && !self.has_retained_child(path)? =>
+            {
+                Ok(FutureNode::Missing)
+            }
+            node => Ok(node),
+        }
+    }
+    fn has_retained_child(&self, path: &Path) -> Result<bool> {
+        for child in fs::read_dir(self.root.join(path))? {
+            let child = child?;
+            let path = path.join(child.file_name());
+            if self.ignored.iter().any(|p| path.starts_with(p)) {
+                continue;
+            }
+            if child.file_type()?.is_dir() {
+                if !self.old_paths.iter().any(|p| p.starts_with(&path))
+                    || self.has_retained_child(&path)?
+                {
+                    return Ok(true);
+                }
+            } else if !self.old_paths.contains(&path) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+fn existing_target(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+fn node_on_disk(path: &Path) -> Result<FutureNode> {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.is_dir() => Ok(FutureNode::Directory),
+        Ok(m) if m.file_type().is_symlink() => Ok(FutureNode::Symlink(fs::read_link(path)?)),
+        Ok(m) if m.is_file() => Ok(FutureNode::File),
+        Ok(_) => bail!("special future link target unsupported: {}", path.display()),
+        Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(FutureNode::Missing)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn describe(plan: &Pending, planned: bool) -> String {
@@ -1150,7 +1452,8 @@ impl IgnoreRules {
         retain_untracked: bool,
     ) -> Result<Self> {
         let directory = tempfile::tempdir()?;
-        checked_git(directory.path(), ["init", "--quiet"])?;
+        checked_git(directory.path(), ["init", "--quiet", "--template="])?;
+        fs::create_dir_all(directory.path().join(".git/info"))?;
         let mut ignores = BTreeMap::new();
         // On-disk untracked nested ignores are part of a retained checkout's
         // semantics; tracked files are subsequently overridden by the desired tree.
@@ -1304,7 +1607,9 @@ fn isolated_git(root: &Path) -> Command {
     let mut command = git_command(root);
     command
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null");
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("GIT_TEMPLATE_DIR")
+        .args(["-c", "init.templateDir="]);
     command
 }
 fn checked_git<I, S>(root: &Path, args: I) -> Result<()>
@@ -1544,6 +1849,144 @@ fn transition(store: &Store, plan: &mut Pending, phase: Phase) -> Result<()> {
     fault(phase)
 }
 
+/// Repair from immutable public tree data, without running ANY snapshot-capable
+/// target command. The plan's future --at tree is not necessarily its current
+/// commit: before Newing completes, repair must restore the original feature tree.
+fn reconstruct_current_tree(plan: &Pending) -> Result<()> {
+    use std::os::unix::ffi::OsStringExt;
+    let client = JjClient::new(&plan.root);
+    let sparse = client.run(["--ignore-working-copy", "sparse", "list"])?;
+    if !matches!(sparse.stdout()?.trim_end_matches(['\r', '\n']), "" | ".") {
+        bail!("pending target sparse patterns changed; recovery refused without snapshot");
+    }
+    let expected = entries(&client, &plan.target_operation, &plan.desired_commit)?;
+    let expected_paths = expected
+        .iter()
+        .map(|e| e.path.clone())
+        .collect::<BTreeSet<_>>();
+    // Remove only recorded tracked leftovers absent from the CURRENT expected
+    // tree. A prior file now used as a directory is never recursively deleted.
+    let mut obsolete = plan
+        .old_paths
+        .iter()
+        .chain(plan.entries.iter().map(|e| &e.path))
+        .filter(|p| !expected_paths.contains(*p))
+        .cloned()
+        .collect::<Vec<_>>();
+    obsolete.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+    obsolete.dedup();
+    for path in &obsolete {
+        remove_recorded_file(&plan.root, path, false)?;
+    }
+    let changed = changed_paths(
+        &client,
+        &plan.target_operation,
+        &plan.source_commit,
+        &plan.desired_commit,
+    )?;
+    let source_entries = entries(
+        &JjClient::new(&plan.source),
+        &plan.source_operation,
+        &plan.source_commit,
+    )?;
+    let source_paths = source_entries
+        .iter()
+        .map(|e| &e.path)
+        .collect::<BTreeSet<_>>();
+    let clones = expected
+        .iter()
+        .filter(|e| source_paths.contains(&e.path) && !changed.contains(&e.path))
+        .map(|e| e.path.clone())
+        .collect::<BTreeSet<_>>();
+    for (index, entry) in expected.iter().enumerate() {
+        confined_parents(&plan.root, &entry.path)?;
+        let path = plan.root.join(&entry.path);
+        match fs::symlink_metadata(&path) {
+            Ok(m) if m.is_dir() && plan.replace_content => cow::remove_path(&path)?,
+            Ok(m) if m.is_dir() => remove_empty_directories(&path)?,
+            Ok(_) => cow::remove_path(&path)?,
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        if clones.contains(&entry.path) {
+            fault_during_repair(index)?;
+            continue;
+        }
+        let bytes = if entry.kind == "symlink" {
+            symlink_bytes(
+                &client,
+                &plan.target_operation,
+                &plan.desired_commit,
+                &entry.path,
+            )?
+        } else {
+            file_bytes(
+                &client,
+                &plan.target_operation,
+                &plan.desired_commit,
+                &entry.path,
+            )?
+        };
+        fs::create_dir_all(path.parent().context("tracked path has no parent")?)?;
+        confined_parents(&plan.root, &entry.path)?;
+        if entry.kind == "symlink" {
+            std::os::unix::fs::symlink(std::ffi::OsString::from_vec(bytes), &path)?;
+        } else {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            file.write_all(&bytes)?;
+            file.set_permissions(fs::Permissions::from_mode(if entry.executable {
+                0o755
+            } else {
+                0o644
+            }))?;
+        }
+        fault_during_repair(index)?;
+    }
+    cow::clone_files(
+        &plan.source,
+        &clones.into_iter().collect::<Vec<_>>(),
+        &plan.root,
+    )?;
+    verify_disk(
+        &client,
+        &plan.target_operation,
+        &plan.desired_commit,
+        &plan.root,
+        &expected,
+    )?;
+    if current_commit(&client)?.1 != plan.desired_commit {
+        bail!("target commit changed during reconstruction; no snapshot performed");
+    }
+    Ok(())
+}
+
+fn remove_empty_directories(root: &Path) -> Result<()> {
+    fn collect(root: &Path, directories: &mut Vec<PathBuf>) -> Result<()> {
+        for child in fs::read_dir(root)? {
+            let child = child?;
+            if !child.file_type()?.is_dir() {
+                bail!(
+                    "retained unrecorded entry obstructs recorded tracked file: {}; recovery did not delete it",
+                    child.path().display()
+                );
+            }
+            collect(&child.path(), directories)?;
+        }
+        directories.push(root.to_path_buf());
+        Ok(())
+    }
+    cow::validate_tree(root)?;
+    let mut directories = Vec::new();
+    collect(root, &mut directories)?;
+    for directory in directories {
+        fs::remove_dir(directory)?;
+    }
+    Ok(())
+}
+
 /// Reconstruct every recorded tracked path before any ordinary snapshot. This is
 /// deliberately idempotent even after sparse expansion or partial ignored copying.
 fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> Result<()> {
@@ -1555,6 +1998,13 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     let client = JjClient::new(&plan.root);
     ensure_quiescence(&client)?;
     validate_contents(&plan.root, false)?;
+    for warning in plan
+        .skipped
+        .iter()
+        .filter(|warning| warning.starts_with("absolute dependency symlink "))
+    {
+        diagnostics(format!("Warning: {warning}"));
+    }
     let (operation, current) = current_commit(&client)?;
     if resume && plan.phase == Phase::Newing && current != plan.old_commit {
         let base = plan
@@ -1572,7 +2022,6 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     }
     if !resume {
         require_full(&client)?;
-        snapshot(&client)?;
         if current_commit(&client)?.1 != plan.old_commit || stamp(&plan.root)? != plan.target_stamp
         {
             bail!(
@@ -1588,23 +2037,34 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             );
         }
     }
-    // Remove placeholder prefills before clearing sparsity. A failed expansion
-    // can leave JJ unable to delete a modified placeholder; both operations are
-    // snapshot-disabled and followed by exact planned-path removal.
+    // Stock sparse mutations reject --ignore-working-copy. Recovery therefore
+    // reconstructs the entire CURRENT commit before a normal sparse command may
+    // snapshot it. The write-ahead Clearing phase covers interruptions during
+    // that repair as well as during sparse clearing itself.
     transition(store, plan, Phase::Clearing)?;
     if resume {
-        for path in &plan.clones {
-            remove_recorded_file(&plan.root, path, true)?;
-        }
+        reconstruct_current_tree(plan)?;
+    } else {
+        let expected = entries(&client, &plan.target_operation, &plan.desired_commit)?;
+        verify_disk(
+            &client,
+            &plan.target_operation,
+            &plan.desired_commit,
+            &plan.root,
+            &expected,
+        )?;
     }
     let output = client.run([
-        "--ignore-working-copy",
         "--config=fsmonitor.backend=none",
+        "--config=snapshot.auto-track=none()",
         "sparse",
         "set",
         "--clear",
     ])?;
     diagnostics(output.stderr());
+    if current_commit(&client)?.1 != plan.desired_commit {
+        bail!("sparse clearing changed the recorded CURRENT commit; pending retained");
+    }
     for path in plan
         .old_paths
         .iter()
@@ -1619,7 +2079,12 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             // A crash after `new` but before its journal update is distinguished
             // from concurrent graph changes by the write-ahead Newing phase.
             transition(store, plan, Phase::Newing)?;
-            let output = client.run(["--config=fsmonitor.backend=none", "new", &base])?;
+            let output = client.run([
+                "--config=fsmonitor.backend=none",
+                "--config=snapshot.auto-track=none()",
+                "new",
+                &base,
+            ])?;
             diagnostics(output.stderr());
             fault_after_new()?;
             let (operation, desired) = current_commit(&client)?;
@@ -1652,11 +2117,12 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         confined_parents(&plan.root, path)?;
     }
     cow::clone_files(&plan.source, &plan.clones, &plan.root)?;
-    // Restore stock sparse semantics without snapshotting the staged prefill.
+    // A normal sparse reset snapshots only the existing EMPTY sparse selection,
+    // not the staged prefills outside it. JJ then materializes all differences.
     transition(store, plan, Phase::Expanding)?;
     let output = client.run([
-        "--ignore-working-copy",
         "--config=fsmonitor.backend=none",
+        "--config=snapshot.auto-track=none()",
         "sparse",
         "reset",
     ])?;
@@ -1689,19 +2155,21 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     for path in &plan.ignored {
         rules.require_ignored(path)?;
     }
-    preflight_links(
-        default,
-        &plan.root,
-        &plan.entries,
-        &plan.ignored,
-        false,
-        &rules,
-    )?;
+    // Link existence is checked against the actual filesystem only after ignored
+    // payload restoration. Early future-state preflight already proved required
+    // targets; testing live existence here would reject freshly cleared caches.
     transition(store, plan, Phase::CopyingIgnored)?;
     validate_source(plan, resume)?;
     for path in &plan.ignored {
         confined_parents(&plan.root, path)?;
         cow::remove_path(&plan.root.join(path))?;
+        fs::create_dir_all(
+            plan.root
+                .join(path)
+                .parent()
+                .context("ignored root has no parent")?,
+        )?;
+        confined_parents(&plan.root, path)?;
         cow::clone_tree(&plan.source.join(path), &plan.root.join(path))?;
     }
     validate_source(plan, resume)?;
@@ -1768,6 +2236,7 @@ thread_local! {
     static FAIL_AT: std::cell::Cell<Option<Phase>> = const { std::cell::Cell::new(None) };
     static FAIL_AFTER_EXPANSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_NEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_DURING_REPAIR: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 fn fault(phase: Phase) -> Result<()> {
     #[cfg(test)]
@@ -1789,6 +2258,14 @@ fn fault_after_new() -> Result<()> {
     if FAIL_AFTER_NEW.with(std::cell::Cell::get) {
         bail!("injected interruption after jj new");
     }
+    Ok(())
+}
+fn fault_during_repair(index: usize) -> Result<()> {
+    #[cfg(test)]
+    if FAIL_DURING_REPAIR.with(|fail| fail.get() == Some(index)) {
+        bail!("injected interruption during tree repair");
+    }
+    let _ = index;
     Ok(())
 }
 
@@ -1832,6 +2309,21 @@ mod tests {
     }
 
     #[test]
+    fn added_symlink_parser_preserves_targets_and_newline_state() {
+        let header = b"diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n@@ -0,0 +1,1 @@\n";
+        let mut diff = header.to_vec();
+        diff.extend_from_slice(b"+../target with space\n\\ No newline at end of file\n");
+        assert_eq!(parse_added_symlink(&diff).unwrap(), b"../target with space");
+        let mut diff =
+            b"diff --git a/link b/link\nnew file mode 120000\n@@ -0,0 +1,2 @@\n".to_vec();
+        diff.extend_from_slice(b"+line one\n+line two\n");
+        assert_eq!(parse_added_symlink(&diff).unwrap(), b"line one\nline two\n");
+        assert!(parse_added_symlink(b"Warning: skipped symlink").is_err());
+        let diff = b"diff --git a/newline\n@@ -0,0 +1,999 @@\n b/newline\nnew file mode 120000\n+++ b/newline\n@@ -0,0 +1,999 @@\n@@ -0,0 +1 @@\n++diff --git a/x b/y  \n\\ No newline at end of file\n";
+        assert_eq!(parse_added_symlink(diff).unwrap(), b"+diff --git a/x b/y  ");
+    }
+
+    #[test]
     fn directory_component_globs_are_confined_and_never_follow_symlinks() {
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir_all(directory.path().join("packages/a/node_modules")).unwrap();
@@ -1857,6 +2349,96 @@ mod tests {
         assert_eq!(skipped.len(), 1);
         assert!(expand_ignored(directory.path(), &["../*".into()]).is_err());
         assert!(component_glob("package-?", "package-λ"));
+    }
+
+    #[test]
+    fn tracked_directory_type_transition_never_consumes_unrecorded_children() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("old-directory")).unwrap();
+        fs::write(directory.path().join("old-directory/tracked"), "old\n").unwrap();
+        let old = [Entry {
+            path: "old-directory/tracked".into(),
+            kind: "file".into(),
+            executable: false,
+        }];
+        let desired = [Entry {
+            path: "old-directory".into(),
+            kind: "file".into(),
+            executable: false,
+        }];
+        preflight_obstructions(directory.path(), &old, &desired, false).unwrap();
+        fs::write(
+            directory.path().join("old-directory/secret"),
+            "unrecorded\n",
+        )
+        .unwrap();
+        assert!(preflight_obstructions(directory.path(), &old, &desired, false).is_err());
+        preflight_obstructions(directory.path(), &old, &desired, true).unwrap();
+    }
+
+    #[test]
+    fn required_links_are_preflighted_against_future_private_and_copied_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("target");
+        let source = temp.path().join("source");
+        let default = temp.path().join("default");
+        fs::create_dir_all(root.join("private")).unwrap();
+        fs::create_dir_all(source.join("cache")).unwrap();
+        fs::create_dir(&default).unwrap();
+        fs::write(source.join("cache/fresh"), "payload\n").unwrap();
+        let rules = IgnoreRules {
+            directory: tempfile::tempdir().unwrap(),
+        };
+        checked_git(rules.directory.path(), ["init", "--quiet"]).unwrap();
+        fs::write(
+            rules.directory.path().join(".gitignore"),
+            "dependency-link\n",
+        )
+        .unwrap();
+        let client = JjClient::new(&root);
+        let entries = [Entry {
+            path: "tracked/file".into(),
+            kind: "file".into(),
+            executable: false,
+        }];
+        let ignored = [PathBuf::from("cache")];
+        let mut future = FutureContent {
+            root: &root,
+            source: &source,
+            entries: &entries,
+            old_paths: &[],
+            ignored: &ignored,
+            replace: false,
+            client: &client,
+            operation: "",
+            commit: "",
+        };
+        fs::write(
+            default.join(".jwlinks.toml"),
+            "[[link]]\nsource='private'\ntarget='private'\nrequired=true\n",
+        )
+        .unwrap();
+        preflight_links(&default, &root, &entries, &ignored, false, &rules, &future).unwrap();
+        future.replace = true;
+        assert!(
+            preflight_links(&default, &root, &entries, &ignored, true, &rules, &future).is_err()
+        );
+        fs::write(
+            default.join(".jwlinks.toml"),
+            "[[link]]\nsource='dependency-link'\ntarget='private'\nrequired=true\n",
+        )
+        .unwrap();
+        assert!(
+            preflight_links(&default, &root, &entries, &ignored, true, &rules, &future).is_err()
+        );
+        fs::write(
+            default.join(".jwlinks.toml"),
+            "[[link]]\nsource='dependency-link'\ntarget='cache/fresh'\nrequired=true\n",
+        )
+        .unwrap();
+        preflight_links(&default, &root, &entries, &ignored, true, &rules, &future).unwrap();
+        future.replace = false;
+        preflight_links(&default, &root, &entries, &ignored, false, &rules, &future).unwrap();
     }
 
     fn fixture(reset: bool) -> Option<(tempfile::TempDir, Store, Pending)> {
@@ -1891,6 +2473,8 @@ mod tests {
             .unwrap();
         fs::write(source.join("shared"), b"shared baseline\n").unwrap();
         fs::write(source.join("different"), b"source baseline\n").unwrap();
+        std::os::unix::fs::symlink("shared", source.join("link")).unwrap();
+        std::os::unix::fs::symlink("shared", source.join("changed-link")).unwrap();
         fs::write(source.join(".gitignore"), b"cache/\n.env\n").unwrap();
         fs::create_dir(source.join("cache")).unwrap();
         fs::write(source.join("cache/dependency"), b"fresh dependency\n").unwrap();
@@ -1909,6 +2493,8 @@ mod tests {
             .unwrap();
         let target_client = JjClient::new(&target);
         fs::write(target.join("different"), b"feature change\n").unwrap();
+        fs::remove_file(target.join("changed-link")).unwrap();
+        std::os::unix::fs::symlink("different", target.join("changed-link")).unwrap();
         fs::write(target.join(".env"), b"retained\n").unwrap();
         snapshot(&target_client).unwrap();
         if let Err(error) = cow::probe_between(&source, &target) {
@@ -2085,6 +2671,58 @@ mod tests {
     }
 
     #[test]
+    fn adversarial_git_template_cannot_escape_ignore_probe() {
+        if std::env::var_os("JW_RESEED_TEMPLATE_CHILD").is_some() {
+            let Some((_temporary, _store, plan)) = fixture(false) else {
+                return;
+            };
+            let client = JjClient::new(&plan.source);
+            let entries = entries(&client, &plan.source_operation, &plan.source_commit).unwrap();
+            let rules = IgnoreRules::new(
+                &client,
+                &plan.source_operation,
+                &plan.source_commit,
+                &entries,
+                true,
+            )
+            .unwrap();
+            rules.require_ignored(Path::new("cache")).unwrap();
+            assert_eq!(
+                fs::read(std::env::var_os("JW_RESEED_TEMPLATE_MARKER").unwrap()).unwrap(),
+                b"outside marker must survive\n"
+            );
+            return;
+        }
+        // Process-scoped environment avoids unsafe global env mutation or races
+        // with another unit test. Git's inherited template contains a symlink
+        // exactly at the file the ignore adapter must populate privately.
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("outside-marker");
+        let template = temp.path().join("template");
+        fs::write(&marker, b"outside marker must survive\n").unwrap();
+        fs::create_dir_all(template.join("info")).unwrap();
+        std::os::unix::fs::symlink(&marker, template.join("info/exclude")).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reseed::engine::tests::adversarial_git_template_cannot_escape_ignore_probe",
+                "--nocapture",
+            ])
+            .env("JW_RESEED_TEMPLATE_CHILD", "1")
+            .env("JW_RESEED_TEMPLATE_MARKER", &marker)
+            .env("GIT_TEMPLATE_DIR", &template)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(marker).unwrap(), b"outside marker must survive\n");
+    }
+
+    #[test]
     fn prepared_resume_refuses_new_unsnapshotted_target_edits() {
         let Some((_temporary, store, mut plan)) = fixture(false) else {
             return;
@@ -2125,5 +2763,26 @@ mod tests {
             b"fresh dependency\n"
         );
         assert!(store.pending("worker").unwrap().is_none());
+    }
+
+    #[test]
+    fn interruption_during_reconstruction_never_snapshots_partial_repair() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let default = plan.source.clone();
+        FAIL_AFTER_EXPANSION.with(|f| f.set(true));
+        assert!(execute(&store, &default, &mut plan, false).is_err());
+        FAIL_AFTER_EXPANSION.with(|f| f.set(false));
+        let target = JjClient::new(&plan.root);
+        let mut pending = store.pending("worker").unwrap().unwrap();
+        FAIL_DURING_REPAIR.with(|f| f.set(Some(1)));
+        assert!(execute(&store, &default, &mut pending, true).is_err());
+        FAIL_DURING_REPAIR.with(|f| f.set(None));
+        assert_eq!(current_commit(&target).unwrap().1, plan.old_commit);
+        let mut pending = store.pending("worker").unwrap().unwrap();
+        assert_eq!(pending.phase, Phase::Clearing);
+        execute(&store, &default, &mut pending, true).unwrap();
+        assert_eq!(current_commit(&target).unwrap().1, plan.old_commit);
     }
 }
