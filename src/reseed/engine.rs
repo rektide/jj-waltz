@@ -1142,6 +1142,12 @@ fn preflight_obstructions(
                             path.display()
                         );
                     }
+                    if !m.is_dir() {
+                        // A recorded ancestor leaf will disappear during sparse
+                        // clearing. Do not inspect through its old symlink (or
+                        // ask the OS for children of an old regular file).
+                        break;
+                    }
                 }
                 Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::NotFound => break,
@@ -1879,6 +1885,21 @@ fn reconstruct_current_tree(plan: &Pending) -> Result<()> {
     for path in &obsolete {
         remove_recorded_file(&plan.root, path, false)?;
     }
+    if !plan.replace_content {
+        for entry in &plan.entries {
+            if plan
+                .old_paths
+                .iter()
+                .any(|path| path != &entry.path && path.starts_with(&entry.path))
+                && fs::symlink_metadata(plan.root.join(&entry.path)).is_ok_and(|m| m.is_dir())
+            {
+                // A declared tracked-directory-to-leaf transition may leave
+                // empty checkout parent directories. Remove only these empty
+                // directories with remove_dir, never their retained contents.
+                remove_empty_directories(&plan.root.join(&entry.path))?;
+            }
+        }
+    }
     let changed = changed_paths(
         &client,
         &plan.target_operation,
@@ -2378,6 +2399,32 @@ mod tests {
     }
 
     #[test]
+    fn tracked_symlink_parent_transition_never_inspects_external_children() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("target");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("child"), "private external data\n").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("tracked-link")).unwrap();
+        let old = [Entry {
+            path: "tracked-link".into(),
+            kind: "symlink".into(),
+            executable: false,
+        }];
+        let desired = [Entry {
+            path: "tracked-link/child".into(),
+            kind: "file".into(),
+            executable: false,
+        }];
+        preflight_obstructions(&root, &old, &desired, false).unwrap();
+        assert_eq!(
+            fs::read(outside.join("child")).unwrap(),
+            b"private external data\n"
+        );
+    }
+
+    #[test]
     fn required_links_are_preflighted_against_future_private_and_copied_content() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("target");
@@ -2774,6 +2821,71 @@ mod tests {
                 .next()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn native_reset_type_transitions_preserve_unrelated_and_external_secrets() {
+        let Some((temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let source = JjClient::new(&plan.source);
+        let target = JjClient::new(&plan.root);
+        let outside = temporary.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("child"), b"private external data\n").unwrap();
+        fs::create_dir(plan.root.join("directory-to-file")).unwrap();
+        fs::write(
+            plan.root.join("directory-to-file/old-child"),
+            b"old tracked data\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside, plan.root.join("symlink-to-directory")).unwrap();
+        snapshot(&target).unwrap();
+        source.run(["new"]).unwrap();
+        fs::write(plan.source.join("directory-to-file"), b"new file\n").unwrap();
+        fs::create_dir(plan.source.join("symlink-to-directory")).unwrap();
+        fs::write(
+            plan.source.join("symlink-to-directory/child"),
+            b"new child\n",
+        )
+        .unwrap();
+        snapshot(&source).unwrap();
+        let operation = source.operation_id().unwrap();
+        let source_commit = source.resolve_one_at(&operation, "@").unwrap().commit_id;
+        let old_commit = target.resolve_one_at(&operation, "@").unwrap().commit_id;
+        let old_entries = entries(&target, &operation, &old_commit).unwrap();
+        let desired_entries = entries(&source, &operation, &source_commit).unwrap();
+        preflight_obstructions(&plan.root, &old_entries, &desired_entries, false).unwrap();
+        plan.source_operation = operation.clone();
+        plan.target_operation = operation;
+        plan.source_commit = source_commit.clone();
+        plan.source_wc_commit = source_commit.clone();
+        plan.validated_source_wc_commit = source_commit.clone();
+        plan.base_commit = Some(source_commit);
+        plan.old_commit = old_commit.clone();
+        plan.desired_commit = old_commit;
+        plan.clones = desired_entries.iter().map(|e| e.path.clone()).collect();
+        plan.entries = desired_entries;
+        plan.old_paths = old_entries.into_iter().map(|e| e.path).collect();
+        plan.source_stamp = stamp(&plan.source).unwrap();
+        plan.target_stamp = stamp(&plan.root).unwrap();
+        let default = plan.source.clone();
+        execute(&store, &default, &mut plan, false).unwrap();
+        assert_eq!(
+            fs::read(plan.root.join("directory-to-file")).unwrap(),
+            b"new file\n"
+        );
+        assert_eq!(
+            fs::read(plan.root.join("symlink-to-directory/child")).unwrap(),
+            b"new child\n"
+        );
+        assert_eq!(fs::read(plan.root.join(".env")).unwrap(), b"retained\n");
+        assert_eq!(
+            fs::read(outside.join("child")).unwrap(),
+            b"private external data\n"
+        );
+        plan.root_identity.verify(&plan.root).unwrap();
+        plan.jj_identity.verify(&plan.root.join(".jj")).unwrap();
     }
 
     #[test]
