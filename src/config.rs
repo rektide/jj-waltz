@@ -12,6 +12,8 @@ const DEFAULT_TRUNK_REVSET: &str = "trunk()";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub default_command: DefaultCommand,
+    /// Root-level ignored-copy defaults; omission and explicit [] stay distinct.
+    pub copy_ignored: Option<Vec<String>>,
     pub workspace: WorkspaceConfig,
     pub trunk: TrunkConfig,
 }
@@ -43,6 +45,7 @@ pub struct TrunkConfig {
 #[derive(Debug, Deserialize, Default)]
 struct RawConfig {
     default_command: Option<DefaultCommand>,
+    copy_ignored: Option<Vec<String>>,
     workspace: Option<RawWorkspaceConfig>,
     trunk: Option<RawTrunkConfig>,
 }
@@ -65,6 +68,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             default_command: DefaultCommand::Ui,
+            copy_ignored: None,
             workspace: WorkspaceConfig {
                 create_bookmark: false,
                 colocate: None,
@@ -104,6 +108,7 @@ impl From<RawConfig> for Config {
 
         Self {
             default_command: raw.default_command.unwrap_or_default(),
+            copy_ignored: raw.copy_ignored,
             workspace: WorkspaceConfig {
                 create_bookmark: workspace.create_bookmark,
                 colocate: workspace.colocate,
@@ -143,10 +148,33 @@ mod tests {
     fn defaults_do_not_create_bookmarks() {
         let config = Config::default();
         assert_eq!(config.default_command, DefaultCommand::Ui);
+        assert_eq!(config.copy_ignored, None);
         assert!(!config.workspace.create_bookmark);
         assert_eq!(config.workspace.bookmark_template, "{workspace}");
         assert_eq!(config.workspace.copy_on_write, None);
         assert_eq!(config.trunk.revset, "trunk()");
+    }
+
+    #[test]
+    fn root_ignored_copy_policy_distinguishes_missing_empty_and_selected() {
+        for (text, expected) in [
+            ("", None),
+            ("copy_ignored = []", Some(Vec::new())),
+            (
+                "copy_ignored = ['**/target', '**/node_modules', '**/dist/', '**/build/']",
+                Some(vec![
+                    "**/target".into(),
+                    "**/node_modules".into(),
+                    "**/dist/".into(),
+                    "**/build/".into(),
+                ]),
+            ),
+        ] {
+            assert_eq!(
+                Config::from(toml::from_str::<RawConfig>(text).unwrap()).copy_ignored,
+                expected
+            );
+        }
     }
 
     #[test]

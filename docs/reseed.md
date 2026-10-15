@@ -9,7 +9,7 @@ generated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Implemented local freshen command sequences, completed/in-flight recovery, v1 journal migration, deprecated prepare compatibility, and honest existing-payload borrowing
+    title: Implemented local command/recovery foundations, then shared ignored-copy precedence, single-walk eligible selection, and frozen empty-selection compatibility
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Implemented and verified reseeding, source defaults, and explicit donor freshening with recoverable preparation
   - resource: "opencode://ses_ec2e49e63ffe72f71k65378obu"
@@ -81,7 +81,8 @@ selection never means all workspaces. Names are literal, not navigation tokens.
 
 ## Ignored data
 
-By default, other ignored or untracked contents stay in the target. To replace
+Other ignored or untracked contents stay in the target unless explicitly selected.
+With no CLI, local, or global selection, no ignored payload is copied. To replace
 specific ignored dependency directories with private CoW copies:
 
 ```sh
@@ -89,13 +90,58 @@ jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin' \
   --copy-ignored node_modules --copy-ignored 'packages/*/node_modules'
 ```
 
-Quote patterns so your shell does not expand them. Selections must be ignored in
-the source and target and cannot overlap tracked files or administrative paths.
+Quote patterns so your shell does not expand them. Matching **nonignored source
+directories are skipped and reported**, not replaced as payload. For example,
+`**/build/` can pass through a normal tracked `build/` and still find eligible
+ignored matches deeper inside it. A selected source root must be ignored and
+cannot overlap tracked files. If ignore rules cover forced-tracked files inside
+it, that overlap is a hard error, not permission to clone the tracked tree as payload.
+Selected roots must also be ignored in the target, with no tracked overlap or
+unsafe obstruction; those target checks remain hard failures.
 Directory patterns support literal components, `*`, `?`, and recursive `**`;
-they never traverse symlinked directories.
-Missing matches are reported as skipped. Selected roots are **replaced**, so old
+trailing `/` is accepted. Selection never follows directory symlinks or enters
+`.jj`/`.git`. Missing matches succeed and are reported as skipped unless their
+potential matches are already covered by a selected outer root. Selected roots
+are **replaced**, so old
 entries disappear. They are not hard links or shared-directory symlinks: edits in
 one checkout do not alter the other.
+
+### Ignored-copy policy layers
+
+The root of the user config file (`$XDG_CONFIG_HOME/jj-waltz/config.toml`, or
+`~/.config/jj-waltz/config.toml`) may declare:
+
+```toml
+# Root key, not inside [workspace] or [freshen].
+copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
+```
+
+This is opt-in configuration; `jw` does not write it for you. Effective lists are
+**CLI explicit list > local explicit list > global list > none**. Lists replace,
+not accumulate. A missing local `copy_ignored` inherits global policy; local
+`copy_ignored = []` disables that inheritance. `--no-copy-ignored` disables copying
+for the run, even alongside an explicit CLI list. There are no global
+freshening/build commands.
+
+| Global | Local | CLI | Effective selection |
+| --- | --- | --- | --- |
+| `["**/target"]` | missing | absent | `["**/target"]` |
+| `["**/target"]` | `[]` | absent | `[]` |
+| `["**/target"]` | `["cache"]` | `--copy-ignored node_modules` | `["node_modules"]` |
+| any | any | `--no-copy-ignored` | `[]` |
+
+Current exposure is `reseed`, including its legacy `--freshen` preparation path.
+The policy and selector are shared foundations; add/s payload integration is the
+next stage and is **not exposed yet**. Up remains unintegrated. No creation-mode
+behavior or new fallback flag is introduced by this stage.
+
+All patterns are compiled together for each selection traversal.
+The traversal keeps possible prefixes, skips impossible subtrees, and stops at
+selected outer roots so nested payloads are not copied twice. It continues through
+nonignored matches when another pattern can match below them. Frozen ignore-rule
+assembly, topology/content validation, stamps, payload digests, CoW probing and
+copying still have their own justified passes: this is not a promise of exactly
+one filesystem pass for the entire operation.
 
 Dependencies reflect the prepared source's installed state. If a feature changes
 package manifests, run that project's frozen install in the feature workspace.
@@ -374,6 +420,16 @@ application failed. Batch output distinguishes completed, failed, and pending
 targets and exits nonzero for partial failure. Recovery never uses repository-wide
 `jj undo`.
 
+Preparation freezes the effective ignored-copy list, including explicit `[]`,
+before commands run. Once source preparation is verified, its actual root set is
+frozen too and is used directly for target plans. Resume does not
+inherit new global patterns. Existing v1/v2 preparation request arrays keep that
+meaning: a recorded `[]` remains empty, not a missing value asking for defaults.
+Verified root sets are not re-expanded under a newer matcher: a legacy pattern
+that previously selected nothing does not suddenly add payload during recovery.
+New matching roots outside the frozen set remain unselected; changes inside a
+selected root still require exact payload restoration.
+
 ## Related material
 
 - [CoW creation](../README.md#copy-on-write-workspaces) creates a new workspace;
@@ -411,6 +467,15 @@ all passing on official JJ 0.46.0 with real Btrfs CoW required. The no-command
 existing-payload case also verifies shared extents and private inodes. Focused
 configuration checks, Clippy, and formatting pass. This change did not repeat the
 earlier release matrix or unrelated suites.
+
+Shared ignored-copy policy and selection were checked with focused native cases
+on official JJ 0.46.0 and required real Btrfs CoW: mixed tracked `build/` trees,
+eligible descendants, replacement/empty/disabled precedence, missing matches,
+forced-tracked source/target rejection, and unchanged topology/target-ignore guards.
+Freshening checks include global no-builder payload borrowing and legacy frozen
+`[]` recovery after global defaults change. Unit checks exercise the policy and
+compiled selector. Shared extents, private inodes, and independent writes were
+verified; the full release matrix was not repeated for this stage.
 
 Wildcard groups at implementation checkpoint `9bd3a1c1` add six native cases
 (36 total) and nine selection unit cases. All 353 regression tests passed with

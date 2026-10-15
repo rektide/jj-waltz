@@ -1337,7 +1337,7 @@ fn selection_is_explicit_and_primary_source_and_unknown_targets_are_rejected() {
 }
 
 #[test]
-fn dirty_or_sparse_source_and_nonignored_payload_fail_before_target_mutation() {
+fn dirty_and_sparse_source_fail_but_nonignored_source_matches_are_skipped() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
@@ -1352,14 +1352,211 @@ fn dirty_or_sparse_source_and_nonignored_payload_fail_before_target_mutation() {
     fs::create_dir(source.join("not-ignored")).unwrap();
     fs::write(source.join("not-ignored/file"), "payload").unwrap();
     // Keep this untracked so source-at still matches; the payload is not ignored.
-    repo.unchanged_failure(
-        &target,
-        repo.reseed(&["feature"], &source, &["--copy-ignored", "not-ignored"]),
-        &before,
+    let output = success(repo.reseed(&["feature"], &source, &["--copy-ignored", "not-ignored"]));
+    assert!(
+        output.contains("not ignored under frozen source rules"),
+        "{output}"
     );
+    assert!(!target.join("not-ignored").exists());
+    assert_eq!(repo.id(&target, "@"), before);
     fs::remove_dir_all(source.join("not-ignored")).unwrap();
     repo.jj_at(&source, &["sparse", "set", "--clear"]);
     repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &[]), &before);
+}
+
+#[test]
+fn global_ignored_policy_skips_tracked_build_and_selects_eligible_descendants_once() {
+    let Some(mut repo) = Repo::new() else {
+        return;
+    };
+    fs::create_dir(repo.root.join("build")).unwrap();
+    fs::write(repo.root.join("build/tracked"), "normal tracked build tree").unwrap();
+    repo.baseline = repo.id(&repo.root, "@");
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir_all(repo.config.join("jj-waltz")).unwrap();
+    fs::write(
+        repo.config.join("jj-waltz/config.toml"),
+        "copy_ignored=['**/target', '**/node_modules', '**/dist/', '**/build/']\n",
+    )
+    .unwrap();
+    for root in [
+        "build/packages/a/node_modules",
+        "packages/a/node_modules",
+        "packages/a/dist",
+        "packages/a/target",
+    ] {
+        fs::create_dir_all(source.join(root)).unwrap();
+        fs::write(source.join(root).join("data"), vec![b'p'; 128 * 1024]).unwrap();
+    }
+    fs::create_dir_all(source.join("packages/a/node_modules/nested/target")).unwrap();
+    fs::write(
+        source.join("packages/a/node_modules/nested/target/data"),
+        "nested payload",
+    )
+    .unwrap();
+    fs::create_dir(target.join("cache")).unwrap();
+    fs::write(target.join("cache/local-only"), "retain unselected data").unwrap();
+    let output = repo.reseed(&["feature"], &source, &[]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Global"));
+    let output = success(output);
+    assert!(output.contains("ignored roots [\"build/packages/a/node_modules\", \"packages/a/dist\", \"packages/a/node_modules\", \"packages/a/target\"]"), "{output}");
+    assert!(
+        output.contains("not ignored under frozen source rules"),
+        "{output}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("build/tracked")).unwrap(),
+        "normal tracked build tree"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("cache/local-only")).unwrap(),
+        "retain unselected data"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("packages/a/node_modules/nested/target/data")).unwrap(),
+        "nested payload"
+    );
+    let payload = Path::new("build/packages/a/node_modules/data");
+    assert_ne!(
+        identity(&source.join(payload)),
+        identity(&target.join(payload))
+    );
+    assert_shared_extents(&source.join(payload), &target.join(payload));
+    fs::write(target.join(payload), "private write").unwrap();
+    assert_eq!(
+        fs::read(source.join(payload)).unwrap(),
+        vec![b'p'; 128 * 1024]
+    );
+}
+
+#[test]
+fn ignored_policy_precedence_preserves_explicit_empty_and_never_prunes_unselected_data() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir_all(repo.config.join("jj-waltz")).unwrap();
+    let global = repo.config.join("jj-waltz/config.toml");
+    fs::write(&global, "copy_ignored=['cache/']\n").unwrap();
+    for root in ["cache", "packages/a/node_modules"] {
+        fs::create_dir_all(source.join(root)).unwrap();
+        fs::write(source.join(root).join("data"), "source payload").unwrap();
+    }
+    let local = repo.root.join(".jwreseed.local.toml");
+    fs::write(&local, "copy_ignored=[]\n").unwrap();
+    let output = repo.reseed(&["feature"], &source, &[]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Local: []"));
+    assert!(success(output).contains("ignored roots []"));
+    assert!(!target.join("cache").exists());
+    fs::write(&local, "copy_ignored=['cache/']\n").unwrap();
+    let output = repo.reseed(
+        &["feature"],
+        &source,
+        &["--copy-ignored", "packages/*/node_modules/"],
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Cli"));
+    success(output);
+    assert!(!target.join("cache").exists());
+    assert_eq!(
+        fs::read_to_string(target.join("packages/a/node_modules/data")).unwrap(),
+        "source payload"
+    );
+    fs::write(
+        target.join("packages/a/node_modules/data"),
+        "keep private data",
+    )
+    .unwrap();
+    success(repo.reseed(
+        &["feature"],
+        &source,
+        &["--copy-ignored", "cache/", "--no-copy-ignored"],
+    ));
+    assert!(!target.join("cache").exists());
+    fs::write(&local, "").unwrap(); // Missing local selection inherits global.
+    success(repo.reseed(&["feature"], &source, &[]));
+    assert_eq!(
+        fs::read_to_string(target.join("cache/data")).unwrap(),
+        "source payload"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("packages/a/node_modules/data")).unwrap(),
+        "keep private data"
+    );
+    fs::write(&global, "copy_ignored=['missing/output/']\n").unwrap();
+    let output = success(repo.reseed(&["feature"], &source, &[]));
+    assert!(
+        output.contains("ignored roots []") && output.contains("matched no source directories"),
+        "{output}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("cache/data")).unwrap(),
+        "source payload"
+    );
+}
+
+#[test]
+fn selected_ignored_source_and_target_roots_still_reject_forced_tracked_payload() {
+    for role in ["source", "target"] {
+        let Some(mut repo) = Repo::new() else {
+            return;
+        };
+        if role == "source" {
+            fs::write(
+                repo.root.join(".gitignore"),
+                ".env\n.jwreseed.local.toml\npackages/\n",
+            )
+            .unwrap();
+            fs::create_dir(repo.root.join("cache")).unwrap();
+            fs::write(
+                repo.root.join("cache/forced-tracked"),
+                "tracked before ignoring",
+            )
+            .unwrap();
+            repo.id(&repo.root, "@");
+            fs::write(
+                repo.root.join(".gitignore"),
+                "cache/\n.env\n.jwreseed.local.toml\npackages/\n",
+            )
+            .unwrap();
+            repo.baseline = repo.id(&repo.root, "@");
+        }
+        let source = repo.workspace("source");
+        let target = repo.workspace("feature");
+        if role == "target" {
+            fs::create_dir(source.join("cache")).unwrap();
+            fs::write(source.join("cache/data"), "ignored source data").unwrap();
+            fs::write(
+                target.join(".gitignore"),
+                ".env\n.jwreseed.local.toml\npackages/\n",
+            )
+            .unwrap();
+            fs::create_dir(target.join("cache")).unwrap();
+            fs::write(target.join("cache/forced-tracked"), "feature tracked data").unwrap();
+            repo.id(&target, "@");
+            fs::write(
+                target.join(".gitignore"),
+                "cache/\n.env\n.jwreseed.local.toml\npackages/\n",
+            )
+            .unwrap();
+        }
+        let before = repo.id(&target, "@");
+        let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache/"]);
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("overlaps tracked"),
+            "{role}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        repo.unchanged_failure(&target, output, &before);
+        assert!(target.join("cache/forced-tracked").exists());
+    }
 }
 
 #[test]

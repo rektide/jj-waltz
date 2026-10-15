@@ -388,10 +388,10 @@ struct ReseedCommand {
     /// Start a fresh empty change at this base instead of keeping target revisions.
     #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
     at: Option<String>,
-    /// Replace these ignored directory roots (repeatable; overrides configured roots).
-    #[arg(long, value_name = "PATTERN", conflicts_with_all = ["no_copy_ignored", "resume"])]
+    /// Select eligible ignored source roots (repeatable; replaces local/global selection).
+    #[arg(long, value_name = "PATTERN", conflicts_with = "resume")]
     copy_ignored: Vec<String>,
-    /// Disable copying configured ignored roots for this run.
+    /// Disable ignored copying for this run, including an explicit selection.
     #[arg(long, conflicts_with = "resume")]
     no_copy_ignored: bool,
     /// Delete unrecorded target contents except .jj before refilling.
@@ -559,7 +559,7 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
             source: cmd.source,
             source_at: cmd.source_at,
             at: cmd.at,
-            copy_ignored: cmd.copy_ignored,
+            copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
             no_copy_ignored: cmd.no_copy_ignored,
             replace_content: cmd.replace_content,
             dry_run: cmd.dry_run,
@@ -1399,17 +1399,20 @@ mod reseed_cli_tests {
     }
 
     #[test]
-    fn reseed_ignored_selection_flags_conflict() {
-        assert!(
-            Cli::try_parse_from([
-                "jw",
-                "reseed",
-                "feature",
-                "--copy-ignored",
-                "node_modules",
-                "--no-copy-ignored",
-            ])
-            .is_err()
-        );
+    fn reseed_no_copy_ignored_overrides_an_explicit_selection() {
+        let cli = Cli::try_parse_from([
+            "jw",
+            "reseed",
+            "feature",
+            "--copy-ignored",
+            "node_modules",
+            "--no-copy-ignored",
+        ])
+        .unwrap();
+        let Some(Commands::Reseed(command)) = cli.command else {
+            panic!("expected reseed");
+        };
+        assert!(command.no_copy_ignored);
+        assert_eq!(command.copy_ignored, ["node_modules"]);
     }
 }

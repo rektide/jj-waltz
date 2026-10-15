@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Implemented native source and missing-ref foundations, then local command sequences, durable completed/in-flight progress, and compatible v1 preparation recovery
+    title: Implemented native source, command/recovery, and shared ignored-copy policy/selection foundations with explicit frozen-policy compatibility
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified shared add/s placement, snapshotted-current creation bases, explicit mode resolution, and visible fallback reporting
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -66,6 +66,9 @@ offline.
   listing tracked files and reading and writing JJ's local working-copy state,
   which is not a public interface: every copied state is validated by JJ and
   replaced on rejection.
+  Its `cow::ignored` submodule owns shared ignored-copy precedence and the compiled
+  eligible-root selector; command adapters supply frozen source rules and tracked
+  paths instead of implementing their own pattern traversal.
 - `reseed` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and repository-scoped pending records and receipts. It uses
@@ -286,6 +289,61 @@ import of JJ's private working-copy state.
 
 See the [operator guide](reseed.md) and
 [design](../design/workspace-reseed/reseed0.gpt6a.md) for policy and limitations.
+
+### Shared ignored-copy policy and selection
+
+[`cow::ignored`](../src/cow/ignored.rs) is command-independent. `Policy::load`
+resolves optional CLI/local lists and root global `copy_ignored`, preserving
+missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
+replace in CLI > local > global order. Global config is read only when inherited,
+and never written. `Policy::recorded` represents frozen recovery selection instead
+of reading current defaults. The API is shared for creation/reseed/up; the current
+command exposure is reseed and legacy source preparation only. Creation payload
+orchestration and up integration remain separate commissioned stages.
+
+`Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
+unsupported syntax, deduplicates equivalent selectors, and compiles components.
+`Patterns::select(source, tracked_paths, is_ignored)` carries all active pattern
+prefixes through **one directory-selection traversal**. Recursive `**` has
+zero/one-component transitions; it does not launch another subtree walk. Prefixes
+that cannot match are pruned. Selected ignored outer roots prune the selection
+walk and include nested matches once, so covered descendants are not separately
+enumerated or spuriously reported missing. Administrative directories, directory
+symlinks, and mounted-child boundaries are not traversed.
+
+The existing engine supplies `is_ignored` from its isolated native Git probe over
+frozen desired `.gitignore` content and excludes. A nonignored source match is
+skipped/reported while viable descendant patterns continue. Native probe/I/O
+failures are errors, not silently converted to skips. An ignored candidate is
+checked against frozen source tracked paths before selection; forced-tracked
+overlap is a hard failure. Selected roots still face target ignored/tracked,
+confinement, obstruction, and actual private-CoW checks. Unselected target data
+is not automatically pruned; `--replace-content` remains its explicit destructive
+exception. See [operator policy examples](reseed.md#ignored-copy-policy-layers).
+
+After preparation is verified, its recorded root set is authoritative.
+`validate_selected` checks those exact roots, parent confinement, source ignore
+rules and tracked overlap without discovering additional matches. Target plans
+use that set, not a fresh expansion of the original selectors. This preserves
+legacy verified payload scope across matcher fixes (including formerly unmatched
+trailing-slash patterns). New matches outside the frozen roots are neither adopted
+nor pruned; changed bytes within selected roots still fail the frozen digest proof.
+Selection diagnostics are optional proof metadata; older records default to none.
+
+This optimizes matching, not every filesystem operation. Frozen ignore assembly,
+source/target stamps, recursive validation, payload digest, capability probes and
+copying retain independent correctness passes. New/unverified freshening compiles
+syntax before fetch and selects against the exact frozen goal before commands and
+at source-proof capture. Verified recovery validates frozen roots instead. It
+does not reject a missing literal directory
+or require a builder merely because global patterns exist.
+
+The typed reseed request now uses an optional selection; CLI absence and local
+absence remain distinct from explicit `[]`. Preparation always serializes an
+effective array in the frozen request. Existing v1/v2 arrays deserialize to
+`Some(array)` with the same wire representation, including frozen empty lists;
+missing frozen selection is rejected instead of inheriting new policy. Target
+pending roots and journal schema versions are unchanged by this stage.
 
 ### Local freshening commands and recovery
 

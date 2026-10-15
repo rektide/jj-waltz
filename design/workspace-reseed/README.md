@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Linked native source/missing-ref and command-sequence foundations, and distinguished current commission from superseded freshening/default alternatives
+    title: Linked native source, command/recovery, and shared ignored-copy foundations with their current integration boundaries
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
     title: Commissioned up and shared copying implementation after repeat-reseed design and independent JJ preservation/tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
@@ -38,6 +38,10 @@ sources:
   implemented `[freshen]` single/ordered argv policy in the existing preparation
   engine, durable per-step progress, deprecated `[prepare]` alias, and v1 journal
   compatibility. Still activated through `reseed --freshen` pending up integration.
+- [Shared ignored-copy policy and selection](../../docs/architecture.md#shared-ignored-copy-policy-and-selection) —
+  root global/local/CLI precedence with explicit empty lists, one compiled
+  selection traversal, skipped nonignored source matches, and hard selected-root
+  guards. Reseed/preparation use it; add/s payload integration is still pending.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;

@@ -30,7 +30,8 @@ pub struct ReseedRequest {
     pub source: Option<PathBuf>,
     pub source_at: Option<String>,
     pub at: Option<String>,
-    pub copy_ignored: Vec<String>,
+    /// None inherits local/global policy; Some([]) explicitly disables inheritance.
+    pub copy_ignored: Option<Vec<String>>,
     pub no_copy_ignored: bool,
     pub replace_content: bool,
     pub dry_run: bool,

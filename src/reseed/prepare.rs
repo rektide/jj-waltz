@@ -81,6 +81,8 @@ struct VerifiedSource {
     change_id: String,
     stamp: Vec<Stamp>,
     ignored: Vec<PathBuf>,
+    #[serde(default)]
+    selection_diagnostics: Vec<String>,
     payload_digest: String,
 }
 
@@ -159,14 +161,14 @@ fn batches(store: &Store) -> Result<Vec<Batch>> {
         if path(store, &batch.source) != entry.path() {
             bail!("invalid source preparation journal identity/version");
         }
-        batch.load_commands()?;
+        batch.load_compatible()?;
         result.push(batch);
     }
     Ok(result)
 }
 
 impl Batch {
-    fn load_commands(&mut self) -> Result<()> {
+    fn load_compatible(&mut self) -> Result<()> {
         match self.schema_version {
             1 => {
                 if self.command_sequence.is_some() {
@@ -191,7 +193,13 @@ impl Batch {
             2 if self.command.is_none() => {}
             _ => bail!("invalid source preparation journal version or legacy command field"),
         }
-        self.validate_commands()
+        self.validate_commands()?;
+        // Legacy v1/v2 requests already froze an effective array, including [].
+        // Option preserves that wire form as Some(array), never new inheritance.
+        if self.request.copy_ignored.is_none() {
+            bail!("preparation journal lacks frozen ignored-copy selection");
+        }
+        Ok(())
     }
 
     fn sequence(&self) -> Result<&CommandSequence> {
@@ -240,7 +248,7 @@ pub(super) fn validate_resume_request(request: &ReseedRequest) -> Result<()> {
         || request.source.is_some()
         || request.source_at.is_some()
         || request.at.is_some()
-        || !request.copy_ignored.is_empty()
+        || request.copy_ignored.is_some()
         || request.no_copy_ignored
         || request.replace_content
     {
@@ -287,7 +295,6 @@ pub(super) fn preflight(
     metadata: &WorkspaceMetadataStore,
     inventory: &Inventory,
     source: &Path,
-    ignored: &[String],
     settings: Option<&Settings>,
 ) -> Result<()> {
     // Inspect every legacy/current target pending record, not just this selection.
@@ -326,8 +333,8 @@ pub(super) fn preflight(
     validate_ownership(source, name, metadata)?;
     remote(source, settings)?;
     configured_argv(settings)?;
-    // Validate pattern grammar, topology and missing-root policy before mutation.
-    expand_ignored(source, ignored)?;
+    // The coordinator compiles new/unverified selectors before fetch. Verified
+    // recovery validates recorded roots instead of reinterpreting old patterns.
     Ok(())
 }
 
@@ -455,7 +462,7 @@ pub(super) fn begin(
     frozen_request.on_unmatched = None;
     frozen_request.source = Some(source.to_path_buf());
     frozen_request.source_at = Some(rev.into());
-    frozen_request.copy_ignored = ignored.to_vec();
+    frozen_request.copy_ignored = Some(ignored.to_vec());
     let nonce = tempfile::NamedTempFile::new_in(&store.root)?;
     let id = Sha256::digest(serde_json::to_vec(&(
         source,
@@ -536,12 +543,18 @@ fn capture_verified(batch: &Batch) -> Result<VerifiedSource> {
         bail!("source changed before preparation proof capture");
     }
     let before = stamp(&batch.source)?;
-    let (ignored, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
     let source_entries = entries(&client, &operation, goal)?;
     let rules = IgnoreRules::new(&client, &operation, goal, &source_entries, true)?;
-    for root in &ignored {
-        rules.require_ignored(root)?;
-    }
+    let (ignored, selection_diagnostics) = select_ignored(
+        &batch.source,
+        batch
+            .request
+            .copy_ignored
+            .as_deref()
+            .context("missing frozen ignored-copy selection")?,
+        &rules,
+        &source_entries,
+    )?;
     let payload_digest = payload_digest(&batch.source, &ignored)?;
     if stamp(&batch.source)? != before || current_commit(&client)?.1 != wc_commit {
         bail!("source changed during preparation proof capture");
@@ -551,6 +564,7 @@ fn capture_verified(batch: &Batch) -> Result<VerifiedSource> {
         wc_commit,
         stamp: before,
         ignored,
+        selection_diagnostics,
         payload_digest,
     })
 }
@@ -564,13 +578,14 @@ pub(super) fn verify_verified(batch: &mut Batch) -> Result<()> {
     let client = JjClient::new(&batch.source);
     let (operation, current) = current_commit(&client)?;
     let before = stamp(&batch.source)?;
-    let (ignored, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
     let goal = batch.goal.as_ref().context("missing frozen goal")?;
+    let source_entries = entries(&client, &operation, goal)?;
+    let rules = IgnoreRules::new(&client, &operation, goal, &source_entries, true)?;
+    validate_selected_ignored(&batch.source, &proof.ignored, &rules, &source_entries)?;
     require_unconflicted(&client, &operation, &current)?;
     if client.resolve_one_at(&operation, &current)?.change_id != proof.change_id
         || !exact_empty_child(&client, &operation, &current, goal)?
-        || ignored != proof.ignored
-        || payload_digest(&batch.source, &ignored)? != proof.payload_digest
+        || payload_digest(&batch.source, &proof.ignored)? != proof.payload_digest
     {
         bail!(
             "verified preparation source/payload changed before target freeze; pending retained; restore frozen verified donor rather than adopting changed dependencies"
@@ -579,7 +594,6 @@ pub(super) fn verify_verified(batch: &mut Batch) -> Result<()> {
     if before != proof.stamp || current != proof.wc_commit {
         // Exact payload restoration may have new inode/ctime. Never adopt new
         // bytes: reprove the tracked tree as well as the frozen logical payload.
-        let source_entries = entries(&client, &operation, goal)?;
         verify_disk(&client, &operation, goal, &batch.source, &source_entries)?;
     }
     if stamp(&batch.source)? != before || current_commit(&client)?.1 != current {
@@ -589,6 +603,17 @@ pub(super) fn verify_verified(batch: &mut Batch) -> Result<()> {
     batch.source_jj_identity.verify(&batch.source.join(".jj"))?;
     batch.accepted_verified_wc_commit = Some(current);
     Ok(())
+}
+
+pub(super) fn verified_selection(batch: &Batch) -> Result<(&[PathBuf], &[String])> {
+    if batch.phase != PreparationPhase::Verified {
+        bail!("preparation payload selection is not verified");
+    }
+    let proof = batch
+        .verified_source
+        .as_ref()
+        .context("missing frozen verified source selection")?;
+    Ok((&proof.ignored, &proof.selection_diagnostics))
 }
 
 pub(super) fn verify_targets(batch: &Batch) -> Result<()> {
@@ -674,21 +699,18 @@ pub(super) fn execute(
         let goal_entries = entries(&client, &operation, &goal)?;
         // Freeze/check known future ignored policy as soon as fetch made the
         // goal knowable. Installer-created wildcard matches are checked later.
-        let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries, true)?;
-        let (mut selected_roots, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
-        for pattern in &batch.request.copy_ignored {
-            if !pattern.contains(['*', '?']) {
-                selected_roots.push(PathBuf::from(pattern));
-            }
-        }
-        for root in selected_roots {
-            rules.require_ignored(&root)?;
-            if goal_entries.iter().any(|entry| overlap(&root, &entry.path)) {
-                bail!(
-                    "ignored root overlaps tracked source goal: {}",
-                    root.display()
-                );
-            }
+        if batch.phase != PreparationPhase::Verified {
+            let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries, true)?;
+            select_ignored(
+                &batch.source,
+                batch
+                    .request
+                    .copy_ignored
+                    .as_deref()
+                    .context("missing frozen ignored-copy selection")?,
+                &rules,
+                &goal_entries,
+            )?;
         }
         for entry in goal_entries.iter().filter(|entry| entry.kind == "symlink") {
             symlink_bytes(&client, &operation, &goal, &entry.path)?;

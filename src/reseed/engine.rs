@@ -1,5 +1,6 @@
-use super::selection::{self, Group, Registrations, component_glob};
+use super::selection::{self, Group, Registrations};
 use super::{ReseedOutcome, ReseedReport, ReseedRequest, ReseedStatus};
+use crate::cow::ignored::{Origin, Patterns, Policy};
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
@@ -20,8 +21,7 @@ mod prepare;
 struct LocalConfig {
     source: Option<PathBuf>,
     source_at: Option<String>,
-    #[serde(default)]
-    copy_ignored: Vec<String>,
+    copy_ignored: Option<Vec<String>>,
     #[serde(default)]
     groups: BTreeMap<String, Group>,
     freshen: Option<prepare::Settings>,
@@ -333,7 +333,7 @@ pub(super) fn run(
         if request.source.is_some()
             || request.source_at.is_some()
             || request.at.is_some()
-            || !request.copy_ignored.is_empty()
+            || request.copy_ignored.is_some()
             || request.no_copy_ignored
             || request.replace_content
         {
@@ -408,6 +408,30 @@ pub(super) fn run(
             .or(config.source_at.as_ref())
             .map(String::as_str)
             .context("reseed requires --source-at or source_at in .jwreseed.local.toml")?;
+        let ignored_policy = if let Some(batch) = &batch {
+            Policy::recorded(
+                batch
+                    .request
+                    .copy_ignored
+                    .as_deref()
+                    .context("preparation lacks frozen ignored-copy selection")?,
+            )
+        } else {
+            Policy::load(
+                request.copy_ignored.as_deref(),
+                config.copy_ignored.as_deref(),
+                request.no_copy_ignored,
+            )?
+        };
+        if !batch
+            .as_ref()
+            .is_some_and(|batch| batch.phase == prepare::PreparationPhase::Verified)
+        {
+            Patterns::compile(&ignored_policy.patterns)?;
+        }
+        if ignored_policy.origin != Origin::None {
+            diagnostic(&ignored_policy.describe());
+        }
         ensure_quiescence(&source_client)?;
         require_full(&source_client)?;
         validate_contents(&source, true)?;
@@ -426,20 +450,13 @@ pub(super) fn run(
             }
         }
         if request.freshen {
-            let ignored_patterns = if request.no_copy_ignored {
-                &[][..]
-            } else if request.copy_ignored.is_empty() {
-                config.copy_ignored.as_slice()
-            } else {
-                request.copy_ignored.as_slice()
-            };
+            let ignored_patterns = ignored_policy.patterns.as_slice();
             prepare::verify_policy(&default, &preparation_config)?;
             prepare::preflight(
                 &store,
                 &metadata,
                 &inventory,
                 &source,
-                ignored_patterns,
                 config.freshen.as_ref(),
             )?;
             if batch.is_none() {
@@ -565,15 +582,6 @@ pub(super) fn run(
             .as_ref()
             .map(|rev| client.resolve_one_at(&operation, rev).map(|r| r.commit_id))
             .transpose()?;
-        let ignored_patterns = if request.no_copy_ignored {
-            &[][..]
-        } else if request.copy_ignored.is_empty() {
-            config.copy_ignored.as_slice()
-        } else {
-            request.copy_ignored.as_slice()
-        };
-        let (ignored, skipped) = expand_ignored(&source, ignored_patterns)?;
-        let source_payload_digest = payload_digest(&source, &ignored)?;
         let source_rules = IgnoreRules::new(
             &source_client,
             &source_operation,
@@ -581,8 +589,20 @@ pub(super) fn run(
             &source_entries,
             true,
         )?;
+        let (ignored, skipped) = if let Some(batch) = &batch {
+            let (roots, diagnostics) = prepare::verified_selection(batch)?;
+            validate_selected_ignored(&source, roots, &source_rules, &source_entries)?;
+            (roots.to_vec(), diagnostics.to_vec())
+        } else {
+            select_ignored(
+                &source,
+                &ignored_policy.patterns,
+                &source_rules,
+                &source_entries,
+            )?
+        };
+        let source_payload_digest = payload_digest(&source, &ignored)?;
         for path in &ignored {
-            source_rules.require_ignored(path)?;
             cow::validate_tree(&source.join(path))?;
         }
         if stamp(&source)? != source_stamp || current_commit(&source_client)?.1 != source_wc {
@@ -607,11 +627,7 @@ pub(super) fn run(
             )?;
             for path in &ignored {
                 target_rules.require_ignored(path)?;
-                if source_entries
-                    .iter()
-                    .chain(&target_entries)
-                    .any(|e| overlap(path, &e.path))
-                {
+                if target_entries.iter().any(|e| overlap(path, &e.path)) {
                     bail!("ignored root overlaps tracked files: {}", path.display());
                 }
                 confined_parents(&root, path)?;
@@ -1834,6 +1850,18 @@ impl IgnoreRules {
         self.check(path, false)
     }
     fn check(&self, path: &Path, directory: bool) -> Result<()> {
+        if !self.is_ignored(path, directory)? {
+            bail!(
+                "selected path is not ignored under the frozen desired rules: {}",
+                path.display()
+            );
+        }
+        Ok(())
+    }
+    fn is_ignored_directory(&self, path: &Path) -> Result<bool> {
+        self.is_ignored(path, true)
+    }
+    fn is_ignored(&self, path: &Path, directory: bool) -> Result<bool> {
         relative(path)?;
         let mut child = isolated_git(self.directory.path())
             .args(["check-ignore", "--no-index", "-z", "--stdin"])
@@ -1852,18 +1880,20 @@ impl IgnoreRules {
         input.push(0);
         child.stdin.take().unwrap().write_all(&input)?;
         let output = child.wait_with_output()?;
-        if !output.status.success() || output.stdout != input {
+        if output.status.success() && output.stdout == input {
+            Ok(true)
+        } else if output.status.code() == Some(1)
+            && output.stdout.is_empty()
+            && output.stderr.is_empty()
+        {
+            Ok(false)
+        } else {
             bail!(
-                "selected path is not ignored under the frozen desired rules: {}{}",
+                "ignore-rule probe failed or returned malformed output for {}: {}",
                 path.display(),
-                if output.stderr.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", String::from_utf8_lossy(&output.stderr))
-                }
+                String::from_utf8_lossy(&output.stderr)
             );
         }
-        Ok(())
     }
 }
 
@@ -1917,75 +1947,32 @@ where
     Ok(())
 }
 
-fn expand_ignored(root: &Path, patterns: &[String]) -> Result<(Vec<PathBuf>, Vec<String>)> {
-    fn expand(
-        root: &Path,
-        path: &Path,
-        components: &[&str],
-        found: &mut BTreeSet<PathBuf>,
-    ) -> Result<()> {
-        if components.is_empty() {
-            if fs::symlink_metadata(root.join(path)).is_ok_and(|m| m.is_dir()) {
-                relative(path)?;
-                found.insert(path.to_path_buf());
-            }
-            return Ok(());
-        }
-        let children = match fs::read_dir(root.join(path)) {
-            Ok(children) => children,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(e.into()),
-        };
-        if components[0] == "**" {
-            expand(root, path, &components[1..], found)?;
-        }
-        for child in children {
-            let child = child?;
-            let name = child.file_name();
-            if name == ".jj" || name == ".git" {
-                continue;
-            }
-            if !child.file_type()?.is_dir() {
-                continue;
-            }
-            let name = name.to_str().context("directory-glob entry not UTF-8")?;
-            let path = path.join(name);
-            if components[0] == "**" {
-                expand(root, &path, components, found)?;
-            } else if component_glob(components[0], name) {
-                expand(root, &path, &components[1..], found)?;
-            }
-        }
-        Ok(())
-    }
-    let mut found = BTreeSet::new();
-    let mut skipped = Vec::new();
-    for pattern in patterns {
-        relative(Path::new(pattern))?;
-        if pattern.contains(['[', ']', '\\']) {
-            bail!("directory selections support literal components, *, ?, and ** only: {pattern}");
-        }
-        let mut matches = BTreeSet::new();
-        expand(
-            root,
-            Path::new(""),
-            &pattern.split('/').collect::<Vec<_>>(),
-            &mut matches,
-        )?;
-        if matches.is_empty() {
-            skipped.push(format!(
-                "ignored selection {pattern:?} matched no source directories"
-            ));
-        }
-        found.extend(matches);
-    }
-    let mut roots: Vec<PathBuf> = Vec::new();
-    for path in found {
-        if !roots.iter().any(|r| path.starts_with(r)) {
-            roots.push(path);
-        }
-    }
-    Ok((roots, skipped))
+fn select_ignored(
+    source: &Path,
+    patterns: &[String],
+    rules: &IgnoreRules,
+    entries: &[Entry],
+) -> Result<(Vec<PathBuf>, Vec<String>)> {
+    let selected = Patterns::compile(patterns)?.select(
+        source,
+        entries.iter().map(|entry| entry.path.as_path()),
+        |path| rules.is_ignored_directory(path),
+    )?;
+    Ok((selected.roots, selected.skipped))
+}
+
+fn validate_selected_ignored(
+    source: &Path,
+    roots: &[PathBuf],
+    rules: &IgnoreRules,
+    entries: &[Entry],
+) -> Result<()> {
+    cow::ignored::validate_selected(
+        source,
+        roots,
+        entries.iter().map(|entry| entry.path.as_path()),
+        |path| rules.is_ignored_directory(path),
+    )
 }
 
 fn absolute_links(source: &Path, roots: &[PathBuf]) -> Result<Vec<String>> {
@@ -2600,34 +2587,6 @@ mod tests {
         assert!(parse_added_symlink(b"Warning: skipped symlink").is_err());
         let diff = b"diff --git a/newline\n@@ -0,0 +1,999 @@\n b/newline\nnew file mode 120000\n+++ b/newline\n@@ -0,0 +1,999 @@\n@@ -0,0 +1 @@\n++diff --git a/x b/y  \n\\ No newline at end of file\n";
         assert_eq!(parse_added_symlink(diff).unwrap(), b"+diff --git a/x b/y  ");
-    }
-
-    #[test]
-    fn directory_component_globs_are_confined_and_never_follow_symlinks() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::create_dir_all(directory.path().join("packages/a/node_modules")).unwrap();
-        fs::create_dir_all(directory.path().join("packages/b/node_modules")).unwrap();
-        fs::create_dir_all(directory.path().join(".jj/node_modules")).unwrap();
-        std::os::unix::fs::symlink(
-            directory.path().join("packages/a"),
-            directory.path().join("packages/linked"),
-        )
-        .unwrap();
-        let (roots, skipped) = expand_ignored(
-            directory.path(),
-            &["packages/*/node_modules".into(), "absent".into()],
-        )
-        .unwrap();
-        assert_eq!(
-            roots,
-            [
-                PathBuf::from("packages/a/node_modules"),
-                PathBuf::from("packages/b/node_modules")
-            ]
-        );
-        assert_eq!(skipped.len(), 1);
-        assert!(expand_ignored(directory.path(), &["../*".into()]).is_err());
-        assert!(component_glob("package-?", "package-λ"));
     }
 
     #[test]

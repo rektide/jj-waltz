@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Added local sequential freshening commands, durable per-step recovery, compatible v1 journals, and no-command existing ignored payload borrowing
+    title: Added local command/recovery and shared ignored-copy policy/selection foundations with explicit legacy and current-exposure boundaries
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified explicit add/s destinations and source selection, then CoW/JJ-only/current-source creation defaults
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -24,6 +24,13 @@ sources:
 
 ## Unreleased
 
+- Add opt-in root global `copy_ignored` and shared CLI > local > global replacing
+  policy, preserving missing versus explicit `[]` and `--no-copy-ignored`.
+  Compile patterns together for one eligible-root selection walk, accept trailing
+  slash, and collapse nested roots. Skip/report normal nonignored source matches
+  while still finding eligible descendants; retain hard selected-root source and
+  target guards and real private CoW. Missing matches succeed. Current integration
+  is reseed/preparation; add/s payload integration remains pending.
 - Add repository-local `[freshen]` single `command` or sequential `commands`
   argv, rejecting both forms even when empty. Retain `[prepare]` as a warned
   alias and preserve v1 pending preparation recovery. New v2 journals freeze

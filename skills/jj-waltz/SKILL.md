@@ -6,7 +6,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Updated local freshen sequence activation, retry boundaries, legacy policy compatibility, and no-command payload reporting
+    title: Updated freshen sequence/recovery and ignored-copy policy, eligible matching, frozen empty selection, and current command exposure
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Aligned creation guidance with shared add/s destinations, source selection, snapshotted-current base, and mode precedence
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -122,6 +122,16 @@ override it. Keep mode preserves feature revisions, while explicit `--at REVSET`
 starts an empty child. Pause writers and use `--dry-run` to inspect replacement
 scope. `--replace-content` destroys unrecorded contents. If interrupted, use
 `jw reseed NAME --resume` before ordinary JJ commands that snapshot partial files.
+
+Ignored-copy lists replace in CLI > local > root global `copy_ignored` order;
+missing local selection inherits, explicit `[]` does not, and `--no-copy-ignored`
+disables copying. Matching nonignored source directories are skipped/reported;
+eligible ignored descendants remain discoverable. Selected payload still requires
+source/target tracked-overlap and ignored/confinement checks plus real private CoW.
+No matches succeeds; trailing `/` is accepted. These shared foundations currently
+apply to reseed/preparation only, not add/s payloads or public up yet. Recovery
+retains frozen selections, including legacy recorded `[]`, rather than inheriting
+new global defaults. Read the [policy guide](../../docs/reseed.md#ignored-copy-policy-layers).
 
 Use `--freshen` only when source mutation is requested: it fetches the declared
 remote, selects the post-fetch source goal, and runs local `[freshen]` `command`

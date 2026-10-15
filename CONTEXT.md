@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Defined ordered freshening command policy, durable completion versus in-flight retry, and existing-payload borrowing without guessed builders
+    title: Defined freshening sequence/retry and shared ignored-copy precedence, eligible payload selection, and frozen empty-policy meanings
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Aligned workspace/variant identity and creation contracts with verified placement, CoW defaults, and snapshotted source @
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -143,6 +143,14 @@ by itself a claim that a command exposing that concept already exists.
   exit and source/target checks / an attempted step without that acknowledgement.
   Resume skips completed steps; an in-flight step may retry after partial side
   effects. External command execution is not exactly-once.
+- **Ignored-copy policy** — one replacing list selected from CLI, repository-local,
+  then root global config, or none. Missing selection inherits; explicit `[]`
+  does not. `--no-copy-ignored` disables copying for the run. Recovery uses the
+  recorded effective list, not newly introduced defaults.
+- **Eligible ignored payload root** — a matched source directory proved ignored
+  under frozen source rules and separate from tracked files. Nonignored source
+  matches are skipped/reported while viable descendants remain discoverable;
+  actually selected roots retain hard target and CoW safety checks.
 
 ## Invariants
 

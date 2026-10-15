@@ -308,6 +308,9 @@ impl Fixture {
         );
         record["command"] = record["command_sequence"]["argv"][0].clone();
         record.as_object_mut().unwrap().remove("command_sequence");
+        if let Some(proof) = record["verified_source"].as_object_mut() {
+            proof.remove("selection_diagnostics");
+        }
         record["schema_version"] = 1.into();
         fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
         path
@@ -707,11 +710,21 @@ fn no_command_freshen_borrows_existing_ignored_payload_without_claiming_a_build(
         return;
     };
     f.policy(false, "");
+    fs::create_dir_all(f.config.join("jj-waltz")).unwrap();
+    fs::write(
+        f.config.join("jj-waltz/config.toml"),
+        "copy_ignored=['**/node_modules', '**/build/']\n",
+    )
+    .unwrap();
     fs::create_dir(f.source.join("node_modules")).unwrap();
     let payload = vec![b'e'; 128 * 1024];
     fs::write(f.source.join("node_modules/package"), &payload).unwrap();
     let goal = f.advance();
-    let output = ok(f.freshen(&[]));
+    let output = ok(f
+        .jw()
+        .args(["reseed", "worker", "--freshen"])
+        .output()
+        .unwrap());
     assert!(
         output.contains("existing data, not freshly built"),
         "{output}"
@@ -788,36 +801,63 @@ fn legacy_prepare_v1_pending_command_migrates_only_on_real_resume() {
 }
 
 #[test]
-fn legacy_prepare_v1_verified_command_is_not_replayed() {
-    let Some(f) = Fixture::new() else {
-        return;
-    };
-    let policy = f.source.join(".jwreseed.local.toml");
-    fs::write(
-        &policy,
-        fs::read_to_string(&policy)
-            .unwrap()
-            .replace("[freshen]", "[prepare]"),
-    )
-    .unwrap();
-    fs::write(
-        f.source.join(".jwlinks.local.toml"),
-        "[[link]]\nsource='shared-link'\ntarget='missing'\nrequired=true\n",
-    )
-    .unwrap();
-    f.advance();
-    fails(f.freshen(&[]), "required link target will be absent");
-    let path = f.downgrade_single_command_journal_to_v1();
-    let v1: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(v1["phase"], "Verified");
-    fs::write(
-        f.source.join(".jwlinks.local.toml"),
-        "[[link]]\nsource='shared-link'\ntarget='shared'\nrequired=true\n",
-    )
-    .unwrap();
-    ok(f.resume());
-    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
-    assert!(f.active().is_empty());
+fn legacy_prepare_v1_verified_command_and_payload_scope_are_not_replayed_or_reselected() {
+    for frozen_patterns in [
+        serde_json::json!([]),
+        serde_json::json!(["**/node_modules/"]),
+    ] {
+        let Some(f) = Fixture::new() else {
+            return;
+        };
+        let policy = f.source.join(".jwreseed.local.toml");
+        fs::write(
+            &policy,
+            fs::read_to_string(&policy)
+                .unwrap()
+                .replace("[freshen]", "[prepare]"),
+        )
+        .unwrap();
+        fs::write(
+            f.source.join(".jwlinks.local.toml"),
+            "[[link]]\nsource='shared-link'\ntarget='missing'\nrequired=true\n",
+        )
+        .unwrap();
+        f.advance();
+        fails(
+            f.jw()
+                .args(["reseed", "worker", "--freshen"])
+                .output()
+                .unwrap(),
+            "required link target will be absent",
+        );
+        let path = f.downgrade_single_command_journal_to_v1();
+        let mut v1: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v1["phase"], "Verified");
+        assert_eq!(v1["request"]["copy_ignored"], serde_json::json!([]));
+        assert_eq!(v1["verified_source"]["ignored"], serde_json::json!([]));
+        // The former matcher could verify an empty selection for a trailing-slash
+        // wildcard even though the directory existed. Freeze that recorded scope,
+        // rather than adopting an additional payload under today's fixed matcher.
+        v1["request"]["copy_ignored"] = frozen_patterns;
+        fs::write(&path, serde_json::to_vec_pretty(&v1).unwrap()).unwrap();
+        // A legacy recorded [] is a frozen empty selection, not permission to pick
+        // up newly introduced global defaults during recovery.
+        fs::create_dir_all(f.config.join("jj-waltz")).unwrap();
+        fs::write(
+            f.config.join("jj-waltz/config.toml"),
+            "copy_ignored=['**/node_modules']\n",
+        )
+        .unwrap();
+        fs::write(
+            f.source.join(".jwlinks.local.toml"),
+            "[[link]]\nsource='shared-link'\ntarget='shared'\nrequired=true\n",
+        )
+        .unwrap();
+        ok(f.resume());
+        assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+        assert!(!f.target.join("node_modules").exists());
+        assert!(f.active().is_empty());
+    }
 }
 
 #[test]

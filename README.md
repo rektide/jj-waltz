@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Aligned freshening guidance with local ordered commands, compatible legacy policy/recovery, and honest existing ignored payload copying
+    title: Aligned local command/recovery and shared ignored-copy guidance with implemented policy, eligible selection, and current exposure boundaries
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified add/s destinations, source selection, CoW defaults, and explicit mode precedence; aligned operator guidance
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -342,6 +342,9 @@ a private CoW copy, or `--replace-content` to explicitly discard all other
 unrecorded target contents except `.jj`. Pause writers before reseeding.
 `--dry-run` explains the plan; `--resume` finishes an interrupted recorded operation.
 Unsupported CoW fails before clearing files rather than falling back to copying.
+Ignored selection now inherits optional local/global lists; an explicit empty
+list disables inheritance. Normal nonignored source matches are skipped/reported,
+not treated as payload. See [ignored data and policy](docs/reseed.md#ignored-data).
 
 See the [reseeding guide](docs/reseed.md) for optional configuration and groups,
 restrictions, and recovery, and the [design](design/workspace-reseed/README.md)
@@ -540,6 +543,22 @@ and the retained metadata before recovering the link or finishing cleanup.
 
 `jw` reads user config from `$XDG_CONFIG_HOME/jj-waltz/config.toml`, or
 `~/.config/jj-waltz/config.toml` when `XDG_CONFIG_HOME` is not set.
+
+### Ignored-copy defaults
+
+```toml
+# Root key, before any [workspace] or [trunk] table.
+copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
+```
+
+This opt-in setting currently applies to reseed, including `reseed --freshen`.
+Add/s payload integration is pending; their tracked-checkout mode is unchanged.
+CLI lists replace repository-local lists, which replace global lists. Missing
+local `copy_ignored` inherits; local `copy_ignored = []` or `--no-copy-ignored`
+disables inheritance/copying. Broad patterns select only ignored source roots:
+a normal tracked `build/` is skipped, but eligible ignored descendants remain
+discoverable. Selected payload stays private CoW, never a shared directory link.
+See [policy examples and safety boundaries](docs/reseed.md#ignored-copy-policy-layers).
 
 ### Creation-mode precedence
 

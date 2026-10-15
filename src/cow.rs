@@ -16,6 +16,8 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod ignored;
+
 /// Explain why files under `source` cannot be cloned into directories created in
 /// `destination_parent`, or return `None` when cloning is available.
 ///
