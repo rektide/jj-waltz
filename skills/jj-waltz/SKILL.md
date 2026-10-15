@@ -6,7 +6,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Added reseeding, primary-source defaults, and safe snapshot/recovery guidance
+    title: Added reseeding, primary-source defaults, explicit freshening, and safe preparation recovery
   - resource: /docs/reseed.md
     title: One-off and batch reseeding operator guide
 ---
@@ -103,6 +103,13 @@ override it. Keep mode preserves feature revisions, while explicit `--at REVSET`
 starts an empty child. Pause writers and use `--dry-run` to inspect replacement
 scope. `--replace-content` destroys unrecorded contents. If interrupted, use
 `jw reseed NAME --resume` before ordinary JJ commands that snapshot partial files.
+
+Use `--freshen` only when source mutation is requested: it fetches the declared
+remote, selects the post-fetch source goal, and runs configured `[prepare]` argv
+in the donor. Preview with `--dry-run`; source freshening does not imply target
+`--at`. Preparation settings alone do not activate it. For interrupted preparation,
+resume the recorded batch without adding freshening/selection overrides; do not
+borrow partially installed ignored dependencies. Default-on policy is not implemented.
 
 #### Status, adoption, cleanup, or recovery
 

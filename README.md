@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implemented reseeding and clarified this fork's carried features, installation, and source defaults
+    title: Implemented reseeding and explicit donor freshening; clarified carried features, installation, and source defaults
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
     title: Added wildcard reseed groups with opt-in aggregate unmatched warnings
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
@@ -36,6 +36,9 @@ patched `workspace add --adopt` command.
   snapshotted before replacement.
 - **Private dependency copies:** `--copy-ignored node_modules` replaces selected
   ignored directories with independent CoW copies, not shared-directory symlinks.
+- **Freshen the donor on demand:** `--freshen` fetches its declared remote, selects
+  the requested source baseline, and runs configured dependency preparation before
+  distributing it. Existing work is snapshotted; activation is explicit, not automatic.
 - **One-offs first, batches when useful:** named targets need no groups. Local
   configuration and groups are optional shortcuts; `--dry-run` previews the plan
   and `--resume` safely finishes an interrupted refill.
@@ -65,8 +68,9 @@ jw s my-feature                # print its path; shell setup below enables cd
 jw list
 ```
 
-For reseeding, prepare the primary checkout at your chosen baseline first. From
-any sibling workspace, the primary checkout is the default source:
+For reseeding, prepare the primary checkout at your chosen baseline first, or
+configure [source freshening](docs/reseed.md#freshen-the-source) and pass `--freshen`.
+From any sibling workspace, the primary checkout is the default source:
 
 ```sh
 # Keep the feature revision; BASE is the revision the source is prepared at.
@@ -79,7 +83,7 @@ jw reseed worker-a --source-at BASE --at BASE \
 
 Replace `BASE` with a revset such as `main@origin`, and remove `--dry-run` when
 the plan is right. Use `--from /path/to/prepared-source` for another source.
-No fetch or package install happens implicitly. Reseeding currently requires
+No fetch or package install happens without explicit `--freshen`. Reseeding requires
 full, JJ-only targets and a reflink-capable filesystem; pause writers first.
 
 Fish has the richest shell integration. See [shell setup](#shell-setup) for
@@ -102,8 +106,9 @@ The responsibility split is deliberate:
   cross-workspace coordination.
 - Forge tools such as `gh` and `glab` own pull requests, merge requests, and CI.
 
-Core workspace operations remain offline. Optional forge information must degrade
-to a warning rather than make local workspace management fail.
+Core workspace operations remain offline unless source preparation is explicitly
+requested with `jw reseed --freshen`. That requested fetch/preparation must succeed
+before distribution. Optional forge information remains nonessential enrichment.
 
 ## Features
 
@@ -258,7 +263,25 @@ baseline you prepared, whether supplied on the command line or in configuration.
 This preserves the target's snapshotted working-copy revision and feature changes,
 root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
 `--at 'dev@origin'` to start an empty child of that base instead. The source's
-tracked tree must match `--source-at`; prepare it with ordinary JJ commands first.
+tracked tree must match `--source-at`; prepare it with ordinary JJ commands first,
+or opt into source preparation with `--freshen` and a configured installer:
+
+```toml
+# .jwreseed.local.toml in the primary checkout (keep it ignored)
+[prepare]
+remote = "origin"
+command = ["bun", "install", "--frozen-lockfile"]
+```
+
+```sh
+jw reseed my-feature --freshen --source-at 'dev@origin' \
+  --copy-ignored node_modules --dry-run
+```
+
+Freshening snapshots existing work, fetches, selects the post-fetch source goal,
+and prepares dependencies. It still keeps the feature revision unless `--at` is
+explicit. The preparation table alone does not run anything; default-on freshening
+is a separate, not-yet-implemented follow-up. See [source freshening](docs/reseed.md#freshen-the-source).
 
 Use `--copy-ignored node_modules` to replace an ignored dependency directory with
 a private CoW copy, or `--replace-content` to explicitly discard all other

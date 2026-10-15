@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Added reseeding and its verified primary-checkout source default
+    title: Added reseeding, primary donor defaults, and explicit recoverable source freshening
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
     title: Implemented wildcard groups and configurable aggregate unmatched diagnostics
   - resource: /docs/reseed.md
@@ -20,6 +20,13 @@ sources:
 
 ## Unreleased
 
+- Add explicit `jw reseed --freshen`: snapshot real work, fetch one declared remote,
+  select a post-fetch source baseline, and run trusted configured `[prepare]`
+  argv before distribution. Keep target reset independent. Add prospective/no-action
+  previews, source ownership checks, verified dependency payload binding, and
+  recoverable atomic batch handoff with completion receipts. Source preparation
+  blocks unsafe borrowing after failure; settings alone never activate it.
+  Default-on freshening remains a separate follow-up.
 - Extend reseed groups with `names`, `name_globs`, and `path_globs`. Match exact
   registrations in the current repository, with optional `on_unmatched = "warn"`
   and `--on-unmatched error|warn` overrides. List all skipped unrelated candidates

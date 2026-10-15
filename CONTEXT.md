@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Defined reseeding, preserved snapshot safety, and added verified primary-source defaults
+    title: Defined reseeding, safe snapshots, primary-source defaults, and explicit source preparation
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
     title: Defined wildcard selection and bounded warn-and-skip without weakening target safety
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
@@ -121,6 +121,12 @@ by itself a claim that a command exposing that concept already exists.
 - **Reseed pending record / receipt** — repository-scoped recovery intent for an
   incomplete reseed / provenance of a completed one. Neither changes historical
   creation-base metadata. Resume reads pending intent before target snapshotting.
+- **Source freshening** — explicit donor fetch, advancement to a chosen baseline,
+  and configured preparation before target plans are frozen. It is distinct from
+  status refresh and does not imply resetting target revisions.
+- **Preparation batch** — source-keyed write-ahead intent retaining trusted policy,
+  a frozen source goal, verified dependency payload, and all target plans until
+  receipts account for completion. Partial installation is not a prepared donor.
 
 ## Invariants
 
@@ -149,8 +155,9 @@ by itself a claim that a command exposing that concept already exists.
   receiving workspace.
 - Removal preserves bookmarks unless the user confirms deletion.
 - Publication and cleanup remain separate workflows.
-- Core workspace lifecycle and local status remain offline; forge and network
-  information are optional enrichment.
+- Core workspace lifecycle and local status remain offline unless explicit donor
+  preparation is requested with `reseed --freshen`. That requested fetch/install
+  is a prerequisite, not optional forge enrichment.
 - JSON stdout contains only its versioned document; diagnostics use stderr.
 - Herdr provenance survives until Herdr close succeeds.
 - Shell adapters implement the same switching behavior.

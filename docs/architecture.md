@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Integrated reseeding, verified recovery, and primary-source selection into the module map
+    title: Integrated reseeding, verified recovery, primary-source selection, and preparation-batch ownership
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
     title: Added snapshot-free wildcard group resolution and early structured selection diagnostics
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
@@ -206,6 +206,28 @@ primary checkout of the current repository. Discovery follows JJ identity rather
 than searching archive directories or substituting the current feature checkout.
 The donor baseline remains explicit/configured. A donor/target tree difference
 is handled per path; an explicit donor-baseline mismatch remains an error.
+
+With explicit `--freshen`, `reseed::prepare` first snapshots real source/target
+work, fetches the declared remote through `JjClient`, pins the source goal, selects
+its empty child, and runs trusted configured argv in the donor. Preparation settings
+alone never activate it. The source-keyed journal stays active through target
+handoff and blocks new borrowing or freshening that would invalidate unfinished
+work, including older unselected target records depending on the donor.
+
+Verified preparation binds the source change/goal, root identities, selected
+ignored roots, and logical payload digest. Normal JJ restoration may change a
+commit ID; same-change/exact-parent/tree/payload proofs permit recovery without
+accepting unrelated tree-equivalent changes. Source ownership and trusted policy
+are rechecked before resumed mutation or installer execution. Shared baseline-owned
+link configuration is captured after preparation, not mistaken for policy tampering.
+
+All target plans are atomically stored in the preparation batch before individual
+pending records are installed. Preparation IDs and immutable plan comparisons
+associate pending records/receipts, while mutable runtime link diagnostics are
+separate from planned warnings. Lost handoff recreates only missing recorded
+intent; completed receipts prevent rerunning finished targets or preparation.
+Target checks refuse changed/stale work rather than snapshotting installer changes
+into it. Default-on configuration remains a separate, unimplemented follow-up.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
 prefills tree-identical paths, expands sparsity, and verifies the exact target

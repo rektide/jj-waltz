@@ -14,10 +14,14 @@ extensions:
   ticket: jjwaltz-reseed-freshen
   followup_ticket: jjwaltz-reseed-freshen-default
   epic: jjwaltz-reseed
-  execution: explicit freshen implementation commissioned; default-on activation remains a separate follow-up
+  execution: explicit freshen implemented locally; default-on activation remains a separate follow-up
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: User confirmed freshening scope and separate default activation, then commissioned explicit freshen implementation with Sol medium
+    title: User commissioned explicit freshen after design; parent reviewed recovery boundaries, verified regressions, and maintained delivery guidance
+  - resource: "opencode://ses_ec2e49e63ffe72f71k65378obu"
+    title: Implemented explicit source freshening, atomic handoff, and 23 native integration cases
+  - resource: "opencode://ses_ec2dd9386ffeDc0UNdIZu1bFbF"
+    title: Independent ownership/payload/receipt/restoration review and real-CoW JJ 0.39 compatibility verification
   - resource: /design/workspace-reseed/reseed0.gpt6a.md#prepare-the-source
     title: Existing manual fetch, JJ new, and frozen dependency installation workflow
   - resource: /docs/reseed.md
@@ -299,12 +303,26 @@ Settings for the installer can land in the first; **automatic activation cannot*
 - Documentation explicitly states the newly opted-in network/source/installer
   effects and shows the one-run opt-out.
 
+## Local delivery checkpoint
+
+The explicit feature landed locally in `66a7480d`, `2ef0a42c`, and `1635252e`.
+The [operator guide](../../docs/reseed.md#freshen-the-source) now owns actual syntax
+and recovery instructions; this document retains the argument and proposed later
+default activation. The default-on ticket remains open and unimplemented.
+
+All 23 dedicated preparation/recovery cases passed on official JJ 0.39.0 and
+0.46.0 with real Linux Btrfs CoW required, including FIEMAP sharing checks. The
+existing regression run passed 350 cases; four CLI tests passed separately, and
+Clippy/formatting passed. These runs used disposable local remotes and fake
+installers, never the live opencode donor. Intermediate JJ versions, non-Linux
+runtime behavior, and a representative throughput benchmark are not claimed.
+
 ## Related work
 
 - [Original reseed proposal](reseed0.gpt6a.md#prepare-the-source): this adds an
   opt-in coordinator for the source preparation that was deliberately manual.
-- [Current operator guide](../../docs/reseed.md): still authoritative for shipped
-  behavior; it must not claim `--freshen` exists until implementation lands.
+- [Current operator guide](../../docs/reseed.md): authoritative for the locally
+  implemented explicit flag, with verification limits separated from this design.
 - [Architecture](../../docs/architecture.md#in-place-reseeding): keep CLI thin,
   route all JJ through `JjClient`, and keep source preparation outside the already
   frozen target materialization plan.

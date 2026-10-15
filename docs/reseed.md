@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Reseed an existing workspace in place
-description: One-off and batch copy-on-write reseeding, explicit replacement policy, and interrupted-operation recovery.
+description: One-off and batch copy-on-write reseeding, opt-in donor freshening, replacement policy, and interrupted-operation recovery.
 resource: /docs/reseed.md
 status: maintained
 generated:
@@ -9,7 +9,11 @@ generated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implemented reseeding and source defaults; commissioned and documented explicit source freshening and recovery
+    title: Implemented and verified reseeding, source defaults, and explicit donor freshening with recoverable preparation
+  - resource: "opencode://ses_ec2e49e63ffe72f71k65378obu"
+    title: Sol medium implemented explicit freshening and verified 23 native preparation/recovery cases on JJ 0.46
+  - resource: "opencode://ses_ec2dd9386ffeDc0UNdIZu1bFbF"
+    title: Independent source preparation, ownership, payload binding, receipt, and restoration review
   - resource: "opencode://ses_ec376c0e6ffewASuAvkLjXLTTU"
     title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
   - resource: "opencode://ses_ec31c20c0ffeQNfMhRNezv4uuM"
@@ -28,7 +32,7 @@ sources:
 
 `jw reseed` replenishes copy-on-write sharing in existing JJ workspaces. It keeps
 the workspace root, `.jj`, registration, name, bookmarks, and lifecycle metadata.
-It neither fetches upstream changes nor installs dependencies.
+Without `--freshen`, it neither fetches upstream changes nor installs dependencies.
 
 ## One-off use
 
@@ -101,10 +105,7 @@ package-manager links.
 contents, including `.env`, except `.jj`, before refilling. It does not copy
 arbitrary source dotfiles. There is no additional confirmation prompt.
 
-## Freshen the source (implementation in progress)
-
-The explicit `--freshen` feature is being built under `jjwaltz-reseed-freshen`.
-The following is its commissioned interface, not yet a verified delivery claim.
+## Freshen the source
 
 Freshening prepares the donor before distributing it: fetch one declared remote,
 select an empty JJ child of the requested source baseline, then run a dependency
@@ -144,16 +145,41 @@ With `--freshen`, `source_at` is the goal resolved after fetching, not a claim t
 the old donor is already prepared. Without the flag, the existing source-baseline
 assertion remains unchanged. Target `--at` and `--replace-content` stay separate.
 
-Preparation settings alone do not activate freshening. Default-on `freshen = true`
-and a one-run opt-out belong to the separate `jjwaltz-reseed-freshen-default` ticket;
-they are not part of this first delivery.
+Preparation settings alone do not activate freshening: pass `--freshen` explicitly.
+Default-on `freshen = true` and a one-run opt-out belong to the separate
+`jjwaltz-reseed-freshen-default` ticket; they are not implemented in this delivery.
 
 Remove `--dry-run` only when the source, remote, argv/cwd, and target policy are
-right. A freshening dry-run must not fetch, select a new source change, install, or
-refill files; its post-fetch goal is prospective. Normal real-work snapshots are
+right. A freshening dry-run does not fetch, select a new source change, install, or
+refill files; its post-fetch goal is prospective and the exact commit may be unknown.
+Normal real-work snapshots are
 preserved, and writers must be paused. Installation failures or tracked-file changes
 stop the batch before target contents are cleared. Partial dependency installation
 requires recorded recovery before the donor can be borrowed again.
+
+Only the declared remote is fetched, with `origin` as the fallback when it exists.
+A preparation command is required when ignored dependency selections are enabled;
+without ignored copying, omitting it means tracked-source freshening only. A
+successful command that changes tracked files, including a lockfile, still fails
+the baseline check. Source progress is not automatically rolled back.
+
+For interrupted source preparation, use `--resume` with all original literal target
+names in their recorded order. Do not add `--freshen`, new source/goal overrides,
+or replacement flags. Once target plans are frozen, individual recorded targets
+can be resumed without fetching or installing again. Completed target receipts
+prevent repeating successful refills.
+
+```sh
+jw reseed worker-a worker-b --resume
+```
+
+An unfinished batch blocks new borrowing or freshening from its donor. Restore
+installer-modified tracked bytes to the recorded goal before retrying; the same
+recorded change and frozen parent are required, not an unrelated tree-equivalent
+change. After preparation was verified, changed ignored payloads must also be
+restored rather than silently accepted. Configuration and ownership changes stop
+recovery. Keep credentials out of the configured argv: policy and arguments are
+retained in the local preparation journal.
 
 See the [source freshening design](../design/workspace-reseed/source-freshen0.gpt61sol.md)
 for sequencing and recovery details.
@@ -313,6 +339,8 @@ targets and exits nonzero for partial failure. Recovery never uses repository-wi
   explain why public sparse-prefill works and the verification obligations.
 - [Architecture](architecture.md#module-map) separates the command adapter,
   reseed coordination, JJ operations, filesystem cloning, links, and metadata.
+- [Source freshening design](../design/workspace-reseed/source-freshen0.gpt61sol.md)
+  records preparation/freeze ordering and the separately deferred default policy.
 - [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md) preserves
   the selection rationale; this guide describes the implemented interface.
 
@@ -326,6 +354,12 @@ The final optimized build passed all 22 cases on both 0.39.0 and 0.46.0;
 0.44.0 and 0.45.1 were fully verified before the source-proof reuse optimization.
 Primary-source inference and final-operation revalidation expanded the suite to
 30 cases, all passing on official JJ 0.46.0 with real CoW required.
+Explicit donor freshening adds 23 local-remote/fake-installer cases, verified on
+official JJ 0.39.0 and 0.46.0 with real Btrfs CoW required. They cover source/target history,
+unknown-goal previews, fetch/installer failures, changed source ownership,
+verified-payload restoration, and interrupted batch handoff. The final existing
+regression run passed 350 tests; the four CLI cases passed separately.
+The freshening build has not yet been rerun on JJ 0.44.0/0.45.1 or non-Linux platforms.
 Focused engine tests cover every write-ahead boundary and safe tracked-only type
 transitions. Existing integration regressions, Clippy, and formatting also passed.
 
