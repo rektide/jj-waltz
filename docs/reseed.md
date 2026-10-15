@@ -7,7 +7,12 @@ status: maintained
 generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Implemented optional donor assertions, current-variant target selection, and snapshot-free frozen recovery with strict preparation batch selection
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Connected ignored-copy policy documentation to delivered add/s payload integration and primary policy ownership
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -40,12 +45,13 @@ Without `--freshen`, it neither fetches upstream changes nor installs dependenci
 
 ## One-off use
 
-**No groups or configuration are required.** Prepare the primary checkout—the
-repository's original checkout—at your chosen baseline, then run from any sibling
-workspace and name the workspace to refill:
+**No groups, configuration, or baseline assertion are required.** From a variant,
+borrow the primary checkout's freshly snapshotted tracked state and refill the
+current registered workspace:
 
 ```sh
-jw reseed my-feature --source-at 'dev@origin'
+jw reseed
+jw reseed my-feature  # explicit target; needed at the primary checkout
 ```
 
 `--from` defaults to the verified primary checkout of the current JJ repository,
@@ -63,9 +69,12 @@ JJ materializes paths that differ. A repeated run renews sharing even when file
 contents have not changed.
 
 Source and target revisions do **not** need to be identical: each unchanged path
-can be reflinked independently. `--source-at` is a different check: it asserts the
-baseline you prepared in the source. If that assertion does not match, reseeding
-stops before clearing a target rather than silently ignoring it.
+can be reflinked independently. The donor tree assertion is **CLI `--source-at` >
+local `source_at` > freshly snapshotted donor `@`**. A supplied assertion must
+resolve to exactly one revision and match the donor's tracked tree, not necessarily
+its commit identity. A mismatch stops before target snapshotting or clearing;
+omission does not require the donor to be unchanged from an earlier baseline.
+Donor and assertion are frozen at one operation. No source advancement happens.
 
 To put a reusable workspace onto a new empty child of an explicit base instead:
 
@@ -78,8 +87,11 @@ jw reseed my-worker --from /path/to/prepared-source \
 work is snapshotted first. It remains in JJ history rather than being copied into
 the new child. An already empty child of the same base can be reused.
 
-Multiple positional names select a batch. Selection is always explicit; an empty
-selection never means all workspaces. Names are literal, not navigation tokens.
+Multiple positional names select a batch. With no names or groups, only the current
+non-primary workspace is selected, including invocation from its subdirectory.
+The primary requires names or groups. Explicit names **or any explicit group**
+suppress the current-target default, even when the group matches nothing; no
+selection ever means all workspaces. Names remain literal, not navigation tokens.
 
 ## Ignored data
 
@@ -210,9 +222,11 @@ jw reseed worker-a --from ~/a/a/opencode --freshen \
   --source-at 'dev@origin' --copy-ignored node_modules --dry-run
 ```
 
-With `--freshen`, `source_at` is the goal resolved after fetching, not a claim that
-the old donor is already prepared. Without the flag, the existing source-baseline
-assertion remains unchanged. Target `--at` and `--replace-content` stay separate.
+With `--freshen`, CLI `--source-at` or local `source_at` is still a **required** goal
+resolved after fetching, not a claim that the old donor is already prepared. This
+legacy freshening path never defaults its goal to donor `@`. Without the flag,
+assertions are optional as described above. Target `--at` and `--replace-content`
+stay separate.
 
 Preparation settings alone do not activate freshening: pass `--freshen` explicitly.
 The commissioned `up` replacement is not integrated yet; the current public
@@ -236,9 +250,10 @@ is not automatically rolled back.
 
 For interrupted source preparation, use `--resume` with all original literal target
 names in their recorded order. Do not add `--freshen`, new source/goal overrides,
-or replacement flags. Once target plans are frozen, individual recorded targets
-can be resumed without fetching or installing again. Completed target receipts
-prevent repeating successful refills.
+or replacement flags. The complete ordered selection remains required after
+target plans are frozen; bare current-target resume never infers the rest of a
+multi-target batch. Completed target receipts prevent repeating successful refills,
+fetches, or installation.
 
 ```sh
 jw reseed worker-a worker-b --resume
@@ -392,8 +407,8 @@ directory; a relative configured `source` is resolved from the default workspace
 Source selection is CLI `--from`, then configured `source`, then the verified
 primary checkout. Missing or inconsistent primary registrations fail closed:
 repair the repository/workspace identity before retrying. An explicit source
-chooses another donor; it does not bypass those identity checks. `source_at` must
-still be supplied on the command line or through local configuration.
+chooses another donor; it does not bypass those identity checks. Ordinary borrowing
+uses its snapshotted `@` unless a CLI/configured tree assertion is supplied.
 
 The Git executable is used for isolated ignore-rule probes, including nested
 `.gitignore` files and backend/global excludes. These probes do not create Git
@@ -416,12 +431,15 @@ half-filled target.** Resume the recorded plan instead:
 
 ```sh
 jw reseed my-feature --resume
+# From the same pending variant, for a single-target operation:
+jw reseed --resume
 ```
 
+Current workspace identity and pending intent are resolved without snapshotting.
 Resume revalidates the recorded source, root, registration, revision, and policy;
-it does not accept replacement flags. A changed source or target stops recovery
-and retains the pending record. Restore the frozen source before retrying. A
-successful tracked refill alone is not success if ignored copying or link
+it neither reevaluates source defaults nor accepts replacement flags. A changed
+source or target stops recovery and retains the pending record. Restore the frozen
+source before retrying. A successful tracked refill alone is not success if ignored copying or link
 application failed. Batch output distinguishes completed, failed, and pending
 targets and exits nonzero for partial failure. Recovery never uses repository-wide
 `jj undo`.

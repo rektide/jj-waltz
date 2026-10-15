@@ -981,8 +981,24 @@ fn frozen_batch_recovery_uses_receipts_and_never_reprepares_or_snapshots_partial
     assert_eq!(batch["plans"].as_array().unwrap().len(), 2);
     fs::write(f.remote.join("version"), "newer remote\n").unwrap();
     f.git_commit();
+    let partial = f.id(&f.target, "@");
+    let pending = fs::read(&f.pending()[0]).unwrap();
+    let recorded = fs::read(&f.active()[0]).unwrap();
+    for args in [
+        vec!["reseed", "--resume"],
+        vec!["reseed", "second", "worker", "--resume"],
+    ] {
+        fails(
+            f.jw().args(args).output().unwrap(),
+            "all recorded literal target names in original order",
+        );
+        assert_eq!(f.id(&f.target, "@"), partial);
+        assert!(!f.target.join("shared").exists());
+        assert_eq!(fs::read(&f.pending()[0]).unwrap(), pending);
+        assert_eq!(fs::read(&f.active()[0]).unwrap(), recorded);
+    }
     ok(f.jw()
-        .args(["reseed", "second", "worker", "--resume"])
+        .args(["reseed", "worker", "second", "--resume"])
         .output()
         .unwrap());
     assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Delivered creation tree assertions, optional ordinary reseed assertions, implicit current-variant selection, and safe ordered batch recovery; corrected nested payload preflight
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Added local command/recovery and shared ignored-copy policy/selection foundations with explicit legacy and current-exposure boundaries
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -24,13 +26,27 @@ sources:
 
 ## Unreleased
 
+- Add optional add/s `--source-at` as a snapshotted donor tracked-tree assertion,
+  independent of target `--at`. Equal trees may have different commit IDs; the
+  default target parent remains donor `@`. Creation inherits only local ignored-copy
+  policy, not reseed's donor/assertion/freshening fields; existing switches skip it.
+- Ordinary reseed uses CLI `--source-at` > local `source_at` > freshly snapshotted
+  donor `@`. Bare reseed selects only the current registered variant; primary
+  invocation requires names/groups. Explicit selection suppresses implicit current,
+  even when a group matches nothing. Keep target work by default. Legacy `--freshen`
+  still requires a goal. Resolve current/pending identity without snapshots; resume
+  uses recorded IDs and requires complete original preparation target order.
+- Add/s now copy selected ignored payloads privately with real CoW independently
+  of tracked checkout mode, reject private-link overlap, and clean up owned read-only
+  copies on failure. Actual payload selection rejects nested donor destinations
+  during preflight; disabled/no-match selections retain normal nested placement.
 - Add opt-in root global `copy_ignored` and shared CLI > local > global replacing
   policy, preserving missing versus explicit `[]` and `--no-copy-ignored`.
   Compile patterns together for one eligible-root selection walk, accept trailing
   slash, and collapse nested roots. Skip/report normal nonignored source matches
   while still finding eligible descendants; retain hard selected-root source and
   target guards and real private CoW. Missing matches succeed. Current integration
-  is reseed/preparation; add/s payload integration remains pending.
+  includes reseed/preparation and add/s new-workspace payloads.
 - Add repository-local `[freshen]` single `command` or sequential `commands`
   argv, rejecting both forms even when empty. Retain `[prepare]` as a warned
   alias and preserve v1 pending preparation recovery. New v2 journals freeze
@@ -71,7 +87,7 @@ sources:
   copying. CoW capability and ownership checks fail closed before clearing files.
 - When `--from` and configured `source` are absent, reseed discovers the verified
   primary checkout of the current JJ repository as its donor. Explicit and local
-  source settings retain precedence; the source baseline remains explicit.
+  source settings retain precedence; optional tree assertions follow the precedence above.
 - Prefer native `jj workspace remove` when the executable advertises it (JJ 0.46+),
   snapshotting dirty target changes before deletion while retaining ownership,
   manager review gates, unrelated Git registrations, and older-JJ fallback.

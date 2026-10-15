@@ -259,6 +259,119 @@ fn nested_creation_still_works_when_payload_copying_is_disabled_or_matches_nothi
 }
 
 #[test]
+fn creation_source_assertion_accepts_equal_trees_without_selecting_the_target_parent() {
+    for command in ["add", "s"] {
+        let Some(repo) = Repo::new() else { return };
+        repo.jj_at(&repo.root, &["new", &repo.base]);
+        let source = repo.id(&repo.root);
+        assert_ne!(source, repo.base);
+        fs::write(
+            repo.root.join(".jwreseed.local.toml"),
+            "source='/unusable'\nsource_at='absent-ref'\n[freshen]\ncommand=['never-run']\n",
+        )
+        .unwrap();
+        for explicit_at in [false, true] {
+            let name = if explicit_at { "exact" } else { "current" };
+            let destination = repo.temp.path().join(format!("chosen-{name}"));
+            let mut args = vec![
+                command,
+                "--from",
+                repo.root.to_str().unwrap(),
+                "--path",
+                destination.to_str().unwrap(),
+                "--source-at",
+                &repo.base,
+                "--no-cow",
+            ];
+            if explicit_at {
+                args.extend(["--at", "root()"]);
+            }
+            success(repo.jw(repo.temp.path(), &args));
+            let parent = repo.jj_at(
+                &destination,
+                &["log", "--no-graph", "-r", "parents(@)", "-T", "commit_id"],
+            );
+            if explicit_at {
+                assert_eq!(
+                    parent,
+                    repo.jj_at(
+                        &repo.root,
+                        &["log", "--no-graph", "-r", "root()", "-T", "commit_id"]
+                    )
+                );
+                assert!(!destination.join("tracked").exists());
+            } else {
+                assert_eq!(
+                    parent, source,
+                    "assertion must not replace source @ as parent"
+                );
+                assert!(destination.join("tracked").is_file());
+            }
+        }
+    }
+}
+
+#[test]
+fn creation_source_assertion_snapshots_dirty_donor_even_with_explicit_target_at() {
+    for command in ["add", "s"] {
+        let Some(repo) = Repo::new() else { return };
+        fs::write(repo.root.join("tracked"), "unsnapshotted donor\n").unwrap();
+        for (assertion, message) in [
+            (
+                repo.base.as_str(),
+                "source tracked tree does not match --source-at",
+            ),
+            ("all()", "must resolve to exactly one revision"),
+        ] {
+            failure(
+                repo.jw(
+                    &repo.root,
+                    &[
+                        command,
+                        "rejected",
+                        "--source-at",
+                        assertion,
+                        "--at",
+                        &repo.base,
+                        "--no-cow",
+                        "--bookmark",
+                        "rejected",
+                    ],
+                ),
+                message,
+            );
+            repo.absent("rejected", &repo.temp.path().join("repo.rejected"));
+        }
+        assert_ne!(
+            repo.id(&repo.root),
+            repo.base,
+            "assertion must snapshot first"
+        );
+        success(repo.jw(
+            &repo.root,
+            &[
+                command,
+                "accepted",
+                "--source-at",
+                "@",
+                "--at",
+                &repo.base,
+                "--no-cow",
+            ],
+        ));
+        assert_eq!(
+            fs::read(repo.temp.path().join("repo.accepted/tracked")).unwrap(),
+            vec![b't'; 128 * 1024],
+            "explicit target --at stays independent of the asserted dirty donor"
+        );
+        assert_eq!(
+            fs::read(repo.root.join("tracked")).unwrap(),
+            b"unsnapshotted donor\n"
+        );
+    }
+}
+
+#[test]
 fn global_selection_is_private_nested_and_independent_of_tracked_checkout_mode() {
     let Some(repo) = Repo::new() else { return };
     if !repo.cow() {
@@ -348,6 +461,8 @@ fn primary_local_policy_does_not_select_a_donor_or_trust_a_default_named_workspa
             chosen.to_str().unwrap(),
             "--from",
             donor.to_str().unwrap(),
+            "--source-at",
+            "@",
             "--no-links",
         ],
     ));
@@ -401,6 +516,8 @@ fn existing_switch_does_not_refill_or_even_compile_creation_policy() {
             "existing",
             "--copy-ignored",
             "also/[invalid]",
+            "--source-at",
+            "absent-ref",
             "--no-links",
         ],
     ));
@@ -456,6 +573,8 @@ fn exact_target_base_must_ignore_payload_and_have_no_tracked_overlap() {
                 "exact",
                 "--at",
                 &repo.base,
+                "--source-at",
+                "@",
                 "--copy-ignored",
                 "cache",
             ],

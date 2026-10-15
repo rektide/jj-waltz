@@ -98,6 +98,9 @@ struct AddCommand {
     /// Source checkout (default: current checkout).
     #[arg(long = "from", value_name = "SOURCE")]
     source: Option<std::path::PathBuf>,
+    /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
     #[arg(
         long,
         value_name = "REVSET",
@@ -163,6 +166,9 @@ struct SwitchCommand {
     /// Source checkout (default: current checkout).
     #[arg(long = "from", value_name = "SOURCE")]
     source: Option<std::path::PathBuf>,
+    /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
     #[arg(
         long,
         value_name = "REVSET",
@@ -379,7 +385,7 @@ struct PathCommand {
 
 #[derive(Debug, Args)]
 struct ReseedCommand {
-    /// Literal workspace names; groups are optional shortcuts.
+    /// Literal targets (default: current variant; primary requires names or --group).
     #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
     names: Vec<String>,
     /// Select a named group from .jwreseed.local.toml (repeatable).
@@ -391,7 +397,7 @@ struct ReseedCommand {
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
-    /// Prepared source assertion, or post-fetch source goal with --freshen.
+    /// Donor tree assertion (CLI > local source_at > snapshotted @); required goal with --freshen.
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
     /// Fetch the donor remote, then run configured local preparation commands in order.
@@ -758,6 +764,7 @@ fn run_add(cmd: AddCommand) -> Result<()> {
         None
     })
     .with_destination(destination)
+    .with_source_assertion(cmd.source_at)
     .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
     let outcome = lifecycle::add_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);
@@ -789,6 +796,7 @@ fn run_switch(cmd: SwitchCommand) -> Result<()> {
         None
     })
     .with_destination(destination)
+    .with_source_assertion(cmd.source_at)
     .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
     let outcome = lifecycle::switch_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);

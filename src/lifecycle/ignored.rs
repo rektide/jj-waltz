@@ -26,6 +26,7 @@ impl IgnoredPlan {
         base: &ResolvedRevision,
         policy: &Policy,
         plans: &[PlannedWorkspace],
+        asserted_source: Option<&str>,
     ) -> Result<Self> {
         let patterns = Patterns::compile(&policy.patterns)?;
         if policy.patterns.is_empty() {
@@ -33,11 +34,11 @@ impl IgnoredPlan {
         }
         #[cfg(unix)]
         {
-            unix::prepare(inventory, base, patterns, plans)
+            unix::prepare(inventory, base, patterns, plans, asserted_source)
         }
         #[cfg(not(unix))]
         {
-            let _ = (base, plans);
+            let _ = (base, plans, asserted_source);
             let selection = patterns.select(inventory.current_root(), [], |_| {
                 anyhow::bail!(
                     "ignored payload copying requires Unix filesystem identity and real CoW support"
@@ -93,6 +94,7 @@ mod unix {
         base: &ResolvedRevision,
         patterns: Patterns,
         plans: &[PlannedWorkspace],
+        asserted_source: Option<&str>,
     ) -> Result<IgnoredPlan> {
         let source = inventory.current_root();
         let source_identity = payload::directory_identity(source)?;
@@ -104,6 +106,9 @@ mod unix {
         client.run(["status"])?;
         let operation = client.operation_id()?;
         let source_commit = client.resolve_one_at(&operation, "@")?.commit_id;
+        if asserted_source.is_some_and(|commit| commit != source_commit) {
+            bail!("source changed since --source-at was asserted; pause writers and retry");
+        }
         let source_entries = payload::entries(&client, &operation, &source_commit)?;
         let source_rules =
             IgnoreRules::new(&client, &operation, &source_commit, &source_entries, true)?;

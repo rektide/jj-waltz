@@ -5,6 +5,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Aligned creation assertions/private payloads, ordinary current-donor/current-target reseed, and frozen batch recovery with delivered behavior
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Updated freshen sequence/recovery and ignored-copy policy, eligible matching, frozen empty selection, and current command exposure
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -66,7 +68,10 @@ Choose only the branch the request needs. Load only the reference linked by that
   beside the verified owning checkout, not an automatic `~/src` destination.
 - Without `--at`, creation snapshots the source and uses its current `@` as the
   base, including dirty tracked work and a merge `@`. Explicit `--at REVSET` keeps
-  exact-one frozen revision selection rather than requesting the implicit refresh.
+  exact-one frozen revision selection. Optional CLI `--source-at REVSET` snapshots
+  and asserts the donor tracked tree at the same operation, without replacing the
+  target parent. Creation does not inherit reseed's local source/assertion/freshening
+  fields, and existing-only switches skip assertions.
 - Creation defaults to CoW/JJ-only. `--colocate` alone selects an ordinary colocated
   checkout, overriding default/configured CoW; `--cow` overrides configured colocation.
   Explicit `--cow --colocate` conflicts. `--no-cow` alone keeps the JJ-only default.
@@ -116,31 +121,41 @@ For `.jwlinks.toml`, shared ignored directories, missing targets, or link confli
 #### Reseed existing workspace contents
 
 For requested in-place CoW updates, read the [reseeding guide](../../docs/reseed.md).
-One-off use is `jw reseed NAME --source-at REVSET`; no groups are required.
+One-off use is `jw reseed NAME`, or bare `jw reseed` inside the current variant;
+the primary requires names/groups. Explicit names or groups suppress implicit
+current selection even if no group matches. Names are literal, not navigation
+tokens. No selection implies all workspaces.
 `--from` defaults to the verified primary checkout; explicit/configured sources
-override it. Keep mode preserves feature revisions, while explicit `--at REVSET`
-starts an empty child. Pause writers and use `--dry-run` to inspect replacement
+override it. The donor tree assertion is CLI `--source-at` > local `source_at` >
+freshly snapshotted donor `@`. Assertions compare tracked trees, not commit IDs,
+and do not advance the donor. Keep mode preserves feature revisions, while explicit
+`--at REVSET` starts an empty child. Pause writers and use `--dry-run` to inspect replacement
 scope. `--replace-content` destroys unrecorded contents. If interrupted, use
-`jw reseed NAME --resume` before ordinary JJ commands that snapshot partial files.
+`jw reseed NAME --resume` (or bare `--resume` for one current target) before ordinary
+JJ commands that snapshot partial files. Recovery uses recorded IDs, not new defaults.
 
 Ignored-copy lists replace in CLI > local > root global `copy_ignored` order;
 missing local selection inherits, explicit `[]` does not, and `--no-copy-ignored`
 disables copying. Matching nonignored source directories are skipped/reported;
 eligible ignored descendants remain discoverable. Selected payload still requires
 source/target tracked-overlap and ignored/confinement checks plus real private CoW.
-No matches succeeds; trailing `/` is accepted. These shared foundations currently
-apply to reseed/preparation only, not add/s payloads or public up yet. Recovery
+No matches succeeds; trailing `/` is accepted. These controls apply to add/s new
+workspaces and reseed/preparation; public up is not integrated. Creation reads only
+the primary store owner's local ignored-copy list. Actual selected payload forbids
+nested donor destinations; choose an external `--path` or `--no-copy-ignored`.
+Existing switches never refill payloads. Recovery
 retains frozen selections, including legacy recorded `[]`, rather than inheriting
 new global defaults. Read the [policy guide](../../docs/reseed.md#ignored-copy-policy-layers).
 
 Use `--freshen` only when source mutation is requested: it fetches the declared
-remote, selects the post-fetch source goal, and runs local `[freshen]` `command`
-or ordered `commands` argv in donor cwd; both fields together are an error even
+remote, requires a CLI/configured source goal (never implicit `@`), and runs local
+`[freshen]` `command` or ordered `commands` argv in donor cwd; both fields together are an error even
 when empty. There are no global/guessed build commands. With no commands, selected
 existing ignored payload can still be borrowed but is not freshly built.
 Preview with `--dry-run`; source freshening does not imply target
 `--at`. Preparation settings alone do not activate it. For interrupted preparation,
-resume the recorded batch without adding freshening/selection overrides; do not
+resume all original literal targets in their recorded order, even after plans
+freeze, without adding freshening/selection overrides; do not
 borrow partially installed ignored dependencies. Completed command steps are skipped;
 an in-flight step may retry, not exactly-once. `[prepare]` is a deprecated alias:
 rename it only after recovery finishes, since frozen policy bytes must match.

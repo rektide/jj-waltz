@@ -221,13 +221,24 @@ pub(super) fn run(
     // here: merely discovering a pending current workspace must not snapshot it.
     let inventory = Inventory::load(&client)?;
     let default = inventory.default.clone();
+    let implicit_current = request.names.is_empty() && request.groups.is_empty();
+    if implicit_current {
+        if inventory.root(&inventory.current)? == default {
+            bail!(
+                "reseed at the primary checkout requires literal target names or --group; never selects all implicitly"
+            );
+        }
+        // Resolve to one registered literal identity before source/target refresh
+        // or pending lookup. Do not introduce navigation-token interpretation.
+        request.names.push(inventory.current.clone());
+    }
     let (mut config, mut preparation_config) = if request.resume && request.groups.is_empty() {
         (LocalConfig::default(), None)
     } else {
         load_config(&default)?
     };
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let selection = selection::resolve(
+    let mut selection = selection::resolve(
         &request,
         &config.groups,
         &inventory.registered,
@@ -238,6 +249,9 @@ pub(super) fn run(
         diagnostic(&warning);
     }
     selection.validate()?;
+    if implicit_current {
+        selection.selections[0].origins = vec!["current".into()];
+    }
     let names = selection
         .selections
         .iter()
@@ -253,16 +267,18 @@ pub(super) fn run(
     } else {
         None
     };
+    if let Some(record) = &batch
+        && names != record.request.names
+    {
+        bail!(
+            "preparation resume requires all recorded literal target names in original order: {:?}",
+            record.request.names
+        );
+    }
     let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
     if recovering_preparation {
         let record = batch.as_ref().unwrap();
         prepare::validate_resume_request(&request)?;
-        if names != record.request.names {
-            bail!(
-                "preparation resume requires all recorded literal target names: {:?}",
-                record.request.names
-            );
-        }
         let dry_run = request.dry_run;
         request = record.request.clone();
         request.dry_run = dry_run;
@@ -385,8 +401,10 @@ pub(super) fn run(
             .source_at
             .as_ref()
             .or(config.source_at.as_ref())
-            .map(String::as_str)
-            .context("reseed requires --source-at or source_at in .jwreseed.local.toml")?;
+            .map(String::as_str);
+        if request.freshen && source_rev.is_none() {
+            bail!("reseed --freshen requires --source-at or source_at in .jwreseed.local.toml");
+        }
         let ignored_policy = if let Some(batch) = &batch {
             Policy::recorded(
                 batch
@@ -429,6 +447,7 @@ pub(super) fn run(
             }
         }
         if request.freshen {
+            let source_rev = source_rev.expect("freshening goal checked before snapshots");
             let ignored_patterns = ignored_policy.patterns.as_slice();
             prepare::verify_policy(&default, &preparation_config)?;
             prepare::preflight(
@@ -511,11 +530,14 @@ pub(super) fn run(
                 .goal
                 .clone()
                 .context("prepared source lacks frozen goal")?,
-            None => {
-                source_client
-                    .resolve_one_at(&source_operation, source_rev)?
-                    .commit_id
-            }
+            None => match source_rev {
+                Some(rev) => {
+                    source_client
+                        .resolve_one_at(&source_operation, rev)?
+                        .commit_id
+                }
+                None => source_wc.clone(),
+            },
         };
         require_unconflicted(&source_client, &source_operation, &source_commit)?;
         if !changed_paths(
@@ -775,6 +797,7 @@ pub(super) fn run(
 }
 
 struct Inventory {
+    current: String,
     default: PathBuf,
     roots: BTreeMap<String, PathBuf>,
     registered: Registrations,
@@ -844,6 +867,10 @@ impl Inventory {
             bail!("primary/caller JJ workspace root registration is inconsistent");
         }
         Ok(Self {
+            current: context
+                .jj
+                .workspace_name
+                .context("cannot determine registered current workspace")?,
             default: default.clone(),
             roots,
             registered,

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Clarified creation's CLI-only tree assertion, independent target parent, and selected private ignored payload boundary
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Aligned existing creation reference with delivered placement, current-source base, mode precedence, and visible fallback
   - resource: /README.md
@@ -72,7 +74,13 @@ operation diff matches the intended repair.
 Optional `--from SOURCE` selects the source; otherwise it is the current checkout.
 Without `--at`, the source is snapshotted before its current `@` becomes the exact
 base. Dirty tracked work and normal JJ auto-tracking participate; ignored files
-are not copied. Explicit `--at REVSET` keeps exact-one frozen revision selection.
+are copied only by explicit/local/global ignored-copy policy. Explicit `--at REVSET`
+keeps exact-one frozen revision selection. Optional CLI `--source-at REVSET`
+snapshots and compares the donor tracked tree, not its commit identity, without
+selecting the target parent. Donor/assertion/base resolve at one operation. Local
+reseed source/assertion/freshening settings are not creation defaults; existing
+switches do not assert or refill. Selected private payloads require real CoW and an
+external-to-donor destination; see [private dependencies](../../../README.md#private-dependencies-on-creation).
 
 `--path DESTINATION` selects one exact root without requiring `NAME` twice. From
 `opencode`, `opencode-fix` infers `fix` and `myfix` stays `myfix`; existing registered

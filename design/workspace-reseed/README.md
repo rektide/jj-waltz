@@ -11,6 +11,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Connected delivered source-assertion/current-target semantics and creation payload integration to maintained guides
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Linked native source, command/recovery, and shared ignored-copy foundations with their current integration boundaries
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
@@ -41,11 +43,14 @@ sources:
 - [Shared ignored-copy policy and selection](../../docs/architecture.md#shared-ignored-copy-policy-and-selection) —
   root global/local/CLI precedence with explicit empty lists, one compiled
   selection traversal, skipped nonignored source matches, and hard selected-root
-  guards. Reseed/preparation use it; add/s payload integration is still pending.
-- [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
+  guards. Reseed/preparation and add/s new-workspace payloads use it. Actual creation
+  payload selection rejects nested donor destinations before creation.
+- [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — design evidence for optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
-  configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;
-  not yet implemented. The later up commission settles the earlier review
+  configuration, and frozen recovery. Implemented for `jjwaltz-reseed-ergonomics`;
+  see the [operator contract](../../docs/reseed.md#one-off-use) for delivered
+  default borrowing/current-target selection and [creation assertions](../../README.md#copy-on-write-workspaces).
+  The later up commission settles the earlier review
   junction: ordinary reseed keeps target work; up advances to the prepared goal.
 - [JJ new preserves unchanged files](jj-new-preservation0.gpt61sol.md) — inspected
   checkout algorithm and native Btrfs evidence: ordinary advancement preserves

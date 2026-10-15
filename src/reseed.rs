@@ -22,12 +22,15 @@ pub enum UnmatchedPolicy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
+    /// Literal targets; empty names/groups select the current non-primary workspace.
     pub names: Vec<String>,
     pub groups: Vec<String>,
     /// Override group selection-miss policy; positional names are always strict.
     pub on_unmatched: Option<UnmatchedPolicy>,
     /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
+    /// Donor tree assertion: CLI > local source_at > snapshotted @. Freshening
+    /// still requires an explicit/configured goal; recovery uses recorded IDs.
     pub source_at: Option<String>,
     pub at: Option<String>,
     /// None inherits local/global policy; Some([]) explicitly disables inheritance.

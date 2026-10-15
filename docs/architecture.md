@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Reproduced operation-owned nested destination stamp invalidation and added payload-only batch preflight without weakening donor proofs
+    title: Fixed nested payload preflight and implemented frozen creation assertions, default reseed borrowing, current-target resolution, and strict preparation recovery selection
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Extracted shared frozen ignore/payload proof primitives and implemented add/s private payload planning, policy ownership, and read-only rollback
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -152,10 +152,19 @@ tracked changes and normal JJ auto-tracking therefore enter the implicit base.
 An empty merge working copy is itself one valid commit, not an ambiguous parent set.
 
 Explicit `--at REVSET` retains the existing frozen-operation resolution branch,
-without the new implicit refresh. It must resolve to exactly one commit; no policy
-substitutes source `@` for that selection. JJ creates an empty child of the exact
-base, which is also recorded in lifecycle metadata. Creation, switching, provenance,
+without the implicit refresh unless a source assertion is supplied. It must resolve
+to exactly one commit; no policy substitutes source `@` for that selection. JJ
+creates an empty child of the exact base, which is also recorded in lifecycle
+metadata. Creation, switching, provenance,
 and rollback share this contract; reseed's separate keep/reset semantics are unchanged.
+
+CLI `--source-at` snapshots the donor even alongside explicit `--at`. Donor `@`,
+assertion, and target base resolve at one operation; tree equality, not commit
+identity, authorizes borrowing. `CreationBase` retains the independent target
+revision and asserted donor ID. Payload planning retains its own fresh snapshot
+and requires that donor ID, rather than silently reasserting a moving revset.
+No assertion means unchanged creation behavior. Local reseed donor/assertion/
+freshening fields do not enter creation policy, and existing-only switches skip it.
 
 ### Source, destination, and creation mode
 
@@ -251,8 +260,20 @@ validation, and filesystem/ownership checks precede destructive work.
 The donor path uses explicit `--from`, then configured `source`, then a verified
 primary checkout of the current repository. Discovery follows JJ identity rather
 than searching archive directories or substituting the current feature checkout.
-The donor baseline remains explicit/configured. A donor/target tree difference
-is handled per path; an explicit donor-baseline mismatch remains an error.
+Ordinary donor baseline selection is CLI `--source-at`, then configured `source_at`,
+otherwise the freshly snapshotted donor `@`. Asserted tree identity is checked at
+the same captured source operation before target snapshots. A donor/target tree
+difference is handled per path; an explicit/configured mismatch remains an error.
+Legacy `--freshen` still requires a CLI/configured goal before any snapshots.
+
+Snapshot-free `Inventory` retains the caller's verified registered name. With no
+names/groups, `run` inserts that one non-primary literal target before pending
+lookup or source/target snapshots and reports origin `current`. At the primary it
+requires explicit selection. Explicit names/groups suppress this default even for
+an empty group result. No navigation-token semantics or implicit-all selection is
+introduced. Resume uses recorded source IDs and ignores newly configured defaults.
+Preparation recovery requires the complete recorded target order, even after plans
+freeze; bare single-current selection cannot expand to a whole batch.
 
 With explicit `--freshen`, `reseed::prepare` first snapshots real source/target
 work, fetches the declared remote through `JjClient`, pins the source goal, selects

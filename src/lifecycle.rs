@@ -16,6 +16,7 @@ use ignored::IgnoredPlan;
 #[derive(Debug, Clone)]
 pub struct CreationPolicy {
     at_revset: Option<String>,
+    source_at: Option<String>,
     explicit_bookmark: Option<String>,
     no_bookmark: bool,
     apply_links: bool,
@@ -46,6 +47,7 @@ impl CreationPolicy {
         let config = Config::load()?;
         Ok(Self {
             at_revset,
+            source_at: None,
             explicit_bookmark,
             no_bookmark,
             apply_links: !no_links,
@@ -65,6 +67,12 @@ impl CreationPolicy {
 
     pub fn with_destination(mut self, destination: Option<PathBuf>) -> Self {
         self.destination = destination;
+        self
+    }
+
+    /// Creation borrows only an explicit donor assertion, never reseed's local defaults.
+    pub fn with_source_assertion(mut self, source_at: Option<String>) -> Self {
+        self.source_at = source_at;
         self
     }
 
@@ -273,7 +281,12 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
     }
     let client = JjClient::current()?;
     let mode = policy.preflight_creation_mode(&client)?;
-    let base = resolve_creation_base(&client, policy.at_revset.as_deref())?;
+    let resolved = resolve_creation_base(
+        &client,
+        policy.at_revset.as_deref(),
+        policy.source_at.as_deref(),
+    )?;
+    let base = &resolved.revision;
     let store = metadata_store(&client)?;
     preflight_creations(&inventory, &store, &plans)?;
     let config_root = policy
@@ -283,16 +296,17 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
     let mut checkout = plan_checkout(mode, &inventory, &plans)?;
     checkout.ignored = IgnoredPlan::prepare(
         &inventory,
-        &base,
+        base,
         &policy.ignored_policy(&inventory)?,
         &plans,
+        resolved.asserted_source.as_deref(),
     )?;
 
     let mut pending = Vec::new();
     for plan in plans {
         match create_workspace(
             &plan,
-            &base,
+            base,
             &inventory,
             &store,
             config_root.as_deref(),
@@ -395,11 +409,16 @@ fn switch_workspaces_with_creation(
     } else {
         policy.preflight_creation_mode(&client)?
     };
-    let base = if all_plans.is_empty() {
+    let resolved = if all_plans.is_empty() {
         None
     } else {
-        Some(resolve_creation_base(&client, policy.at_revset.as_deref())?)
+        Some(resolve_creation_base(
+            &client,
+            policy.at_revset.as_deref(),
+            policy.source_at.as_deref(),
+        )?)
     };
+    let base = resolved.as_ref().map(|resolved| &resolved.revision);
     let store = if all_plans.is_empty() {
         None
     } else {
@@ -412,18 +431,19 @@ fn switch_workspaces_with_creation(
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
     let mut checkout = plan_checkout(mode, &inventory, &all_plans)?;
-    if let Some(base) = &base {
+    if let Some(base) = base {
         checkout.ignored = IgnoredPlan::prepare(
             &inventory,
             base,
             &policy.ignored_policy(&inventory)?,
             &all_plans,
+            resolved.as_ref().and_then(|r| r.asserted_source.as_deref()),
         )?;
     }
 
     let mut intermediate = Vec::new();
     for plan in intermediate_plans {
-        let base = base.as_ref().expect("creation plan has resolved base");
+        let base = base.expect("creation plan has resolved base");
         let store = store.as_ref().expect("creation plan has metadata store");
         match create_workspace(
             &plan,
@@ -443,7 +463,7 @@ fn switch_workspaces_with_creation(
     }
 
     let mut final_created = if let Some(plan) = final_plan {
-        let base = base.as_ref().expect("creation plan has resolved base");
+        let base = base.expect("creation plan has resolved base");
         let store = store.as_ref().expect("creation plan has metadata store");
         match create_workspace(
             &plan,
@@ -726,23 +746,69 @@ fn preflight_creations(
     Ok(())
 }
 
-fn resolve_creation_base(client: &JjClient, at_revset: Option<&str>) -> Result<ResolvedRevision> {
-    if at_revset.is_none() {
+struct CreationBase {
+    revision: ResolvedRevision,
+    /// Pin the donor identity too when a CLI assertion authorized it. Payload
+    /// planning must not silently switch to a later donor snapshot.
+    asserted_source: Option<String>,
+}
+
+fn resolve_creation_base(
+    client: &JjClient,
+    at_revset: Option<&str>,
+    source_at: Option<&str>,
+) -> Result<CreationBase> {
+    if at_revset.is_none() || source_at.is_some() {
         // operation_id()/resolve_one_at() deliberately do not snapshot. Refresh the
-        // selected source before freezing implicit @ so dirty tracked bytes are included.
+        // selected source before freezing implicit @ or an opt-in donor assertion.
+        // Explicit target-only --at retains its existing snapshot-free resolution.
         client
             .run(["status"])
             .context("failed to snapshot source checkout before creation")?;
     }
     let operation_id = client.operation_id()?;
-    match at_revset {
+    let asserted_source = if let Some(revset) = source_at {
+        let source = client.resolve_one_at(&operation_id, "@")?;
+        let assertion = client
+            .resolve_one_at(&operation_id, revset)
+            .with_context(|| {
+                format!("--source-at {revset:?} must resolve to exactly one revision")
+            })?;
+        if !client
+            .run_at(
+                &operation_id,
+                [
+                    "diff",
+                    "--from",
+                    &source.commit_id,
+                    "--to",
+                    &assertion.commit_id,
+                    "--summary",
+                ],
+            )?
+            .stdout()?
+            .is_empty()
+        {
+            bail!(
+                "source tracked tree does not match --source-at; prepare the donor before creation"
+            );
+        }
+        Some(source.commit_id)
+    } else {
+        None
+    };
+    let revision = match at_revset {
         Some(revset) => client
             .resolve_one_at(&operation_id, revset)
             .with_context(|| format!("--at {revset:?} must resolve to exactly one revision")),
         None => client
             .resolve_one_at(&operation_id, "@")
             .context("cannot resolve the source working-copy commit after snapshot"),
-    }
+    }?;
+    Ok(CreationBase {
+        revision,
+        asserted_source,
+    })
 }
 
 /// Decide whether new workspaces clone files from the current checkout.
@@ -1100,8 +1166,10 @@ mod tests {
 
         let client = JjClient::new(&root);
         assert_eq!(
-            resolve_creation_base(&client, None).unwrap(),
-            resolve_creation_base(&client, Some("@")).unwrap()
+            resolve_creation_base(&client, None, None).unwrap().revision,
+            resolve_creation_base(&client, Some("@"), None)
+                .unwrap()
+                .revision
         );
     }
 

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Defined delivered creation donor assertions, optional reseed assertions, current-variant targeting, and recorded recovery intent
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Defined freshening sequence/retry and shared ignored-copy precedence, eligible payload selection, and frozen empty-policy meanings
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -185,8 +187,10 @@ by itself a claim that a command exposing that concept already exists.
 - JSON stdout contains only its versioned document; diagnostics use stderr.
 - Herdr provenance survives until Herdr close succeeds.
 - Shell adapters implement the same switching behavior.
-- Reseed selection is explicit: individual literal names work without groups or
-  local configuration. No selection ever implies all workspaces.
+- Bare reseed selects only the current registered non-primary workspace before
+  snapshots. The primary requires literal names or groups; either explicit form
+  suppresses the current-target default even if no group matches. No selection
+  ever implies all workspaces, and literal names are not navigation tokens.
 - Reseed groups can explicitly select registered workspace names or root-path
   patterns. Opt-in warn skips selection misses in one diagnostic, never actual
   target safety failures. Positional names stay strict; no remaining targets is
@@ -194,8 +198,12 @@ by itself a claim that a command exposing that concept already exists.
 - Reseed donor selection uses explicit `--from`, configured `source`, then a
   verified primary checkout of the same repository. It never guesses an archive
   location or silently substitutes the current feature checkout. The source
-  baseline remains explicit/configured; differences from a target are handled
-  per path, not treated as a reason to discard feature changes.
+  baseline is CLI `--source-at`, then configured `source_at`, otherwise freshly
+  snapshotted donor `@`; tree assertions do not require equal commit identities.
+  Legacy `--freshen` still needs a CLI/configured goal. Differences from a target
+  are handled per path, not treated as a reason to discard feature changes.
+  Resume uses recorded IDs, not reevaluated defaults; preparation batches require
+  the full recorded target order, never an inferred batch from one current target.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work during resume.
@@ -232,6 +240,9 @@ by itself a claim that a command exposing that concept already exists.
 - New workspace creation defaults to CoW/JJ-only. Implicit creation snapshots the
   source before freezing its current `@` as the exact base, including a merge `@`.
   Explicit `--at REVSET` keeps the existing exact-one frozen-resolution path.
+  Optional CLI `--source-at` snapshots and asserts the donor tree at the same
+  operation without selecting the target parent; local reseed source/assertion/
+  freshening settings are not creation defaults. Existing switches skip assertions.
   Mode precedence and visible ordinary-checkout fallback are described in the
   [operator guide](README.md#creation-mode-precedence); these creation defaults do
   not change reseed's separate shipped semantics.

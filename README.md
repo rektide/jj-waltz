@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Reproduced nested creation invalidating its own donor proof and added selected-payload destination preflight with native regression checks
+    title: Fixed nested payload creation preflight and implemented explicit creation assertions, optional reseed assertions, current-variant selection, and frozen recovery checks
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Implemented and verified add/s private ignored payloads, primary-owned copy policy, strict CoW and scoped failure cleanup
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -85,12 +85,13 @@ jw s my-feature                # print its path; shell setup below enables cd
 jw list
 ```
 
-For reseeding, prepare the primary checkout at your chosen baseline first, or
-configure [source freshening](docs/reseed.md#freshen-the-source) and pass `--freshen`.
-From any sibling workspace, the primary checkout is the default source:
+Reseeding borrows the verified primary checkout by default. From a variant:
 
 ```sh
-# Keep the feature revision; BASE is the revision the source is prepared at.
+jw reseed --dry-run             # this variant; keep its work, borrow donor @
+jw reseed my-feature --dry-run  # explicit target; required at the primary
+
+# Optionally assert the donor's tracked tree matches BASE.
 jw reseed my-feature --source-at BASE --dry-run
 
 # Reset a reusable worker to that base and copy its installed dependencies.
@@ -102,6 +103,8 @@ Replace `BASE` with a revset such as `main@origin`, and remove `--dry-run` when
 the plan is right. Use `--from /path/to/prepared-source` for another source.
 No fetch or package install happens without explicit `--freshen`. Reseeding requires
 full, JJ-only targets and a reflink-capable filesystem; pause writers first.
+Freshening still requires a CLI/configured goal; see
+[source freshening](docs/reseed.md#freshen-the-source).
 
 Fish has the richest shell integration. See [shell setup](#shell-setup) for
 Fish, Zsh, Bash, Elvish, and PowerShell.
@@ -290,6 +293,13 @@ Normal JJ auto-tracking rules apply during this snapshot. The new workspace star
 as an empty child of that exact commit. `--at REVSET` instead selects one explicit
 base; it is not replaced by the current source revision.
 
+Optional `--source-at REVSET` asserts that the donor's freshly snapshotted tracked
+tree equals one exact revision, even when commit identities differ. It does not
+select the target parent: without `--at`, that remains donor `@`; with `--at`, the
+explicit target base wins. Assertion and base resolve at one frozen operation.
+Creation does not inherit local reseed `source`, `source_at`, or freshening settings;
+only the shared ignored-copy policy applies. Existing-only switches skip assertions.
+
 The tracked checkout clones only files JJ tracks. Ignored data is copied only
 when selected by [ignored-copy policy](#ignored-copy-defaults); use
 [workspace links](#workspace-links) only when deliberate sharing is wanted.
@@ -331,22 +341,28 @@ to an existing workspace never refills dependencies from policy or creation flag
 
 ### Reseed an existing workspace
 
-One-off use needs no groups or configuration:
+One-off use needs no groups or configuration. Inside a variant, omit the name to
+refill that current registered workspace; at the primary, name targets or a group:
 
 ```sh
-jw reseed my-feature --source-at 'dev@origin'
+jw reseed
+jw reseed my-feature
+jw reseed my-feature --source-at 'dev@origin'  # optional tree assertion
 ```
 
 When run inside a JJ workspace, `--from` defaults to its verified primary
 checkout. An explicit `--from` or configured `source` takes precedence; the tool
-does not search arbitrary archive directories. `--source-at` still names the
-baseline you prepared, whether supplied on the command line or in configuration.
+does not search arbitrary archive directories. The donor tree assertion is CLI
+`--source-at`, then local `source_at`, otherwise its freshly snapshotted `@`.
+Explicit names or groups never also select the current variant, even if a group
+matches nothing. Literal target names are not navigation tokens.
 
 This preserves the target's snapshotted working-copy revision and feature changes,
 root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
 `--at 'dev@origin'` to start an empty child of that base instead. The source's
-tracked tree must match `--source-at`; prepare it with ordinary JJ commands first,
-or opt into source preparation with `--freshen` and optional local commands:
+tracked tree must match any supplied/configured assertion. To advance the donor,
+opt into source preparation with `--freshen`, a required CLI/configured source
+goal, and optional local commands:
 
 ```toml
 # .jwreseed.local.toml in the primary checkout (keep it ignored)

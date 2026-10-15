@@ -245,6 +245,16 @@ impl Repo {
     }
 
     fn interrupt_reseed(&self, source: &Path, boundary: &str, extra: &[&str]) {
+        self.interrupt_reseed_with_assertion(source, boundary, extra, Some(&self.baseline));
+    }
+
+    fn interrupt_reseed_with_assertion(
+        &self,
+        source: &Path,
+        boundary: &str,
+        extra: &[&str],
+        source_at: Option<&str>,
+    ) {
         let proxy = self.temp.path().join(format!("proxy-{boundary}"));
         fs::create_dir(&proxy).unwrap();
         // A mise shim can rediscover the injected proxy and recurse forever.
@@ -283,11 +293,12 @@ exec "$JW_REAL_JJ" "$@"
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
-        let output = self
-            .jw(&self.root)
-            .args(["reseed", "feature", "--from"])
-            .arg(source)
-            .args(["--source-at", &self.baseline])
+        let mut command = self.jw(&self.root);
+        command.args(["reseed", "feature", "--from"]).arg(source);
+        if let Some(source_at) = source_at {
+            command.args(["--source-at", source_at]);
+        }
+        let output = command
             .args(extra)
             .env("PATH", std::env::join_paths(paths).unwrap())
             .env("JW_REAL_JJ", real_jj)
@@ -779,47 +790,33 @@ fn configured_relative_source_and_explicit_override_win_over_primary() {
 }
 
 #[test]
-fn primary_fallback_still_requires_source_at_and_matching_prepared_tree() {
+fn source_assertions_keep_cli_over_local_precedence_and_reject_before_target_snapshot() {
     let Some(repo) = Repo::new() else { return };
     let target = repo.workspace("feature");
+    if !repo.cow(&repo.root, &target) {
+        return;
+    }
     let before = repo.id(&target, "@");
-    let output = repo
-        .jw(&target)
-        .args(["reseed", "feature"])
-        .output()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --source-at"));
-    repo.unchanged_failure(&target, output, &before);
     repo.jj_at(&repo.root, &["new", "-r", &repo.baseline]);
     fs::write(repo.root.join("modified"), "dirty primary\n").unwrap();
     fs::write(target.join("modified"), "unsnapshotted target\n").unwrap();
-    let output = repo
-        .jw(&target)
-        .args(["reseed", "feature", "--source-at", &repo.baseline])
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("source tracked tree does not match source_at"),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(!output.status.success());
-    assert_eq!(
-        repo.jj_at(
-            &target,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "@",
-                "-T",
-                "commit_id"
-            ]
-        ),
-        before
-    );
+    group_config(&repo, "");
+    for extra in [&[][..], &["--source-at", repo.baseline.as_str()][..]] {
+        let output = repo
+            .jw(&target)
+            .args(["reseed", "feature"])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("source tracked tree does not match source_at"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(frozen_id(&repo, &target), before);
+    }
     assert_eq!(
         fs::read_to_string(target.join("modified")).unwrap(),
         "unsnapshotted target\n"
@@ -828,6 +825,128 @@ fn primary_fallback_still_requires_source_at_and_matching_prepared_tree() {
         repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
         "."
     );
+    success(
+        repo.jw(&target)
+            .args(["reseed", "feature", "--source-at", "@"])
+            .output()
+            .unwrap(),
+    );
+    let receipt = reseed_receipt(&repo, &target);
+    assert_eq!(receipt["source_commit"], frozen_id(&repo, &repo.root));
+    assert_eq!(receipt["source_commit"], receipt["source_wc_commit"]);
+    assert_eq!(
+        fs::read(target.join("modified")).unwrap(),
+        b"unsnapshotted target\n"
+    );
+}
+
+#[test]
+fn bare_reseed_borrows_snapshotted_primary_and_keeps_current_registered_variant() {
+    let Some(repo) = Repo::new() else { return };
+    repo.jj_at(&repo.root, &["workspace", "rename", "primary"]);
+    let target = repo.workspace("feature");
+    let decoy = repo.workspace("default");
+    if !repo.cow(&repo.root, &target) {
+        return;
+    }
+    // Keep the mutable donor off the target's ancestry, as ordinary users must.
+    repo.jj_at(&repo.root, &["new", &repo.baseline]);
+    let old_source = frozen_id(&repo, &repo.root);
+    fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
+    fs::write(target.join("modified"), "feature work\n").unwrap();
+    fs::write(decoy.join("modified"), "not the donor or target\n").unwrap();
+    let decoy_id = frozen_id(&repo, &decoy);
+    let identities = [identity(&target), identity(&target.join(".jj"))];
+    let subdir = target.join("cache/subdirectory");
+    fs::create_dir_all(&subdir).unwrap();
+    let output = success(repo.jw(&subdir).arg("reseed").output().unwrap());
+    assert!(output.contains("OK feature"), "{output}");
+    assert!(!output.contains("OK default"), "{output}");
+    assert_eq!(
+        identities,
+        [identity(&target), identity(&target.join(".jj"))]
+    );
+    assert_eq!(
+        fs::read(target.join("modified")).unwrap(),
+        b"feature work\n"
+    );
+    assert_eq!(
+        frozen_id(&repo, &decoy),
+        decoy_id,
+        "never snapshot another variant"
+    );
+    assert_ne!(frozen_id(&repo, &repo.root), old_source);
+    let receipt = reseed_receipt(&repo, &target);
+    assert_eq!(receipt["source"], repo.root.to_str().unwrap());
+    assert_eq!(receipt["source_commit"], frozen_id(&repo, &repo.root));
+    assert_eq!(receipt["source_commit"], receipt["source_wc_commit"]);
+    assert_eq!(receipt["old_commit"], frozen_id(&repo, &target));
+    assert!(
+        receipt["base_commit"].is_null(),
+        "default keeps target history"
+    );
+    assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
+}
+
+#[test]
+fn explicit_selection_suppresses_current_and_preflight_failures_do_not_snapshot() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    let other = repo.workspace("other");
+    repo.jj_at(&repo.root, &["new", &repo.baseline]);
+    fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
+    fs::write(target.join("modified"), "unsnapshotted current\n").unwrap();
+    fs::write(
+        repo.root.join(".jwreseed.local.toml"),
+        "[groups]\nothers=['other']\n[groups.missing]\nname_globs=['absent-*']\non_unmatched='warn'\n",
+    )
+    .unwrap();
+    let before = operation(&repo, &repo.root);
+    for (cwd, args, message) in [
+        (
+            repo.root.as_path(),
+            vec!["reseed"],
+            "primary checkout requires literal target names",
+        ),
+        (
+            target.as_path(),
+            vec!["reseed", "--group", "missing"],
+            "no workspaces selected",
+        ),
+        (
+            target.as_path(),
+            vec!["reseed", "--from", target.to_str().unwrap()],
+            "primary/source or overlaps",
+        ),
+        (
+            target.as_path(),
+            vec!["reseed", "--freshen", "--dry-run"],
+            "--freshen requires --source-at",
+        ),
+        (target.as_path(), vec!["reseed", "@"], "unknown workspace"),
+    ] {
+        let output = repo.jw(cwd).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(operation(&repo, &repo.root), before, "{message}");
+    }
+    if !repo.cow(&repo.root, &other) {
+        return;
+    }
+    let current = frozen_id(&repo, &target);
+    for args in [
+        vec!["reseed", "other", "--dry-run"],
+        vec!["reseed", "--group", "others", "--dry-run"],
+    ] {
+        let output = success(repo.jw(&target).args(args).output().unwrap());
+        assert!(output.contains("PLAN other"), "{output}");
+        assert!(!output.contains("PLAN feature"), "{output}");
+        assert_eq!(frozen_id(&repo, &target), current);
+    }
 }
 
 #[test]
@@ -999,23 +1118,33 @@ fn primary_fallback_refuses_pending_donor_without_snapshotting_it() {
 }
 
 #[test]
-fn resume_uses_frozen_explicit_source_not_primary_fallback_or_new_config() {
+fn bare_current_resume_uses_frozen_source_and_pending_lookup_never_snapshots() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
     if !repo.cow(&source, &target) {
         return;
     }
-    repo.interrupt_reseed(&source, "clear", &[]);
+    let donor = frozen_id(&repo, &source);
+    repo.interrupt_reseed_with_assertion(&source, "clear", &[], None);
     fs::write(repo.root.join("modified"), "unsnapshotted primary\n").unwrap();
     fs::write(
         repo.root.join(".jwreseed.local.toml"),
         "source = 'nonexistent'\nsource_at = 'nonexistent'\n",
     )
     .unwrap();
+    let before = operation(&repo, &repo.root);
+    let partial = frozen_id(&repo, &target);
+    let pending = repo.pending_records();
+    let output = repo.jw(&target).arg("reseed").output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("has a pending reseed"));
+    assert_eq!(operation(&repo, &repo.root), before);
+    assert_eq!(frozen_id(&repo, &target), partial);
+    assert_eq!(repo.pending_records(), pending);
     success(
         repo.jw(&target)
-            .args(["reseed", "--resume", "feature"])
+            .args(["reseed", "--resume"])
             .output()
             .unwrap(),
     );
@@ -1023,6 +1152,7 @@ fn resume_uses_frozen_explicit_source_not_primary_fallback_or_new_config() {
         reseed_receipt(&repo, &target)["source"],
         source.to_str().unwrap()
     );
+    assert_eq!(reseed_receipt(&repo, &target)["source_commit"], donor);
     assert_eq!(
         repo.jj_at(
             &repo.root,
