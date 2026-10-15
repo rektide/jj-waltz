@@ -6,10 +6,10 @@ resource: /docs/reseed.md
 status: maintained
 generated:
   by: model:openai/gpt-6.1-sol
-  at: 2026-10-14
+  at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implemented and verified one-off and batch reseeding, safe recovery, and optional groups
+    title: Implemented and verified reseeding, clarified safe snapshots, and documented primary-source inference
   - resource: "opencode://ses_ec376c0e6ffewASuAvkLjXLTTU"
     title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
@@ -26,9 +26,18 @@ It neither fetches upstream changes nor installs dependencies.
 
 ## One-off use
 
-**No groups or configuration are required.** Prepare a source workspace in the
-same JJ repository whose tracked files match a baseline revision, then name the
-workspace to refill:
+**No groups or configuration are required.** Prepare the primary checkout—the
+repository's original checkout—at your chosen baseline, then run from any sibling
+workspace and name the workspace to refill:
+
+```sh
+jw reseed my-feature --source-at 'dev@origin'
+```
+
+`--from` defaults to the verified primary checkout of the current JJ repository,
+not the current feature workspace or an arbitrary directory under `~/archive`.
+An explicit `--from` or configured `source` overrides that default. For a separate
+prepared source in the same repository:
 
 ```sh
 jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin'
@@ -38,6 +47,11 @@ By default, the target keeps its snapshotted working-copy revision, including
 feature differences. Unchanged paths are reflinked from the prepared source;
 JJ materializes paths that differ. A repeated run renews sharing even when file
 contents have not changed.
+
+Source and target revisions do **not** need to be identical: each unchanged path
+can be reflinked independently. `--source-at` is a different check: it asserts the
+baseline you prepared in the source. If that assertion does not match, reseeding
+stops before clearing a target rather than silently ignoring it.
 
 To put a reusable workspace onto a new empty child of an explicit base instead:
 
@@ -125,8 +139,10 @@ Resolve stale targets explicitly with JJ before retrying.
 
 `--from` names a workspace root. A relative CLI path is resolved from the calling
 directory; a relative configured `source` is resolved from the default workspace.
-Both the source path and `source_at` must be supplied explicitly or through the
-local configuration.
+Source selection is CLI `--from`, then configured `source`, then the verified
+primary checkout. If a primary checkout cannot be verified, supply an explicit
+source rather than relying on directory-name guesses. `source_at` must still be
+supplied on the command line or through local configuration.
 
 The Git executable is used for isolated ignore-rule probes, including nested
 `.gitignore` files and backend/global excludes. These probes do not create Git
@@ -137,6 +153,11 @@ unavailable or blocked topology queries fail closed.
 
 `--dry-run` validates and reports the plan without clearing or refilling target
 contents. Planning can snapshot working copies to freeze their tracked work.
+
+Normal snapshots are intentional: they preserve your real tracked work before
+replacement. Recovery avoids recording only the temporary half-filled tree;
+after reconstructing and verifying the recorded tree, normal JJ snapshots are
+safe again. There is no general `--skip-snapshot` flag in this implementation.
 
 Interrupted operations retain repository-scoped pending records outside the
 replaceable contents. **Do not run ordinary snapshotting JJ commands in a

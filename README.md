@@ -1,25 +1,83 @@
 ---
 type: Guide
-title: jj-waltz
-description: JJ workspace lifecycle, navigation, discovery, and copy-on-write reseeding.
+title: jj-waltz — CoW reseeding fork
+description: A user-facing guide to this jj-waltz fork, its carried reseeding features, and everyday JJ workspace use.
 resource: /README.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol
-  at: 2026-10-14
+  at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Added one-off and batch reseeding command guidance
+    title: Implemented reseeding and clarified this fork's carried features, installation, and source defaults
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: In-place reseeding behavior and safety contract
 ---
 
-# jj-waltz
+# jj-waltz — working fork
 
-`jj-waltz` is a Jujutsu workspace switcher with the short binary name `jw`.
-It is built for fast parallel development, reliable shell integration, and clean distribution.
+Manage named [Jujutsu](https://github.com/jj-vcs/jj) workspaces with `jw`: create
+one, jump into it, or refill it with private copy-on-write files without changing
+its location.
 
-Fish is the recommended shell for the best `jw` experience, including the richest completions and native directory-switching integration.
+**This is a working fork of [EzraCerpac/jj-waltz](https://github.com/EzraCerpac/jj-waltz).**
+We carry in-place workspace reseeding on top of upstream's workspace switcher.
+This forks **jj-waltz, not Jujutsu**: reseeding works with stock JJ, without a
+patched `workspace add --adopt` command.
+
+## What this fork carries
+
+- **Refill an existing workspace:** `jw reseed NAME` renews CoW sharing while
+  keeping the root directory, `.jj`, registration, bookmarks, and workspace identity.
+- **Keep features or reset worker slots:** keep the target revision by default;
+  add `--at REVSET` to start an empty child of a chosen base. Real work is
+  snapshotted before replacement.
+- **Private dependency copies:** `--copy-ignored node_modules` replaces selected
+  ignored directories with independent CoW copies, not shared-directory symlinks.
+- **One-offs first, batches when useful:** named targets need no groups. Local
+  configuration and groups are optional shortcuts; `--dry-run` previews the plan
+  and `--resume` safely finishes an interrupted refill.
+
+Upstream already provides switching, workspace links, CoW **creation**, shell
+integration, the interactive manager, and lifecycle checks. Our addition is CoW
+**reseeding of existing workspaces**. See the [reseeding guide](docs/reseed.md)
+for the full contract and [changelog](CHANGELOG.md) for the carried changes.
+
+## Get this fork running
+
+From this checkout, install the binary carrying these changes:
+
+```sh
+cargo install --path . --locked
+```
+
+Then try the everyday workspace commands:
+
+```sh
+jw add my-feature --no-colocate  # create a JJ-only workspace
+jw s my-feature                # print its path; shell setup below enables cd
+jw list
+```
+
+For reseeding, prepare the primary checkout at your chosen baseline first. From
+any sibling workspace, the primary checkout is the default source:
+
+```sh
+# Keep the feature revision; BASE is the revision the source is prepared at.
+jw reseed my-feature --source-at BASE --dry-run
+
+# Reset a reusable worker to that base and copy its installed dependencies.
+jw reseed worker-a --source-at BASE --at BASE \
+  --copy-ignored node_modules --dry-run
+```
+
+Replace `BASE` with a revset such as `main@origin`, and remove `--dry-run` when
+the plan is right. Use `--from /path/to/prepared-source` for another source.
+No fetch or package install happens implicitly. Reseeding currently requires
+full, JJ-only targets and a reflink-capable filesystem; pause writers first.
+
+Fish has the richest shell integration. See [shell setup](#shell-setup) for
+Fish, Zsh, Bash, Elvish, and PowerShell.
 
 ## Why
 
@@ -86,7 +144,11 @@ so cleanup belongs to the app. `jw` workspace lifecycle is optional. The
 and ownership checks. `jw context` and `jw adopt` do not initialize or adopt a Git
 worktree into JJ.
 
-## Install
+## Upstream distributions
+
+The commands below install **upstream**, not this working checkout. They may not
+carry this fork's reseeding additions. Use [the local install above](#get-this-fork-running)
+when you want the features described here.
 
 ### Homebrew
 
@@ -179,8 +241,13 @@ the current workspace’s sparse patterns.
 One-off use needs no groups or configuration:
 
 ```sh
-jw reseed my-feature --from /path/to/prepared-source --source-at 'dev@origin'
+jw reseed my-feature --source-at 'dev@origin'
 ```
+
+When run inside a JJ workspace, `--from` defaults to its verified primary
+checkout. An explicit `--from` or configured `source` takes precedence; the tool
+does not search arbitrary archive directories. `--source-at` still names the
+baseline you prepared, whether supplied on the command line or in configuration.
 
 This preserves the target's snapshotted working-copy revision and feature changes,
 root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add

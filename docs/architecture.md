@@ -6,10 +6,10 @@ resource: /docs/architecture.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol
-  at: 2026-10-14
+  at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Integrated the public-CLI reseeding boundary into the existing module map
+    title: Integrated reseeding, verified recovery, and primary-source selection into the module map
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Reseed planning, prefill, verification, and durable recovery design
 ---
@@ -188,6 +188,12 @@ revisions. A full, conflict-free prepared source must match the selected source
 tree. Full JJ-only targets retain root and `.jj` identity and registration. The
 primary checkout and source are never eligible targets. CoW probing, ignored-root
 validation, and filesystem/ownership checks precede destructive work.
+
+The donor path uses explicit `--from`, then configured `source`, then a verified
+primary checkout of the current repository. Discovery follows JJ identity rather
+than searching archive directories or substituting the current feature checkout.
+The donor baseline remains explicit/configured. A donor/target tree difference
+is handled per path; an explicit donor-baseline mismatch remains an error.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
 prefills tree-identical paths, expands sparsity, and verifies the exact target

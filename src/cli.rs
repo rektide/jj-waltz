@@ -361,7 +361,7 @@ struct ReseedCommand {
     /// Select a named group from .jwreseed.local.toml (repeatable).
     #[arg(long = "group", value_name = "GROUP")]
     groups: Vec<String>,
-    /// Prepared source workspace root, overriding local configuration.
+    /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
     /// Require the prepared source's tracked tree to match this exact revision.

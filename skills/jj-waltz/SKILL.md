@@ -3,10 +3,10 @@ name: jj-waltz
 description: Use when the user mentions jw, jj-waltz, or .jwlinks.toml; asks to manage jj workspaces or worktrees; or requests parallel work in separate workspaces.
 updated:
   by: model:openai/gpt-6.1-sol
-  at: 2026-10-14
+  at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Added the reseeding route with explicit one-off use and recovery cautions
+    title: Added reseeding, primary-source defaults, and safe snapshot/recovery guidance
   - resource: /docs/reseed.md
     title: One-off and batch reseeding operator guide
 ---
@@ -97,8 +97,9 @@ For `.jwlinks.toml`, shared ignored directories, missing targets, or link confli
 #### Reseed existing workspace contents
 
 For requested in-place CoW updates, read the [reseeding guide](../../docs/reseed.md).
-One-off use is `jw reseed NAME --from PATH --source-at REVSET`; no groups are
-required. Keep mode preserves feature revisions, while explicit `--at REVSET`
+One-off use is `jw reseed NAME --source-at REVSET`; no groups are required.
+`--from` defaults to the verified primary checkout; explicit/configured sources
+override it. Keep mode preserves feature revisions, while explicit `--at REVSET`
 starts an empty child. Pause writers and use `--dry-run` to inspect replacement
 scope. `--replace-content` destroys unrecorded contents. If interrupted, use
 `jw reseed NAME --resume` before ordinary JJ commands that snapshot partial files.

@@ -6,10 +6,10 @@ resource: /CHANGELOG.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol
-  at: 2026-10-14
+  at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Added the unreleased in-place reseeding feature summary
+    title: Added reseeding and its verified primary-checkout source default
   - resource: /docs/reseed.md
     title: One-off and batch reseeding, replacement policy, and recovery
 ---
@@ -25,6 +25,9 @@ sources:
   Include local source/group shortcuts, dry-run plans, verified public-JJ sparse
   prefill, and repository-scoped interruption recovery without private JJ state
   copying. CoW capability and ownership checks fail closed before clearing files.
+- When `--from` and configured `source` are absent, reseed discovers the verified
+  primary checkout of the current JJ repository as its donor. Explicit and local
+  source settings retain precedence; the source baseline remains explicit.
 - Prefer native `jj workspace remove` when the executable advertises it (JJ 0.46+),
   snapshotting dirty target changes before deletion while retaining ownership,
   manager review gates, unrelated Git registrations, and older-JJ fallback.
