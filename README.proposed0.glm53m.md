@@ -3,11 +3,13 @@ type: Guide
 title: jj-waltz — CoW reseeding fork
 description: Independent proposed replacement README for this jj-waltz fork, organized around one create/reseed/up command model with progressive disclosure into focused guides.
 resource: /README.proposed0.glm53m.md
-status: proposed
+status: superseded
 generated:
   by: model:zai-coding-plan/glm-5.3
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Incorporated this take into the canonical three-take synthesis and recorded its supersession
   - resource: "opencode://ses_ebf063316ffeZf7tZ07pQTNqbG"
     title: Independent README rewrite take grounded in implemented create/reseed/up behavior
   - resource: /README.md
@@ -33,6 +35,11 @@ sources:
 ---
 
 # jj-waltz — working fork
+
+> **Superseded by the [canonical README](README.md) and
+> [agent skill](skills/jj-waltz/SKILL.md).** Preserved as an independent input to
+> their three-take synthesis, alongside its
+> [skill draft](skills/jj-waltz/SKILL.proposed0.glm53m.md).
 
 Manage named [Jujutsu](https://github.com/jj-vcs/jj) workspaces with `jw`: create
 one, jump into it, refill it with private copy-on-write files without changing

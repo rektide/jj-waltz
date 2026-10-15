@@ -3,11 +3,13 @@ type: Guide
 title: jj-waltz — create, renew, advance
 description: Proposed replacement README organized around workspace outcomes, shared CLI controls, and explicit safety boundaries.
 resource: /README.proposed0.gpt61sol.md
-status: proposed
+status: superseded
 generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Incorporated this take into the canonical three-take synthesis and recorded its supersession
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Implemented up, assessed CLI consistency, drafted paired replacements, and combined creation/switch matrix cells following user direction
   - resource: /README.md
@@ -32,10 +34,10 @@ The **primary** is the registered checkout that owns the shared JJ repository;
 a **variant** is another workspace in that repository. The **donor** is the source
 checkout supplying files; it can be the primary or an explicitly selected workspace.
 
-> **Proposed replacement, not the active README.** This document describes
-> implemented behavior, not proposed CLI changes. The paired
-> [agent skill proposal](skills/jj-waltz/SKILL.proposed0.gpt61sol.md) turns the same
-> model into task-routing guidance. Neither replacement has been activated.
+> **Superseded by the [canonical README](README.md) and
+> [agent skill](skills/jj-waltz/SKILL.md).** Preserved as an independent input to
+> their three-take synthesis. Its paired
+> [skill draft](skills/jj-waltz/SKILL.proposed0.gpt61sol.md) is also historical.
 
 ## Choose the outcome
 

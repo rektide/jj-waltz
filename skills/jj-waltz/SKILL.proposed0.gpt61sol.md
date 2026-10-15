@@ -4,11 +4,13 @@ description: Use when the user asks about jw or jj-waltz, creating or switching 
 type: Skill
 title: jj-waltz — choose the workspace outcome
 resource: /skills/jj-waltz/SKILL.proposed0.gpt61sol.md
-status: proposed
+status: superseded
 generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Incorporated this take into the canonical three-take synthesis and recorded its supersession
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Implemented up, compared command UX, and drafted a replacement skill separating creation, renewal, advancement, and frozen recovery
   - resource: /skills/jj-waltz/SKILL.md
@@ -23,11 +25,10 @@ sources:
 
 # jj-waltz
 
-> Proposed replacement for `SKILL.md`, not an activated skill. Describes current
-> implementation, not authority to install, upgrade, create workspaces, or spawn
-> agents. The paired [README proposal](../../README.proposed0.gpt61sol.md) supplies
-> the human-facing account. On promotion, review proposal links and metadata;
-> do not register this draft automatically.
+> **Superseded by the [canonical skill](SKILL.md) and
+> [README](../../README.md).** Preserved with its paired
+> [README draft](../../README.proposed0.gpt61sol.md) as synthesis evidence;
+> load `SKILL.md` for current guidance.
 
 ## Choose the action before the command
 

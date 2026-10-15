@@ -11,6 +11,7 @@ sources:
   - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
     title: Preserved the existing manager reference while synthesizing the canonical README and skill
   - resource: /README.md
+    revision: fceba759ac391599f85137df52f4fc9eb08683d5
     title: Existing interactive manager instructions before the three-take synthesis
 ---
 
@@ -94,3 +95,11 @@ or automatic repair is performed.
 
 See [lifecycle safeguards](../skills/jj-waltz/references/lifecycle.md#remove) for
 CLI cleanup, native-app ownership, and preservation options.
+
+## Development verification
+
+On Unix, build with `cargo build --locked`, then run
+`uv run --with pyte tests/terminal_ui.py` for real terminal interaction, shell
+switching, terminal restoration, and a 50-workspace responsiveness check. The
+terminal checks use disposable repositories. See [contributing](../CONTRIBUTING.md)
+for the root and separate Herdr workspace checks.

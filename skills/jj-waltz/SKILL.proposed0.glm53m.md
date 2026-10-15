@@ -1,10 +1,13 @@
 ---
 name: jj-waltz
+status: superseded
 description: Use when the user mentions jw, jj-waltz, or .jwlinks.toml; asks to manage jj workspaces or worktrees; or requests parallel work in separate workspaces. Covers jw add/switch (CoW creation), jw reseed (in-place CoW refill), and jw up (fetch, prepare, advance).
 updated:
   by: model:zai-coding-plan/glm-5.3
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Incorporated this take into the canonical three-take synthesis and recorded its supersession
   - resource: "opencode://ses_ebf063316ffeZf7tZ07pQTNqbG"
     title: Independent skill rewrite take with unified command-model routing and scannable reseed/up rules
   - resource: /README.md
@@ -18,6 +21,11 @@ sources:
 ---
 
 # jj-waltz
+
+> **Superseded by the [canonical skill](SKILL.md) and
+> [README](../../README.md).** Preserved with its paired
+> [README draft](../../README.proposed0.glm53m.md) as synthesis evidence;
+> load `SKILL.md` for current guidance.
 
 Use `jw` when the user requests JJ workspace lifecycle or navigation work. Its
 lifecycle management is optional. Keep native app tasks in the checkout the app

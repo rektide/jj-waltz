@@ -1,13 +1,28 @@
 ---
 type: Guide
-title: jj-waltz — CoW reseeding fork
-description: A user-facing guide to this jj-waltz fork, chosen-destination CoW variants, and existing-workspace reseeding.
+title: jj-waltz — create, renew, advance
+description: The canonical guide to creating and navigating JJ workspaces, renewing private CoW sharing, and advancing onto prepared upstream work.
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol
+  by: model:openai/gpt-6-astra
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Synthesized the existing guide and independent Sol and G takes into the canonical README and skill
+  - resource: /README.md
+    revision: fceba759ac391599f85137df52f4fc9eb08683d5
+    title: Original coverage, shell setup, configuration, ownership, and manager guidance
+  - resource: /README.proposed0.gpt61sol.md
+    title: Outcome-led organization and shared command controls
+  - resource: /README.proposed0.glm53m.md
+    title: Independent command comparison, policy consolidation, and implementation-checked coverage
+  - resource: /docs/reseed.md
+    title: Maintained reseed, up, copying, and recovery contract
+  - resource: /skills/jj-waltz/references/lifecycle.md
+    title: Lifecycle operations and ownership boundaries
+  - resource: /CONTRIBUTING.md
+    title: Current compatibility pins and development checks
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Integrated public up, native inference, source-only preparation, target preservation, and legacy resume migration
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -26,754 +41,405 @@ sources:
     title: In-place reseeding behavior and safety contract
 ---
 
-# jj-waltz — working fork
+# jj-waltz
 
-Manage named [Jujutsu](https://github.com/jj-vcs/jj) workspaces with `jw`: create
-one, jump into it, or refill it with private copy-on-write files without changing
-its location.
+**Create a workspace. Renew its copy-on-write sharing. Advance onto prepared upstream work.**
 
-**This is a working fork of [EzraCerpac/jj-waltz](https://github.com/EzraCerpac/jj-waltz).**
-We carry chosen-destination CoW variants and in-place workspace reseeding on top
-of upstream's workspace switcher.
-This forks **jj-waltz, not Jujutsu**: reseeding works with stock JJ, without a
-patched `workspace add --adopt` command.
+`jw` manages named [Jujutsu](https://github.com/jj-vcs/jj) workspaces: create,
+switch, inspect, and refill them in place. Copy-on-write (CoW) files share storage
+until either copy changes, so workspaces can have private files and dependencies
+without paying for every byte twice.
 
-## What this fork carries
+This working fork of [EzraCerpac/jj-waltz](https://github.com/EzraCerpac/jj-waltz)
+extends the workspace switcher with chosen destinations, private dependency copies,
+in-place reseeding, and integrated upstream advancement. It works with stock JJ.
 
-- **Create where you choose:** `jw add --path DESTINATION` and `jw s --path DESTINATION`
-  infer a workspace name, with optional `--from SOURCE`.
-- **Everyday creation defaults:** CoW, JJ-only, and an empty child of the source's
-  current snapshotted `@`; explicit mode and revision selections remain available.
-- **Refill an existing workspace:** `jw reseed NAME` renews CoW sharing while
-  keeping the root directory, `.jj`, registration, bookmarks, and workspace identity.
-- **Keep features or reset worker slots:** keep the target revision by default;
-  add `--at REVSET` to start an empty child of a chosen base. Real work is
-  snapshotted before replacement.
-- **Private dependency copies:** `--copy-ignored node_modules` replaces selected
-  ignored directories with independent CoW copies, not shared-directory symlinks.
-- **Advance with `up`:** infer/pin native upstream, fetch, run local preparation,
-  preserve unpublished target work with timestamp bookmarks, and start targets on
-  new empty changes at the exact prepared goal. Bare up at primary is source-only.
-- **One-offs first, batches when useful:** named targets need no groups. Local
-  configuration and groups are optional shortcuts; `--dry-run` previews the plan
-  and `--resume` safely finishes an interrupted refill.
-- **Wildcard batches without touching unrelated checkouts:** group `name_globs`
-  or `path_globs` select registered workspaces. Opt into `on_unmatched = "warn"`
-  to skip unrelated candidates and list them in one warning line; see
-  [wildcard groups](docs/reseed.md#wildcard-groups).
+## Install and start
 
-Upstream already provides switching, workspace links, CoW **creation**, shell
-integration, the interactive manager, and lifecycle checks. This fork extends
-creation placement/defaults and adds CoW **reseeding of existing workspaces**.
-See the [reseeding guide](docs/reseed.md)
-for the full contract and [changelog](CHANGELOG.md) for the carried changes.
-
-## Get this fork running
-
-From this checkout, install the binary carrying these changes:
+Install this checkout's fork:
 
 ```sh
 cargo install --path . --locked
 ```
 
-Source commits do not update an already installed `jw`. For development, use
-`cargo build --bin jw` and invoke `target/debug/jw` explicitly instead of installing.
+For development, build with `cargo build --bin jw` and run `target/debug/jw`.
+Source changes do not update an installed executable. Building requires Rust 1.88+;
+supported JJ starts at 0.39. CI pins 0.39.0, 0.44.0, 0.45.1, and 0.46.0, with
+newer capabilities gated separately. See [verification limits](docs/reseed.md#verification-and-limits).
 
-Then try the everyday workspace commands:
+### Shell setup
+
+Use the line for your shell and add it to the shell's startup configuration:
 
 ```sh
-jw add my-feature               # CoW/JJ-only, at current source @
-jw s my-feature                # print its path; shell setup below enables cd
+eval "$(jw shell init zsh)"                  # zsh
+eval "$(jw shell init bash)"                 # bash
+jw shell init fish | source                 # fish
+eval (jw shell init elvish | slurp)          # elvish
+jw shell init powershell | Out-String | Invoke-Expression  # PowerShell
+```
+
+Restart or re-source the shell after setup. The wrapper lets `jw s`, `jw ^`,
+`jw -`, and the interactive manager change your current directory; the binary
+alone can only report a destination. Generate completions with
+`jw shell completions SHELL`. Zim users can use
+[rektide/zim-jj-waltz](https://github.com/rektide/zim-jj-waltz) for cached Zsh
+integration and automatically refreshed completions.
+
+```sh
+jw add feature tests          # create siblings repo.feature and repo.tests
+jw s feature                  # enter feature, creating it if missing
 jw list
+jw status @
+jw reseed --dry-run            # preview renewing this variant, keeping its work
 ```
 
-Reseeding borrows the verified primary checkout by default. From a variant:
+In a terminal, bare `jw` opens the interactive manager; `jw ui` selects it
+explicitly. Outside a terminal, bare `jw` prints help.
+
+## Choose the outcome
+
+The **primary** is the registered checkout owning the shared JJ repository. A
+**variant** is another workspace in that repository. The **donor** supplies files;
+it can be the primary or an explicitly selected workspace.
+
+| Behavior / control | `add` / `s` (`switch`) | `reseed` | `up` |
+| --- | --- | --- | --- |
+| Outcome | Create; `s` enters existing or creates missing | Renew CoW sharing in place | Fetch, prepare donor, advance and refill |
+| Target history | Empty child of source `@`, or `--at` | Keep snapshotted work, or reset via `--at` | New empty change at the fetched goal |
+| Bare command in a variant | Name/path required | Current variant | Current variant |
+| Bare command at primary | Name/path required | Names/group required | Donor only |
+| Multiple names | Create all; `s` enters last | Refill selected | Advance selected |
+| `--group`, `--on-unmatched` | — | Supported | Supported |
+| Default donor | Current checkout | Local `source` → verified primary | Same as reseed |
+| `--from` | Creation source and command context | Donor only; caller role stays the same | Same as reseed |
+| `--path` | One exact destination; name can be inferred | — | — |
+| `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion | Upstream advancement goal |
+| `--at` | Explicit creation base | Explicit reset base | —; always prepared goal |
+| Fetch / preparation commands | Never | Never | One pinned upstream / local argv |
+| `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Refill payload |
+| `--dry-run`, `--resume` | — | Supported | Supported |
+| `--replace-content` | — | Discard unrecorded target contents | Same as reseed |
+| Bookmarks | Optional creation bookmark | Existing bookmarks stay | Preserve work left behind; feature bookmarks stay |
+
+**Renew keeps work checked out; advance starts fresh.** `up` is not a rebase.
+Creation flags never reset or refill an existing workspace selected by `s`.
+Explicit names/groups suppress the implicit current target; empty selection never
+means all workspaces. Maintenance names are literal, not navigation shortcuts.
+
+Creation with `--from` can start outside a checkout. Reseed/up require a registered
+caller even with `--from`. Ordinary `jj` commands own deliberate history editing,
+bookmarks, and remote administration; forge tools own pull requests and CI.
+
+## Create and navigate
+
+### Create at a chosen destination
 
 ```sh
-jw reseed --dry-run             # this variant; keep its work, borrow donor @
-jw reseed my-feature --dry-run  # explicit target; required at the primary
-
-# Optionally assert the donor's tracked tree matches BASE.
-jw reseed my-feature --source-at BASE --dry-run
-
-# Reset a reusable worker to that base and copy its installed dependencies.
-jw reseed worker-a --source-at BASE --at BASE \
-  --copy-ignored node_modules --dry-run
+jw add --path ~/src/opencode-fix --from /path/to/opencode
+jw s --path ~/src/myfix --from /path/to/opencode
 ```
 
-Replace `BASE` with a revset such as `main@origin`, and remove `--dry-run` when
-the plan is right. Use `--from /path/to/prepared-source` for another source.
-No fetch or package install happens during reseed. Use `jw up --dry-run` to preview
-freshening and advancement of this variant (at primary: source-only). Reseeding requires
-full, JJ-only targets and a reflink-capable filesystem; pause writers first.
-Up infers a unique native line or accepts `--source-at`; see
-[source freshening](docs/reseed.md#freshen-the-source).
+Under repository `opencode`, these infer `fix` and `myfix`, respectively. You can
+also supply an explicit name. Existing registrations take precedence: `s` enters
+the registered workspace; `add` reports it already exists. Conflicting registrations
+and occupied new destinations are errors. Relative paths resolve from the caller.
 
-Fish has the richest shell integration. See [shell setup](#shell-setup) for
-Fish, Zsh, Bash, Elvish, and PowerShell.
-
-## Why
-
-Jujutsu workspaces are powerful, but the raw workflow is still more manual than it needs to be.
-`jj-waltz` makes switching feel intentional: create or jump in one command, preserve your current subdirectory, and integrate cleanly with your shell.
-
-This project is directly inspired by [Worktrunk](https://github.com/max-sixty/worktrunk),
-which set a high bar for ergonomic worktree tooling. Worktrunk is a quality
-benchmark, not this project's command specification: `jj-waltz` stays focused on
-JJ-native workspace lifecycle and cross-workspace coordination.
-
-The responsibility split is deliberate:
-
-- `jj` owns revision-graph work, bookmarks, fetch/push, and operation-log recovery.
-- `jw` owns workspace creation, navigation, links, lifecycle metadata, and safe
-  cross-workspace coordination.
-- Forge tools such as `gh` and `glab` own pull requests, merge requests, and CI.
-
-Core workspace operations remain offline unless source preparation is explicitly
-requested with `jw up`. That requested fetch/preparation must succeed
-before distribution. Optional forge information remains nonessential enrichment.
-
-## Features
-
-- `jw context [PATH]` reports Git topology and JJ identity without changing either
-- `jw add <name>...` creates one or more JJ workspaces without switching
-- `jw switch <name>` creates or switches to a JJ workspace
-- `jw switch <name>...` creates any missing workspaces and switches to the last one
-- `jw s <name>` short alias for the main workflow
-- `jw ^` and `jw -` switch to the default and previous workspaces
-- preserve the current subdirectory when switching between sibling workspaces
-- shortcuts for current, previous, and default workspaces: `@`, `-`, `^`
-- `jw list` (`jw l`, `jw ls`) keeps its compact legacy output; `--format=json` emits a frozen repository snapshot
-- `jw status [workspace]` explains one workspace from the same snapshot contract
-- `jw doctor` reports repository, trunk, metadata, and workspace consistency checks
-- `jw` opens the interactive workspace manager in a terminal; `jw ui` selects it explicitly
-- `jw adopt <name> --base <revset>` records an existing workspace as managed without rewriting JJ state
-- `jw repair <name> --base <revset> (--bookmark <bookmark> | --no-bookmark)` repairs existing managed metadata without changing JJ state
-- `jw path`, `jw remove <name>...`, `jw prune`, `jw root`, and `jw current`
-- `jw reconcile-external <name>` reconciles stale JJ state after external checkout cleanup
-- `--execute` support for jumping into editors or agents after switching
-- optional automatic bookmark creation for new workspaces
-- optional workspace links via `.jwlinks.toml` for sharing large ignored directories
-- copy-on-write workspace creation by default on APFS, Btrfs, and XFS; explicit `--no-cow` opt-out
-- `jw reseed <name>...` refills existing JJ-only workspaces in place with copy-on-write files
-- shell integration for `fish`, `zsh`, `bash`, `elvish`, and `powershell`
-- generated shell completions from the CLI definition
-
-## Create at a chosen destination
-
-`add` and `s` share source, placement, and creation policy. From the `opencode`
-repository, for example:
+Name-only creation puts `repo.NAME` beside the owning checkout. Inspect destinations
+with `jw path NAME`; use `jw current` and `jw root` for identity rather than directory
+basenames. Navigation accepts `@` (current), `-` (previous), and `^` or `default`
+(default workspace). Switching preserves your relative subdirectory when it exists
+at the destination.
 
 ```sh
-cd ~/src/opencode
-jw add --path ~/src/opencode-fix  # workspace name: fix; no duplicate NAME needed
-jw s --path ~/src/myfix          # workspace name: myfix; no clear repo- prefix
-```
-
-Or select the source explicitly, including from outside a checkout:
-
-```sh
-jw s --from ~/src/opencode --path ~/src/opencode-review  # workspace name: review
-```
-
-Without `--from`, the current checkout supplies the repository, files, and revision
-context. Repository identity follows verified JJ storage ownership, not the current
-variant's directory name or a workspace merely named `default`. Relative destinations
-are resolved from the caller's directory, before entering `--from`.
-
-`--path` selects one exact destination. An existing registration there supplies its
-actual workspace name; `s` enters it without recreation, while `add` reports that it
-already exists. Conflicting name/path registrations and occupied new destinations
-are errors. An optional explicit `NAME` can name a new destination instead of inference.
-
-Name-only usage is unchanged: `jw add fix` creates a sibling named `repo.fix` for a
-primary checkout named `repo`; `jw s fix` uses its registered path. No automatic
-`~/src` destination is selected. Shell initialization is needed for `s` to change
-the parent shell directory; the raw binary only reports the selection.
-
-## Checkout discovery and Codex
-
-`jw context` can inspect an unfamiliar checkout's identity. Its JSON uses schema
-version 1 with separate `git` and `jj` objects, nullable identity fields, and
-diagnostics. Git-only and non-repository paths are valid results. Discovery does
-not refresh a working copy.
-
-Keep native app tasks in the checkout the app creates. Use Git when that checkout
-has Git only, and JJ when it already has a JJ workspace, including an adopted linked
-Git worktree. A related JJ primary checkout does not require routing into another
-workspace. Keep the requested starting commit and an explicit working directory.
-
-Give each checkout one writer; an orchestrator can inspect a worker's state and
-results read-only. Native apps own their created checkouts and Git registrations,
-so cleanup belongs to the app. `jw` workspace lifecycle is optional. The
-[native app skill reference](skills/jj-waltz/references/codex.md) describes capability
-and ownership checks. `jw context` and `jw adopt` do not initialize or adopt a Git
-worktree into JJ.
-
-## Upstream distributions
-
-The commands below install **upstream**, not this working checkout. They may not
-carry this fork's reseeding additions. Use [the local install above](#get-this-fork-running)
-when you want the features described here.
-
-### Homebrew
-
-Install from the public tap:
-
-```bash
-brew install EzraCerpac/tap/jj-waltz
-```
-
-### Cargo
-
-```bash
-cargo install --git https://github.com/EzraCerpac/jj-waltz --locked
-```
-
-### Herdr plugin
-
-Install the bundled Herdr UI to create and remove `jw` workspaces from Herdr:
-
-```bash
-herdr plugin install EzraCerpac/jj-waltz/plugins/herdr
-```
-
-The plugin builds the `jw` binary from the same repository revision and delegates all
-workspace paths, links, bookmarks, and removal checks to it. See
-[`plugins/herdr`](plugins/herdr) for keybindings and local development.
-
-## Workspace links
-
-If you keep large ignored data in one workspace and want it accessible from others,
-define link relationships in the default workspace's `.jwlinks.toml`:
-
-```toml
-[[link]]
-source = "data"
-target = "../ezra-cerpac/data"
-required = true
-```
-
-When you run `jw switch`, `jw` creates symlinks in the receiving workspace unless you
-pass `--no-links`. You can also run `jw links apply` manually from any workspace; it
-still uses the default workspace's configuration. `.jwlinks.local.toml` overrides the
-shared file for an entry with the same `source`. Relative targets resolve from the
-workspace receiving the links, so the same rule can work across sibling and nested
-workspaces.
-
-Sources must stay inside the receiving workspace. Absolute sources and parent traversal
-such as `../outside` are rejected. All rules are checked before `jw` changes the filesystem,
-so a later conflict does not leave earlier links behind.
-
-For machine-specific overrides, add `.jwlinks.local.toml` (recommended to keep ignored).
-
-`jw doctor` checks these relationships in every managed workspace. A configured source
-is `PASS` when it resolves canonically to its target, including an ordinary path. A
-missing source when its target exists, a missing required target, or a source occupied
-by a private path or wrong link is `FAIL`. An optional missing target is `WARN`/`SKIP`
-only when the source is absent or is the correct dangling link. A managed workspace
-whose path is stale or missing gets a separate workspace diagnostic and link inspection
-is `SKIP`.
-
-## Copy-on-write workspaces
-
-`jw add` and `jw switch` default to cloning the source checkout's tracked files
-instead of letting JJ write each one. New workspaces are JJ-only, even when the
-source is colocated. Clones share
-storage until either copy changes: APFS `clonefile(2)` on macOS and reflinks on
-Linux filesystems such as Btrfs and XFS. Use `--no-cow` for an ordinary JJ checkout,
-or disable CoW in user configuration:
-
-```toml
-[workspace]
-copy_on_write = false
-```
-
-The result matches an ordinary JJ checkout of the creation base, including the
-source checkout's sparse patterns. Without `--at`, `jw` snapshots that source
-before freezing its current `@` as the base, so dirty tracked changes are included.
-Normal JJ auto-tracking rules apply during this snapshot. The new workspace starts
-as an empty child of that exact commit. `--at REVSET` instead selects one explicit
-base; it is not replaced by the current source revision.
-
-Optional `--source-at REVSET` asserts that the donor's freshly snapshotted tracked
-tree equals one exact revision, even when commit identities differ. It does not
-select the target parent: without `--at`, that remains donor `@`; with `--at`, the
-explicit target base wins. Assertion and base resolve at one frozen operation.
-Creation does not inherit local reseed `source`, `source_at`, or freshening settings;
-only the shared ignored-copy policy applies. Existing-only switches skip assertions.
-
-The tracked checkout clones only files JJ tracks. Ignored data is copied only
-when selected by [ignored-copy policy](#ignored-copy-defaults); use
-[workspace links](#workspace-links) only when deliberate sharing is wanted.
-Tracked directories are not replaced by whole-directory links.
-
-When the filesystem cannot clone, `jw` warns and uses ordinary JJ workspace
-creation. With Watchman configured, or if JJ rejects the copied working-copy
-state, `jw` also warns and recreates through the ordinary path. These are ordinary
-checkouts, not CoW successes. CLI warnings go to stderr, including when shell
-switching reserves stdout for a path; the interactive manager shows a warning report.
-Every fallback preserves the source checkout's sparse patterns.
-
-### Private dependencies on creation
-
-```sh
-jw add --path ../repo-fix --from /path/to/source \
-  --copy-ignored node_modules --copy-ignored '**/target/'
-jw s another --no-copy-ignored  # override local/global payload selection
-```
-
-`add` and `s` share repeatable `--copy-ignored` and `--no-copy-ignored` controls.
-Selected directories must be ignored in both the snapshotted donor and the exact
-target base, with no tracked overlap. Nonignored source matches are reported and
-skipped; nested selections copy once, and missing matches succeed. Payload copies
-require real private CoW even with `--no-cow` or `--colocate`: those flags control
-the tracked checkout only. There is no payload byte-copy or shared-link fallback.
-
-When an actual payload is selected, destinations nested inside the donor are
-rejected before creation, including aliases through symlinked parents. Choose an
-external `--path` or use `--no-copy-ignored`; selections with no matches retain
-normal nested placement. This keeps the frozen donor proof intact and prevents
-recursive payload overlap.
-
-Payloads are installed before links. A configured link overlapping a selected
-private root is an error; use a source-equals-target `.jwlinks.local.toml` override
-to keep it private. A failed creation rolls back only its new workspaces, including
-read-only dependency copies. Pause donor writers while creating copies. Switching
-to an existing workspace never refills dependencies from policy or creation flags.
-
-### Reseed an existing workspace
-
-One-off use needs no groups or configuration. Inside a variant, omit the name to
-refill that current registered workspace; at the primary, name targets or a group:
-
-```sh
-jw reseed
-jw reseed my-feature
-jw reseed my-feature --source-at 'dev@origin'  # optional tree assertion
-```
-
-When run inside a JJ workspace, `--from` defaults to its verified primary
-checkout. An explicit `--from` or configured `source` takes precedence; the tool
-does not search arbitrary archive directories. The donor tree assertion is CLI
-`--source-at`, then local `source_at`, otherwise its freshly snapshotted `@`.
-Explicit names or groups never also select the current variant, even if a group
-matches nothing. Literal target names are not navigation tokens.
-
-This preserves the target's snapshotted working-copy revision and feature changes,
-root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
-`--at 'dev@origin'` to start an empty child of that base instead. The source's
-tracked tree must match any supplied/configured assertion. To advance the donor
-and targets together, use `up` with optional local commands:
-
-```toml
-# .jwreseed.local.toml in the primary checkout (keep it ignored)
-[freshen]
-remote = "origin"
-commands = [["bun", "install", "--frozen-lockfile"], ["bun", "run", "build"]]
-```
-
-```sh
-jw up my-feature --source-at 'dev@origin' \
-  --copy-ignored node_modules --dry-run
-```
-
-Up snapshots real work, pins native upstream before fetch, freezes the fetched
-goal, and runs configured commands sequentially. Targets start new empty changes
-on that goal, not rebases. Unpublished work gets a `freshen-<UTC timestamp>` bookmark
-unless `--no-freshen-bookmark` is supplied; feature bookmarks never move. Bare up
-inside a variant updates that variant; at primary it prepares the donor only.
-Names/groups suppress implicit current selection. `--from` changes only the donor.
-No unique native tracked/exact remote line? Supply a one-run `--source-at`.
-Unpublished source work blocks advancement. A single `command = [...]` is also supported; declaring
-both forms is an error. No commands means no guessed build: selected ignored
-payload is existing data, not freshly built. The table alone never activates
-freshening. `[prepare]` remains a warned alias; migrate it after pending recovery
-finishes. Completed steps are skipped on resume; an interrupted in-flight command
-may retry. `reseed --freshen` is removed; old pending batches still use
-`reseed ORIGINAL-NAMES --resume` without changing their frozen history intent.
-See [source freshening](docs/reseed.md#freshen-the-source).
-
-Use `--copy-ignored node_modules` to replace an ignored dependency directory with
-a private CoW copy, or `--replace-content` to explicitly discard all other
-unrecorded target contents except `.jj`. Pause writers before reseeding.
-`--dry-run` explains the plan; `--resume` finishes an interrupted recorded operation.
-Unsupported CoW fails before clearing files rather than falling back to copying.
-Ignored selection now inherits optional local/global lists; an explicit empty
-list disables inheritance. Normal nonignored source matches are skipped/reported,
-not treated as payload. See [ignored data and policy](docs/reseed.md#ignored-data).
-
-See the [reseeding guide](docs/reseed.md) for optional configuration and groups,
-restrictions, and recovery, and the [design](design/workspace-reseed/README.md)
-for the sparse-prefill mechanism and acceptance checks.
-
-## Shell setup
-
-Initialize your shell so `jw switch`, `jw ^`, and `jw -` can change the
-current shell directory:
-
-```bash
-# bash
-eval "$(jw shell init bash)"
-
-# zsh
-eval "$(jw shell init zsh)"
-
-# fish
-jw shell init fish | source
-
-# elvish
-eval (jw shell init elvish | slurp)
-
-# PowerShell
-jw shell init powershell | Out-String | Invoke-Expression
-```
-
-Without shell initialization, the raw `jw` binary can only print the target path
-or status; it cannot change the directory of the parent shell process.
-
-Zsh users on [Zim](https://zimfw.sh/) can instead install
-[rektide/zim-jj-waltz](https://github.com/rektide/zim-jj-waltz): it caches and
-precompiles the generated wrapper, keeps completions regenerated on `fpath`, and
-follows binary upgrades automatically.
-
-To generate completions manually:
-
-```bash
-jw shell completions fish
-jw shell completions zsh
-jw shell completions bash
-jw shell completions elvish
-jw shell completions powershell
-```
-
-## Quick start
-
-```bash
-jw switch feature-api
-jw add frontend tests docs
-jw switch frontend tests docs
-jw switch -x opencode feature-ui
 jw ^
 jw -
-jw ls
-jw list --format=json
-jw status @ --format=json --refresh=none
-jw doctor
-jw remove frontend tests
+jw s --execute opencode feature  # run there without changing the parent shell
 ```
 
-## Interactive workspace manager
+### Copy-on-write workspaces
 
-In a terminal, bare `jw` opens the Ratatui workspace manager by default. The
-bare command can instead run the legacy list or help view through the top-level
-config setting:
+Creation defaults to CoW tracked files and JJ-only metadata, even from a colocated
+source. APFS uses `clonefile`; Linux filesystems such as Btrfs and XFS use reflinks.
+The checkout retains the source's sparse patterns.
 
-```toml
-default_command = "ui" # "ui", "list", or "help"
-```
+Without `--at`, creation snapshots the source and starts an empty child of that
+exact `@`, including dirty tracked work or a merge. `--at REVSET` selects one exact
+base instead. Optional CLI `--source-at REVSET` asserts the snapshotted donor's
+**tracked tree**, independently of the target parent; equal trees need not be the
+same commit. Creation does not inherit local maintenance `source`, `source_at`, or
+preparation commands. Trunk configuration does not choose the creation base.
 
-A bare invocation outside a terminal prints help; explicit `jw ui` requires a
-terminal. Build from source with Rust 1.88 or newer.
-
-Use arrows or `j/k` to move, `Space` to mark a row, `a` to select visible rows,
-`c` to clear selection, `/` to search, and `?` for help. Click a checkbox to select
-with the mouse. Selections survive searches and filters; the header counts hidden
-selections too. `Enter` switches to the highlighted workspace and exits.
-Re-source `jw shell init ...` after updating to enable this shell behavior.
-
-Press `m` outside text-entry fields to toggle mouse controls. In text-selection
-mode, drag normally to select text using your terminal; keyboard controls still
-work. Press `m` again to restore row clicks and mouse scrolling. The footer shows
-the active mode. Colors follow your terminal palette: cyan identifies focus and
-shortcuts, magenta bookmarks, green integrated work and success, yellow unfinished
-work and warnings, and red conflicts, errors, and destructive actions. Text labels
-remain visible alongside the colors.
-
-`f` cycles filters; `1`–`4` select all, integrated bookmarks, unfinished work, or
-problems. Bookmark integration and workspace work are separate columns: a merged
-bookmark can still have newer workspace work. “In trunk” means local graph
-ancestry, not squash-merge equivalence or GitHub merge status. The resolved trunk
-is shown above the table. File state starts as unchecked; `i` refreshes the
-highlighted workspace, and removal refreshes its selected targets.
-
-`n` creates a workspace from an editable trunk, highlighted-workspace, or custom
-revision. `h` opens the read-only health report, `y` requests copying the path via
-the terminal clipboard protocol, and `Tab` opens details on narrow terminals.
-Clipboard support depends on the terminal; the path is also shown in the notice.
-
-`d` previews removal of the marked rows, or the highlighted row when none are
-marked. `p` opens **Prune missing workspaces**: it forgets registrations whose
-directories are already gone. Remove also permanently deletes existing directories.
-Current and default workspaces cannot be removed by the manager.
-Risky rows are excluded initially;
-`r` explicitly includes them. The preview shows how many rows will be removed,
-skipped, or blocked and explains why. If eligible workspaces contain files not
-recorded by JJ, choose `i` to delete the listed files or `s` to skip those
-workspaces. These files can include ignored caches, build output, and private
-files; JJ cannot restore them after deletion. Enter waits for this choice and
-does nothing if no workspace is eligible. Directory deletion is permanent.
-JJ's operation log is not a full undo for directory removal.
-
-In the preview, `b` toggles keeping or deleting eligible associated **local**
-bookmarks. The last confirmed choice is remembered across repositories in
-`$XDG_STATE_HOME/jj-waltz/ui.json`, falling back to
-`~/.local/state/jj-waltz/ui.json`. The initial choice is keep. Bookmarks associated
-with surviving managed workspaces are preserved; remote bookmarks are untouched.
-Unmanaged workspaces never have inferred bookmarks deleted. If saving the choice
-fails, removal still runs and reports a separate preference warning.
-
-Each target is revalidated before mutation. Changed targets require another
-review. Independent rows continue after a failure; results identify partial
-progress, and failed rows remain selected for an explicit retry. No batch rollback
-or automatic repair is performed.
-
-## Removing workspaces
-
-When a workspace has a bookmark created by `jw`, `jw remove` asks before deleting
-that bookmark. The safe default is to keep it. Scripts can choose explicitly:
-
-```bash
-jw remove --delete-bookmark feature-api
-jw remove --keep-bookmark feature-api
-```
-
-Removal is planned before mutation, so default/current-workspace checks and bookmark
-choices happen before cleanup. On JJ 0.46+ or a build advertising `workspace remove`,
-directory removal uses that native command to snapshot the target's tracked changes
-before deletion. A stale target fails safely; inspect it and run `jj workspace
-update-stale` there before retrying. Older supported JJ versions use guarded forgetting
-and directory deletion. `--keep-dir` and already-missing directories use forgetting;
-`--keep-dir` preserves files. Ignored and other files outside JJ's snapshot are deleted
-with the directory, as before; use `--keep-dir` when they need preservation. The
-interactive manager still requires review of ignored/untracked files.
-
-Native errors are checked for partial progress and never trigger a deletion fallback.
-If JJ forgets the workspace but only warns that directory deletion failed, jw reports
-the remaining path as a partial removal after cleaning bookmarks and lifecycle metadata.
-
-### Colocated workspaces
-
-`jw add feature --colocate` and `jw switch feature --colocate` create a JJ workspace
-with a linked Git worktree on JJ 0.46 or another build advertising that capability.
-Git-aware tools can use the new workspace's `.git` link. `--colocate` alone opts out
-of default CoW. This fork no longer inherits colocation from primary topology or
-JJ's `git.colocate` setting. To select colocation in user configuration:
-
-```toml
-[workspace]
-colocate = true
-```
-
-That setting alone also opts out of default CoW. Omit it or set `colocate = false`
-for JJ-only creation. See [mode precedence](#creation-mode-precedence) for explicit
-CoW/configuration combinations. These settings affect
-only newly created workspaces; switching to an existing workspace never converts
-it. Explicit colocation requests on unsupported JJ versions fail before creation and
-advise upgrading to JJ 0.46+ or using `--no-colocate`. Non-Git backends also fail
-before creation.
-
-`jw` records provenance only for Git worktrees it creates. `jw remove` cleans that
-workspace's Git registration, and `--keep-dir` retains its files while removing the
-Git link. Missing checkout paths can be pruned if the recorded registration still
-matches. Cleanup validates both live topology and the ownership marker, and never
-runs a global Git worktree prune. Changed topology or missing/damaged provenance
-requires inspection instead of automatic deletion. Native app checkouts remain
-externally owned, including after adoption.
-
-For native removal, jw temporarily detaches only its validated Git link to prevent
-JJ's repository-wide pruning from deleting unrelated missing registrations, then
-cleans only the matching owned registration. A failed removal restores the link
-when the workspace is still registered; unverifiable outcomes retain lifecycle metadata
-and the owned registration for inspection.
-
-`jw doctor` validates recorded ownership against live topology and the marker,
-and reports invalid provenance as a metadata-consistency error.
-
-Lifecycle metadata writes use schema 3; schemas 1 and 2 remain readable without
-inferring ownership. Older jw versions refuse schema 3 records. Preserve the metadata
-and Git administrative ownership marker for cleanup, and use a current jw version.
-If a process is interrupted after detaching `.git`, inspect `.jj/jw-detached-git`
-and the retained metadata before recovering the link or finishing cleanup.
-
-## Config
-
-`jw` reads user config from `$XDG_CONFIG_HOME/jj-waltz/config.toml`, or
-`~/.config/jj-waltz/config.toml` when `XDG_CONFIG_HOME` is not set.
-
-### Ignored-copy defaults
-
-```toml
-# Root key, before any [workspace] or [trunk] table.
-copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
-```
-
-This opt-in setting applies to new workspaces from `add`/`s`, reseed, and up.
-CLI lists replace repository-local lists, which replace global lists. Missing
-local `copy_ignored` inherits; local `copy_ignored = []` or `--no-copy-ignored`
-disables inheritance/copying. Broad patterns select only ignored source roots:
-a normal tracked `build/` is skipped, but eligible ignored descendants remain
-discoverable. Selected payload stays private CoW, never a shared directory link.
-The repository-local list lives in the verified primary store owner's
-`.jwreseed.local.toml`, not an arbitrary workspace named `default` or the donor's
-local file. Creation shares only that list: its source remains the current
-checkout or `--from`; local `source`, `source_at`, and freshening settings do not
-override creation's donor or execute commands.
-See [policy examples and safety boundaries](docs/reseed.md#ignored-copy-policy-layers).
+Unsupported cloning, Watchman, or rejected copied JJ state cause a warning and
+ordinary JJ checkout fallback during **tracked creation**. That is not CoW success.
+Private ignored payloads and reseed/up refills require real CoW and have no ordinary
+copy fallback.
 
 ### Creation-mode precedence
-
-Mode settings are user-scoped, not repository-scoped. Omitted settings mean CoW
-and JJ-only. Explicit `false` remains distinct from omission.
 
 | Selection | New workspace mode |
 | --- | --- |
 | No mode settings | CoW, JJ-only |
-| CLI `--colocate` | Ordinary colocated checkout, overriding configured CoW |
-| CLI `--cow` | CoW/JJ-only, overriding configured colocation |
-| CLI `--cow --colocate` | Conflict |
-| Config `colocate = true` alone | Ordinary colocated checkout |
-| Config `copy_on_write = true` and `colocate = true` | Conflict unless a CLI override resolves it |
+| `--cow` | CoW/JJ-only, overriding configured colocation |
+| `--colocate` | Ordinary linked Git worktree, overriding configured CoW; requires JJ capability, generally 0.46+ |
 | `--no-cow`, otherwise unset | Ordinary JJ-only checkout |
+| Config `colocate = true` alone | Ordinary colocated checkout |
+| Config `copy_on_write = true` and `colocate = true` | Conflict unless resolved by CLI |
+| `--cow --colocate` | Conflict |
 
-Positive CLI mode selections take precedence over configuration. Otherwise CLI
-opt-outs override their corresponding config fields: `--no-cow` plus configured
-`colocate = true` keeps colocation; `--no-colocate` plus configured CoW keeps CoW.
-`--cow --no-cow` and `--colocate --no-colocate` are invalid combinations.
+Mode settings live under `[workspace]` in user configuration. Positive CLI modes
+take precedence; opt-outs override their corresponding settings. Thus `--no-cow`
+with configured colocation keeps colocation, while `--no-colocate` with configured
+CoW keeps CoW. Opposite flags for the same setting conflict. Existing workspaces
+are never converted by switching.
 
-### Bookmarks and trunk
+## Renew: keep your feature work
 
-To create a bookmark automatically whenever `jw switch` creates a workspace:
+Pause donor/target writers, then preview:
 
-```toml
-[workspace]
-create_bookmark = true
-bookmark_template = "{workspace}"
+```sh
+jw reseed --dry-run
+jw reseed feature --from /path/to/prepared-source --dry-run
 ```
 
-`bookmark_template` defaults to `{workspace}`. The `{workspace}` token is replaced
-with the resolved workspace name, so templates like `wip/{workspace}` are valid.
+Remove `--dry-run` when the plan is right. Reseed snapshots real work, retains the
+target revision, reflinks equal paths from the donor, and lets JJ materialize feature
+differences. The root, `.jj`, registration, bookmarks, and lifecycle identity remain.
+Repeating it renews sharing even when bytes are unchanged. It never fetches or builds.
 
-For one command, `jw switch --bookmark custom-name feature-a` overrides the config,
-and `jw switch --no-bookmark feature-a` suppresses configured bookmark creation.
-Explicit `--bookmark` is single-workspace only; for batch `add` or `switch`, use
-`bookmark_template`.
+Donor selection is CLI `--from` → local `source` → verified primary. The optional
+tree assertion is CLI `--source-at` → local `source_at`; otherwise borrowing uses
+the donor's freshly snapshotted `@`. To reset a reusable worker deliberately:
 
-Status compares against one configured trunk revision. It defaults to JJ's
-`trunk()` revset:
+```sh
+jw reseed worker --source-at 'dev@origin' --at 'dev@origin' --dry-run
+```
+
+This selects an empty child of the base rather than carrying feature edits forward.
+Tracked work remains in JJ history, but reseed does not create up's preservation
+bookmark. See the [operator guide](docs/reseed.md#one-off-use).
+
+## Advance: fetch, prepare, refill
+
+```sh
+jw up --dry-run                    # current variant; donor only at primary
+jw up worker-a worker-b --dry-run   # only these targets
+jw up worker-a --source-at 'dev@origin' --dry-run
+```
+
+Up pins one upstream **before fetching**: CLI/local source goal, otherwise a unique
+applicable native tracked pair, otherwise a unique remote bookmark exactly at the
+clean donor base, including untracked refs. Ambiguity calls for a one-run
+`--source-at`; there is no guessed main/origin. Optional `[freshen].remote`
+constrains selection. An explicit missing `branch@configured-remote` can be fetched,
+though preview cannot yet know its exact goal.
+
+Unpublished donor work blocks advancement, even beneath an empty scratch change.
+The selected remote must fast-forward. Up freezes the fetched goal, prepares the
+donor, then puts targets on new empty changes at that same goal. Existing feature
+bookmarks stay where they are. Work not contained in the fetched goal gets a
+collision-safe `freshen-<UTC timestamp>` bookmark before target clearing or advancement;
+`--no-freshen-bookmark` opts out of that bookmark only.
+
+To prepare newer dependencies **while keeping a feature revision**, run source-only
+`jw up` at the primary, then `jw reseed feature`. See the
+[full up contract](docs/reseed.md#freshen-the-source).
+
+### Local preparation and groups
+
+Keep `.jwreseed.local.toml` ignored in the verified primary checkout:
 
 ```toml
+# Optional source and source_at overrides can go here.
+copy_ignored = ["**/node_modules", "**/dist/"]
+
+[groups]
+workers = ["worker-a", "worker-b"]
+
+[freshen]
+commands = [
+  ["bun", "install", "--frozen-lockfile"],
+  ["bun", "run", "build"],
+]
+```
+
+Commands run sequentially as argv in the donor root, without an implicit shell.
+Each must leave tracked files, including lockfiles, unchanged. Use `command = [...]`
+for one command or `commands = [[...], ...]`, never both, even when empty. No commands
+means no guessed installer/build: selected existing payload can still be borrowed,
+but is not freshly built. Preparation commands are repository-local, run only via
+`up`, and execute trusted programs rather than a sandbox.
+
+Use `jw up --group workers --dry-run` or `jw reseed --group workers --dry-run`.
+Groups can also select registered name/path patterns and opt into warn-and-skip for
+unrelated candidates. Direct names and target safety failures stay strict. Group
+patterns differ from ignored-copy patterns; see [wildcard groups](docs/reseed.md#wildcard-groups).
+
+## Private dependencies and shared copying policy
+
+### Private dependencies on creation
+
+```sh
+jw add feature --copy-ignored node_modules
+jw reseed --copy-ignored 'packages/*/node_modules' --dry-run
+jw up --no-copy-ignored --dry-run
+```
+
+The same controls apply to new workspaces, reseed, and up. Selected ignored roots
+are **replaced** with private reflinks, not hard links or shared-directory symlinks.
+Other target contents stay unless explicitly erased. Existing switches never refill.
+
+Lists replace in **CLI → primary-local → global → none** order. Missing local policy
+inherits; local `copy_ignored = []` stops inheritance. `--no-copy-ignored` disables
+even an explicit CLI list. Creation reads only the local copy list, not maintenance
+source or preparation settings.
+
+Quote patterns: `*`, `?`, `**`, and trailing `/` are supported. Missing matches
+succeed; nonignored source matches are skipped/reported; nested selections copy once.
+Selected roots must be ignored on both sides, without tracked overlap or escapes
+through directory symlinks. Creating actual payload inside its donor is refused;
+choose an external destination. `--no-cow` and `--colocate` control tracked creation,
+not the independently required real-CoW payload phase. Pause donor writers first.
+
+Dependencies reflect the donor's installed state. If feature manifests differ,
+run that project's frozen install in the feature. Symlinks are copied as links;
+source-bound absolute links are reported, not rewritten. See
+[ignored-data rules](docs/reseed.md#ignored-data).
+
+### Workspace links
+
+For deliberate sharing, define symlinks in the default workspace's `.jwlinks.toml`:
+
+```toml
+[[link]]
+source = "data"
+target = "../repo/data"
+required = true
+```
+
+`add` and `switch` apply links; `jw links apply` applies them manually.
+`.jwlinks.local.toml` overrides entries with the same `source`. Sources stay inside
+the receiving workspace; relative targets resolve from its root. `--no-links`
+skips application for the operation. Private payloads are installed before links;
+an overlapping shared link is an error. The [links reference](skills/jj-waltz/references/links.md)
+explains local overrides, conflicts, and `jw doctor` link checks.
+
+## Preview and recover
+
+Refills require full, conflict-free eligible JJ-only targets, verified ownership,
+and real reflinks. A normal colocated donor is allowed; linked Git/app-owned donors
+cannot be freshened. Pause agents, builds, editors, monitors, and other writers;
+JW's advisory lock does not lock arbitrary JJ processes.
+
+Dry-run can snapshot real work to preserve it. It does not fetch, create new changes
+or bookmarks, run preparation, or refill files. `--replace-content` explicitly
+permits deleting unrecorded target contents, including `.env`, except `.jj`.
+
+After interruption, **resume before snapshotting a half-filled target**:
+
+```sh
+jw up worker-a worker-b --resume  # original order until target plans freeze
+jw up worker-a --resume           # individual/subset recovery after plan freeze
+jw up --resume                   # current target; source-only at primary
+jw reseed feature --resume       # ordinary reseed or legacy preparation
+```
+
+Recovery uses recorded intent without new donor, revision, copy, replacement, group,
+or bookmark overrides. A frozen goal is not refetched/rebuilt; changed recorded
+source/payload state must be restored rather than adopted. Completed command steps
+are skipped; interrupted in-flight commands may retry after partial side effects.
+Arbitrary commands are not exactly-once. Partial batch progress is reported separately.
+
+`reseed --freshen` is removed. Legacy v1/v2 batches retain their original history
+intent through `reseed --resume`. `[prepare]` remains a warned alias for `[freshen]`;
+rename it after pending recovery finishes, since policy bytes are frozen. See
+[recovery details](docs/reseed.md#safety-and-recovery).
+
+## Inspect and manage
+
+```sh
+jw context . --format=json
+jw list
+jw list --format=json --refresh=none
+jw status feature --refresh=none
+jw doctor
+```
+
+`context` separates Git topology and JJ identity without refreshing. Human `list`
+stays compact; JSON opts into a versioned snapshot. Status and JSON list refresh
+current by default; `--refresh=none` avoids that refresh. List's `--refresh` requires
+JSON. Doctor reports repository, metadata, trunk, and link problems without repair;
+status does not check links. See [lifecycle guidance](skills/jj-waltz/references/lifecycle.md).
+
+The [interactive manager](docs/workspace-manager.md) provides navigation, filters,
+creation, health reports, and reviewed cleanup. Use `?` for controls. Its “in trunk”
+status means graph ancestry, not squash-merge equivalence or forge merge status.
+
+`jw adopt NAME --base REVSET` records lifecycle metadata for an existing JJ workspace;
+`jw repair NAME --base REVSET (--bookmark NAME | --no-bookmark)` corrects an existing
+record. Neither moves revisions. Native apps retain ownership of their checkouts,
+including after JJ adoption. Give each checkout one writer; an orchestrator inspects
+workers read-only. See [app ownership](skills/jj-waltz/references/codex.md).
+
+### Removing workspaces
+
+```sh
+jw remove feature --keep-dir --keep-bookmark
+```
+
+Without `--keep-dir`, removal deletes ignored/private files too; JJ's operation log
+is not a directory backup. Bookmarks are kept unless deletion is selected/confirmed.
+For jw-created colocated workspaces, keeping the directory still disconnects its
+Git link. Native removal is used when supported; failures may leave partial progress.
+Prune forgets missing registrations and should run only when every removal is intended.
+Externally owned checkouts require their app's cleanup, then explicit
+`jw reconcile-external NAME` for leftover JJ state. Read the
+[cleanup safeguards](skills/jj-waltz/references/lifecycle.md#remove) before removal.
+
+## User configuration
+
+User settings live at `$XDG_CONFIG_HOME/jj-waltz/config.toml`, otherwise
+`~/.config/jj-waltz/config.toml`. For example:
+
+```toml
+# Root keys precede tables. Ignored copying is opt-in.
+default_command = "ui" # "ui", "list", or "help"
+copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
+
+[workspace]
+create_bookmark = true
+bookmark_template = "wip/{workspace}"
+
 [trunk]
 revset = "trunk()"
 ```
 
-The trunk revset must resolve to exactly one revision; it does not choose the
-creation base. With no `--at`, `jw` snapshots the source working copy, captures
-its JJ operation, and resolves `@` there before creating destinations. A merge
-working-copy commit is itself a valid single base. Explicit `--at REVSET` must
-resolve to one exact commit through the existing frozen-operation path; it does
-not request the implicit source refresh. To select a sole parent deliberately,
-use `--at 'parents(@)'`; multiple parents remain an error for that explicit revset.
+Bookmark templates default to `{workspace}`. Explicit `--bookmark NAME` is
+single-workspace only; batch creation can use the template. `--no-bookmark`
+suppresses creation. The trunk revset must resolve to one revision and informs
+status, not creation or up inference. Creation modes are
+[described above](#creation-mode-precedence); local donor/preparation/group settings
+belong in the primary's `.jwreseed.local.toml`.
 
-## Semantic status and JSON
+## Further reading and development
 
-```bash
-# Historical human list; does not load trunk or managed metadata.
-jw list
+- [Agent skill](skills/jj-waltz/SKILL.md): task routing, execution, and verification.
+- [Reseed/up operator guide](docs/reseed.md): detailed payload, group, and recovery contracts.
+- [Architecture](docs/architecture.md) and [working concepts](CONTEXT.md): module and semantic boundaries.
+- [Changelog](CHANGELOG.md) and [design evidence](design/workspace-reseed/README.md): carried changes and their rationale.
+- [Herdr plugin](plugins/herdr/README.md): the bundled UI integration.
+- [Contributing](CONTRIBUTING.md): root and separate plugin checks; [terminal verification](docs/workspace-manager.md#development-verification).
 
-# Versioned snapshot. List JSON refreshes current workspace by default.
-jw list --format=json --refresh=current
-jw list --format=json --refresh=none
-jw list --format=json --refresh=all
+Use `cargo nextest run`, `cargo clippy --locked --all-targets --all-features -- -D warnings`,
+and `cargo fmt --all --check` for development. Real-CoW fixtures need a reflink-capable
+filesystem with `JW_TEST_REQUIRE_COW=1`; a skipped unsupported-CoW fixture is not
+proof of sharing. Adopted-worktree ownership fixtures additionally use
+`JW_TEST_PINNED_JJ` pointing to build `ede10cda453017def68e672a5715220ddf10c09b`
+with `cargo test --locked --test external_owner`.
 
-# One workspace. Tokens @, -, ^, and default are supported.
-jw status @
-jw status feature-api --format=json --refresh=none
-
-# Complete diagnostics. An unhealthy report is still written before exit 1.
-jw doctor --format=json
-```
-
-`list` and `status` JSON use schema version 1 and include frozen JJ operation and
-resolved trunk IDs. Known missing values stay explicit `null`; JSON contains no
-ANSI escapes. `doctor` uses its own schema-versioned report because it must remain
-valid even when trunk or metadata is broken.
-
-Doctor keeps schema version 1 while adding the `workspace-link` diagnostic code.
-Consumers should ignore unknown additive diagnostic codes and fields. Human link
-results map to `PASS`, `WARN`, `FAIL`, or `SKIP`; machine output keeps the existing
-`passed`, `failed`, and `skipped` states, with severity distinguishing optional
-warnings from informational skips and errors. `jw status` does not inspect or expose
-link health in this change.
-
-`jw adopt NAME --base REVSET [--bookmark BOOKMARK | --no-bookmark]` records lifecycle
-intent for an existing workspace. Adoption is insert-only: it requires no existing
-managed record and never replaces one. It does not move revisions or bookmarks and
-does not refresh the working copy.
-
-Native apps own the Git checkouts they create, including checkouts adopted into JJ.
-Keep agent work there, use the actual Git or JJ capability, and give each checkout
-one writer; an orchestrator stays read-only in a worker's checkout. `jw` lifecycle
-management is optional and does not require creating a second workspace.
-
-Linked Git topology without valid jw creation provenance makes removal, forgetting
-(even `--keep-dir`), UI removal, and
-pruning ineligible. `jw adopt` persists that owner for damaged or missing checkout
-metadata; live topology is protected without adoption. Let the owning app remove
-both checkout and Git registration. Then `jw reconcile-external NAME` can explicitly
-forget leftover JJ state and remove the external metadata, retaining commits and
-bookmarks. Native JJ forgetting can remove Git registration on some builds, and
-undo does not restore that side effect.
-
-`jw repair NAME --base REVSET (--bookmark BOOKMARK | --no-bookmark)` repairs an
-existing readable managed record. `NAME` is literal; routing shortcuts such as `@`,
-`-`, and `^` are not accepted. The named workspace must be registered with JJ, and
-the base must resolve to exactly one revision. With `--bookmark`, the bookmark must
-already exist locally at one frozen JJ operation; `--no-bookmark` clears the recorded
-association. The checkout path does not need to be usable.
-
-Repair replaces only the recorded creation base and associated bookmark. It preserves
-the record's historical timestamps, creation operation, intended remote, and external owner. The
-metadata write is atomic, so validation or write failure leaves the old record intact.
-The command does not create or move bookmarks, rewrite commits, refresh working
-copies, or create a JJ operation. Doctor points invalid bases and missing associated
-bookmarks to `jw repair`; corrupt records still require manual restore, while missing
-records still use `jw adopt`.
-
-## Semantic contracts
-
-[`CONTEXT.md`](CONTEXT.md) defines workspace, snapshot, trunk, metadata, stack,
-publication, integration, cleanup, and refresh vocabulary. The
-[architecture notes](docs/architecture.md) define dependency direction, metadata
-storage, and JSON compatibility. Defined roadmap concepts do not imply an
-unlisted command is available; the feature list and `jw --help` are the current
-command surface.
-
-`jw` supports JJ 0.39 and newer within its tested compatibility window. CI pins
-the oldest supported release, 0.39.0, and newer compatibility targets, 0.44.0
-and 0.45.1, instead of following a moving `latest` label. On JJ 0.45 and newer,
-doctor's divergence remedy can use `jj converge --no-interactive`; older supported
-versions retain the manual merge-or-abandon guidance.
-
-## Development checks
-
-Run `cargo test --locked --all-targets` for the Rust tests. To exercise the real
-PR 9943 adopted-worktree ownership fixtures, set `JW_TEST_PINNED_JJ` to the exact
-`ede10cda453017def68e672a5715220ddf10c09b` build when running
-`cargo test --locked --test external_owner`. Those fixtures also demonstrate native
-forget/undo registration loss and ordinary `jw` creation/removal. On Unix, build with
-`cargo build --locked`, then run `uv run --with pyte tests/terminal_ui.py` for
-real terminal interaction, shell switching, terminal restoration, and a
-50-workspace responsiveness check. The terminal checks use disposable repositories.
-
-## AI usage note
-
-This project supports AI-assisted development workflows, and portions of its implementation and documentation may be created with AI assistance. All shipped behavior is intended to be human-reviewed, tested, and maintained to production standards.
-
-## Status
-
-`jj-waltz` is under active development. The core workflow is already functional, and the project is being hardened into a complete standalone CLI with robust testing, release automation, and public distribution.
+Inspired by [Worktrunk](https://github.com/max-sixty/worktrunk). The project is actively
+developed and supports AI-assisted contributions subject to review and verification.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

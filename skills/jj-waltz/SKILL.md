@@ -1,10 +1,25 @@
 ---
 name: jj-waltz
-description: Use when the user mentions jw, jj-waltz, or .jwlinks.toml; asks to manage jj workspaces or worktrees; or requests parallel work in separate workspaces.
+description: Use for jw or jj-waltz, creating or switching JJ workspaces, requested parallel JJ workspaces, CoW renewal with reseed, upstream preparation and advancement with up, workspace links, or JJ workspace inspection and cleanup.
+type: Skill
+title: jj-waltz — choose and verify the workspace outcome
+resource: /skills/jj-waltz/SKILL.md
+status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol
+  by: model:openai/gpt-6-astra
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
+    title: Synthesized the original, Sol, and G skills into canonical outcome routing, scoped execution, and verification guidance
+  - resource: /skills/jj-waltz/SKILL.md
+    revision: fceba759ac391599f85137df52f4fc9eb08683d5
+    title: Original shell, identity, lifecycle, and parallel-workspace guidance
+  - resource: /skills/jj-waltz/SKILL.proposed0.gpt61sol.md
+    title: Outcome selection, source-only up, shared controls, and recovery verification
+  - resource: /skills/jj-waltz/SKILL.proposed0.glm53m.md
+    title: Independent command-model comparison and scannable action branches
+  - resource: /README.md
+    title: Canonical human-facing guide and shared command comparison
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Updated skill to integrated up source/target roles, native upstream selection, preservation bookmarks, and versioned recovery
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -21,184 +36,202 @@ sources:
 
 # jj-waltz
 
-Use `jw` when the user requests JJ workspace lifecycle or navigation work. Its
-lifecycle management is optional. Keep native app tasks in the checkout the app
-created, use its actual Git or JJ capability, and give each checkout one writer.
-An orchestrator inspecting a worker checkout stays read-only. Do not create another
-JJ workspace merely to route an agent; no mandatory inspection ritual or adoption
-step is required for ordinary coding.
+Choose the workspace outcome, use the relevant branch, and verify the result.
+**Primary** means the registered checkout owning the shared JJ repository;
+**variant** means another workspace in it; **donor** means the selected source
+supplying files. Verify identity rather than relying on a directory named `default`.
 
-## Workflow
+## Choose the action
 
-### 1. Inspect
+| | `add` / `s` (`switch`) | `reseed` | `up` |
+| --- | --- | --- | --- |
+| Outcome | Create; `s` enters existing or creates missing | Renew sharing, keep work | Fetch/prepare donor, advance targets |
+| Target history | Empty child of source `@`, or `--at` | Keep revision, or reset via `--at` | New empty change at fetched goal; no `--at` |
+| Bare in variant / primary | Name/path required | Current / explicit targets required | Current / donor only |
+| Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
+| `--source-at` | Donor tree assertion | Donor tree assertion | Upstream goal |
+| Fetch / preparation | Never | Never | Pinned upstream / local argv |
+| Preview / resume | — | `--dry-run` / `--resume` | `--dry-run` / `--resume` |
 
-Identify the JJ repository, current directory, requested workspace names, and whether the task creates, switches, diagnoses, adopts, links, or removes workspaces.
+If “update” leaves keeping versus advancing work unclear, ask which is intended.
+Up's preservation bookmark does not keep feature edits checked out. For newer
+prepared dependencies while retaining a feature revision, use source-only up at
+primary, then reseed the feature. [Full comparison](../../README.md#choose-the-outcome).
 
-Before a mutation, inspect the relevant state with `jw list`, `jw current`, `jw path <name>`, or `jw status <name> --refresh none`. Use `jw --help` and the relevant subcommand help for current syntax instead of relying on a cached command list.
+## Establish the relevant context
 
-When installed behavior may differ from the repository or documentation, inspect any shell wrapper and resolve the executable beneath it before making version-specific claims. Use the current shell's executable-only lookup: `type -P jw` in Bash, `whence -p jw` in Zsh, or `command -s jw` in Fish. Then verify the resolved path and version:
+- Use live subcommand help. When installed behavior may differ from source, inspect
+  the shell wrapper and executable: `whence -p jw` in Zsh, `type -P jw` in Bash,
+  or `command -s jw` in Fish. Check its real path and `--version`; source edits do
+  not update that binary.
+- Identify caller, donor, and targets using relevant queries: `jw context PATH`,
+  `jw list`, `jw current`, `jw path NAME`, or `jw status NAME --refresh=none`.
+  Context separates Git topology from JJ identity without refreshing. An older
+  binary may lack it; check help first.
+- Keep native app tasks in their app-created checkout using its actual Git/JJ
+  capability. Adoption does not transfer ownership. No inspection or adoption
+  ceremony is required for ordinary coding. Read [app ownership](references/codex.md)
+  when topology or lifecycle ownership matters.
+- Give each checkout one writer. For requested parallel JJ workspaces, reuse a
+  clearly matching workspace, separate independent tasks, and keep coupled work
+  together. Orchestrators inspect workers read-only. Follow the host's delegation
+  policy; creating a workspace does not grant permission to spawn agents.
 
-```bash
-resolved_jw="$(whence -p jw)"  # zsh; use the lookup above for bash or fish
-realpath "$resolved_jw"
-"$resolved_jw" --version
+Load only the references needed by the selected branch. `evals/` are test data,
+not runtime instructions. Ordinary `jj` handles deliberate history and bookmark
+editing; `jw` handles the requested workspace lifecycle.
+
+## Create, switch, or execute
+
+```sh
+jw add feature tests
+jw s feature
+jw add --path /chosen/destination --from /path/to/source
+jw s --execute opencode feature
 ```
 
-When using `jw` and checkout identity is unclear, `jw context [PATH]` can inspect it
-read-only. Use `--format=json` when another tool consumes the result. Keep Git
-checkout topology and JJ workspace identity separate. For a requested lifecycle
-change to a native app checkout, [`references/codex.md`](references/codex.md)
-explains ownership and capability checks.
+- Name-only creation uses `repo.NAME` beside the owning checkout. `--path` selects
+  one exact destination and can infer the name: under `opencode`, `opencode-fix`
+  becomes `fix`, while `myfix` stays `myfix`. Registered identity wins. Relative
+  destinations resolve from the caller; explicit `--from` permits outside-checkout
+  creation.
+- Creation defaults to CoW/JJ-only and an empty child of freshly snapshotted source
+  `@`, including dirty tracked work or a merge. `--at` independently selects one
+  exact base; CLI `--source-at` asserts tracked-tree equality, not commit equality.
+  Local maintenance source/assertion/preparation settings are not creation defaults.
+- `--cow` selects CoW/JJ-only; `--colocate` selects ordinary linked Git creation
+  when supported. Both positive flags conflict. `--no-cow` alone gives an ordinary
+  JJ-only checkout. See [mode precedence](../../README.md#creation-mode-precedence).
+  Tracked-creation fallback warns; never report that as CoW success.
+- Explicit `--bookmark` is single-workspace only; batches can use the configured
+  bookmark template. `--no-bookmark` suppresses creation. Existing switches do not
+  reset revisions, convert checkout mode, assert donor trees, or refill payloads.
+- `switch` creates missing names and selects the last. `--execute` runs a child
+  command there; check its exit status and cwd.
 
-Check `jw --help` before relying on `context`; an older installed jw may need an
-authorized build or upgrade even when the source skill is current.
+### Shell navigation
 
-Complete inspection when the executable identity, target workspaces, current state, and intended mutation are unambiguous.
+The binary cannot change its parent shell's directory. Initialize the user's shell:
 
-### 2. Route and act
-
-Choose only the branch the request needs. Load only the reference linked by that branch; treat `evals/` and unrelated references as test data, not runtime instructions.
-
-#### Create, switch, or execute
-
-- `jw add <name>...` creates workspaces without switching.
-- `jw switch <name>...` creates missing workspaces and selects the last name.
-- Both accept `--path DESTINATION` for one workspace without repeating `NAME`, and
-  optional `--from SOURCE` (default: current checkout). From repository `opencode`,
-  `--path ~/src/opencode-fix` infers `fix`; `--path ~/src/myfix` infers `myfix`.
-  Existing registrations take precedence. Name-only creation remains `repo.NAME`
-  beside the verified owning checkout, not an automatic `~/src` destination.
-- Without `--at`, creation snapshots the source and uses its current `@` as the
-  base, including dirty tracked work and a merge `@`. Explicit `--at REVSET` keeps
-  exact-one frozen revision selection. Optional CLI `--source-at REVSET` snapshots
-  and asserts the donor tracked tree at the same operation, without replacing the
-  target parent. Creation does not inherit reseed's local source/assertion/freshening
-  fields, and existing-only switches skip assertions.
-- Creation defaults to CoW/JJ-only. `--colocate` alone selects an ordinary colocated
-  checkout, overriding default/configured CoW; `--cow` overrides configured colocation.
-  Explicit `--cow --colocate` conflicts. `--no-cow` alone keeps the JJ-only default.
-  See [mode precedence](../../README.md#creation-mode-precedence) for config opt-outs.
-  Existing ordinary-checkout fallbacks warn; do not claim CoW success after a warning.
-- `--bookmark` applies to one workspace. For batch creation, use the configured `bookmark_template` or omit bookmarks.
-- Prefer `jw switch --execute <command> <name>` when a tool or agent should run inside the target. The command runs there without changing the parent shell's directory.
-
-These are this checkout's implemented interfaces; source changes do not update an
-installed executable. Inspect the actual binary before relying on them.
-
-Use `jw` for requested JJ workspace lifecycle actions and ordinary `jj` commands
-for revision history, bookmarks, and remotes. The native app owns its created Git
-checkouts, including those already adopted into JJ.
-
-#### Codex checkout routing
-
-When the task starts from a Codex-owned Git checkout, or when Git and JJ point at
-different directories, read [`references/codex.md`](references/codex.md). It describes
-actual checkout capabilities, one writer per checkout, and the external ownership
-boundary. Keep work in the app-created checkout.
-
-#### Shell navigation
-
-The binary cannot change its parent shell. Shell integration turns the path returned by `jw switch` into a directory change; `--execute` intentionally bypasses that behavior.
-
-Use the user's shell:
-
-```bash
-eval "$(jw shell init zsh)"     # zsh
-eval "$(jw shell init bash)"    # bash
-jw shell init fish | source     # fish
+```sh
+eval "$(jw shell init zsh)"  # zsh
+eval "$(jw shell init bash)" # bash
+jw shell init fish | source # fish
 ```
 
-After adding shell init, restart or re-source the shell before retrying the switch.
+Restart or re-source after setup. [Other shells](../../README.md#shell-setup).
+Navigation tokens are `@` (current), `-` (previous), and `^` or `default` (default).
+Inspect with `jw path TOKEN`; a switch carries the relative subdirectory if present
+at the destination. A printed path or successful `--execute` does not prove the
+parent shell changed directory.
 
-#### Workspace identity
+## Renew or advance
 
-Use `jw current`, `jw root`, and `jw path <token>` instead of inferring identity from directory names. `@` is current, `-` is previous, and `^` or `default` resolves the default workspace.
+Read the [operator guide](../../docs/reseed.md) before an in-place refill. Pause
+source/target writers, builds, monitors, and external JJ processes. Preview the plan:
 
-Switching from a subdirectory carries that relative path to a sibling workspace when it exists; otherwise the destination is the target workspace root.
+```sh
+jw reseed --dry-run                # keep current variant's revision
+jw up --dry-run                    # advance current variant; source-only at primary
+jw up worker-a worker-b --dry-run  # only these targets
+```
 
-#### Links
+Both require a registered caller, even with `--from`. Names/groups suppress implicit
+current selection; empty selection never means all. Names are literal, not navigation
+tokens. `--from` changes the donor, not the caller's primary/variant role.
 
-For `.jwlinks.toml`, shared ignored directories, missing targets, or link conflicts, read [`references/links.md`](references/links.md) before changing configuration or retrying link creation.
+**Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
+assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
+differences. Explicit `--at` selects an empty child of that base instead, without
+up's automatic preservation bookmark. Reseed never fetches or prepares dependencies.
 
-#### Reseed existing workspace contents
+**Up:**
 
-For requested in-place CoW updates, read the [reseeding guide](../../docs/reseed.md).
-One-off use is `jw reseed NAME`, or bare `jw reseed` inside the current variant;
-the primary requires names/groups. Explicit names or groups suppress implicit
-current selection even if no group matches. Names are literal, not navigation
-tokens. No selection implies all workspaces.
-`--from` defaults to the verified primary checkout; explicit/configured sources
-override it. The donor tree assertion is CLI `--source-at` > local `source_at` >
-freshly snapshotted donor `@`. Assertions compare tracked trees, not commit IDs,
-and do not advance the donor. Keep mode preserves feature revisions, while explicit
-`--at REVSET` starts an empty child. Pause writers and use `--dry-run` to inspect replacement
-scope. `--replace-content` destroys unrecorded contents. If interrupted, use
-`jw reseed NAME --resume` (or bare `--resume` for one current target) before ordinary
-JJ commands that snapshot partial files. Recovery uses recorded IDs, not new defaults.
+1. Pin upstream before fetch: CLI/local goal, otherwise one applicable native
+   tracked pair, otherwise one exact remote at the clean donor base, including
+   untracked refs. Ambiguity requires a one-run `--source-at`. Do not guess main/origin,
+   mine operation logs, or invent following state. `[freshen].remote` constrains
+   selection. A missing explicit `branch@configured-remote` can have an unknown
+   preview goal.
+2. Unpublished donor work blocks advancement, even beneath empty scratch work;
+   the selected remote must fast-forward. Preserve that refusal rather than
+   abandoning source work to force progress.
+3. Local `[freshen]` provides `command` or ordered `commands`, never both even when
+   empty. Run argv sequentially in donor cwd, without an implicit shell. Steps must
+   leave tracked files unchanged. No commands means existing payload, not a fresh
+   build; do not guess an installer or use global build commands.
+4. Targets start new empty changes on the exact fetched goal, not rebases. Work
+   outside that goal's ancestry gets a collision-safe `freshen-<UTC timestamp>`
+   bookmark unless `--no-freshen-bookmark` was selected. Existing feature bookmarks
+   never move. The opt-out affects only that bookmark, not JJ history or source checks.
 
-Ignored-copy lists replace in CLI > local > root global `copy_ignored` order;
-missing local selection inherits, explicit `[]` does not, and `--no-copy-ignored`
-disables copying. Matching nonignored source directories are skipped/reported;
-eligible ignored descendants remain discoverable. Selected payload still requires
-source/target tracked-overlap and ignored/confinement checks plus real private CoW.
-No matches succeeds; trailing `/` is accepted. These controls apply to add/s new
-workspaces, reseed, and up. Creation reads only
-the primary store owner's local ignored-copy list. Actual selected payload forbids
-nested donor destinations; choose an external `--path` or `--no-copy-ignored`.
-Existing switches never refill payloads. Recovery
-retains frozen selections, including legacy recorded `[]`, rather than inheriting
-new global defaults. Read the [policy guide](../../docs/reseed.md#ignored-copy-policy-layers).
+Refills require full, conflict-free eligible JJ-only targets and real CoW.
+`--replace-content` destroys unrecorded target contents, including `.env`, except
+`.jj`; use it only for that requested outcome. Dry-run may snapshot real work, but
+does not fetch, create new changes/bookmarks, run preparation, or refill.
 
-Use `jw up` only when source **and target advancement** is requested. Bare up in a
-variant updates it; at primary it prepares only the donor. Names/groups select only
-explicit targets; `--from` changes donor, not caller role. Run inside a registered
-workspace. Pin before fetch: CLI/local source goal, otherwise unique applicable
-native tracked pair, otherwise unique exact remote (including untracked refs),
-otherwise ask for one-run `--source-at`. Do not guess main/origin, mine operation
-logs, or invent following state. Unpublished source work blocks. Up runs local
-`[freshen]` `command` or ordered `commands` argv in donor cwd; both fields together are an error even
-when empty. There are no global/guessed build commands. With no commands, selected
-existing ignored payload can still be borrowed but is not freshly built.
-Preview with `--dry-run`. Targets start **new empty changes on the exact fetched
-goal**, not rebases; up has no independent `--at`. Unpublished target work gets a
-collision-safe `freshen-<UTC timestamp>` bookmark unless `--no-freshen-bookmark`
-was frozen before preparation. Existing feature bookmarks never move. Preparation
-settings alone do not activate up. While source preparation has
-no frozen target plans, resume all original literal targets in their recorded order.
-Once plans freeze, individual targets/subsets can resume without refetching or
-rebuilding; bare `--resume` selects only the current recorded target. Do not add
-freshening/selection overrides or borrow partially installed ignored dependencies.
-Completed command steps are skipped;
-an in-flight step may retry, not exactly-once. `[prepare]` is a deprecated alias:
-rename it only after recovery finishes, since frozen policy bytes must match.
-Use `up --resume` for up journals; at primary bare resume discovers source-only
-preparation without snapshots. `reseed --freshen` is removed. Legacy v1/v2 batches
-still use `reseed ORIGINAL-NAMES --resume` with original keep-target/explicit-base
-intent, never reinterpret them as up. Up v3 freezes native selection and opt-out.
+## Private payloads and shared links
 
-#### Status, adoption, cleanup, or recovery
+Ignored-copy lists replace in CLI → primary-local → root global `copy_ignored`
+order; absence inherits, local `[]` does not. `--no-copy-ignored` disables even an
+explicit CLI list. This policy applies to creation, reseed, and up.
 
-For `status`, `doctor`, `adopt`, `remove`, or `prune`, read [`references/lifecycle.md`](references/lifecycle.md) before acting. It contains the mutation gates and removal safeguards.
+Quote patterns (`*`, `?`, `**`, trailing `/`). Missing matches succeed; nonignored
+source matches are skipped/reported. Selected roots must pass source/target ignore,
+tracked-overlap, confinement, and real-CoW checks. Actual payload creation inside
+its donor is refused. `--no-cow`/`--colocate` do not relax payload's CoW requirement.
+Existing switches never refill. See [copy policy](../../docs/reseed.md#ignored-copy-policy-layers).
 
-#### Explicit parallel workspaces
+For shared-directory links, `.jwlinks.toml`, or private-copy/link collisions, read
+[links](references/links.md). Reflinks and shared symlink destinations have different
+mutation behavior; do not substitute one for the other or overwrite a conflict.
 
-When the user explicitly requests separate JJ workspaces, use one writer per
-workspace, reuse a clearly matching workspace, and keep tightly coupled or sequential
-work together. For native app tasks, use its authorized checkouts and keep the
-orchestrator read-only in worker checkouts. Follow the host's policy for agents and
-parallel execution; workspace creation does not grant permission to spawn agents.
+## Recover before ordinary snapshots
 
-Complete this stage when the requested branch either succeeds or stops with the exact unresolved state and no unintended workspace mutation.
+If a refill stops, avoid snapshot-capable JJ commands in a half-filled target.
+Resume the stored workflow without new donor, revision, copying, group, replacement,
+or bookmark overrides:
 
-### 3. Verify
+```sh
+jw up worker-a worker-b --resume  # all original names/order until plans freeze
+jw up worker-a --resume           # frozen individual/subset recovery
+jw up --resume                   # current target; source-only at primary
+jw reseed feature --resume       # reseed or legacy preparation
+```
 
-Verify the boundary the user will rely on:
+Frozen recovery uses exact recorded intent and receipts, without refetching,
+rebuilding, or reallocating bookmarks. Restore recorded source/payload state when
+validation refuses; do not borrow partially installed dependencies or use
+repository-wide undo. Completed command steps are skipped; interrupted in-flight
+commands may retry after side effects, not exactly-once.
 
-- creation or switching: confirm `jw list` and `jw path <name>`; use `jw current` only after shell-integrated navigation or from a command executed inside the target workspace;
-- executed tools: confirm their exit status and working directory;
-- shell navigation: confirm from the initialized interactive shell, not from the child binary alone;
-- links or lifecycle work: use the completion checks in the branch reference.
+`reseed --freshen` is removed. Legacy v1/v2 batches still use `reseed --resume` with
+their original history intent. Rename legacy `[prepare]` only after recovery;
+frozen local policy bytes must match. [Recovery contract](../../docs/reseed.md#safety-and-recovery).
 
-Report the resulting workspace names and paths, what changed, and any shell, executable-version, directory, link, or bookmark state that remains unverified.
+## Inspect, adopt, repair, or clean up
 
-Complete the task only when observed state matches the requested workspace outcome.
+Read [lifecycle guidance](references/lifecycle.md) for status, doctor, adoption,
+metadata repair, removal, pruning, and external reconciliation. Doctor diagnoses
+without repair. Adoption/repair change metadata, not revisions. Removal can delete
+ignored/private files permanently; inspect owner, contents, and bookmark policy.
+Use the owning app for app-created checkout cleanup. Consult the
+[manager guide](../../docs/workspace-manager.md) for terminal interaction.
+
+## Verify and report
+
+- **Create/switch:** confirm registration/path and actual execution cwd. Use
+  `jw current` only inside the target or after shell-integrated navigation. Check
+  warnings before claiming CoW or complete payload setup.
+- **Reseed:** confirm retained revision/tree or the requested explicit reset, plus
+  payload/refill completion.
+- **Up:** confirm exact goal, target parents, preservation bookmarks or opt-out,
+  and command/payload completion. Source-only success has no target.
+- **Recovery:** distinguish completed, failed, pending, and already-receipted work
+  before resuming normal snapshots. Partial progress is not batch success.
+- **Links/lifecycle:** use the branch reference's completion checks; directory,
+  bookmark, and ownership state must match the requested outcome.
+
+Report resulting names/paths, what happened to history and files, checks actually
+performed, warnings, and unresolved state. Preview, source preparation, and a printed
+path each prove only their own part of the workflow.
