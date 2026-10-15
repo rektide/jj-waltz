@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
-    title: Designed repeat-reseed ergonomics and integrated independent JJ checkout preservation and native bookmark-tracking research
+    title: Commissioned up and shared copying implementation after repeat-reseed design and independent JJ preservation/tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
     title: User commissioning and verified no-adoption reseeding design
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -23,6 +23,10 @@ sources:
 
 # In-place workspace reseeding
 
+- [Commissioned up and shared copying policy](up0.gpt6a.md) — current handoff:
+  native upstream selection, sequential local freshening commands, unpublished
+  target bookmarks, global ignored-copy policy, and symmetric command controls.
+  Replaces the proposal to keep adding freshening flags to reseed/creation.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;

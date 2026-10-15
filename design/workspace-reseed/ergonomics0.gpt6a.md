@@ -9,7 +9,7 @@ generated:
   at: 2026-10-15
 extensions:
   ticket: jjwaltz-reseed-ergonomics
-  related_work: [jjwaltz-variants, jjwaltz-variants-defaults, jjwaltz-variants-freshen, jjwaltz-reseed-freshen-default]
+  related_work: [jjwaltz-variants, jjwaltz-variants-defaults, jjwaltz-variants-up, jjwaltz-reseed-freshen-default]
 verification:
   scope: Installed jw 0.8.0 and jj 0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b on Linux Btrfs, disposable fixtures
   result: Two explicit current-donor reseeds preserved target edits and root/admin inodes; 1 MiB remained shared with separate file inodes; target writes did not alter source
@@ -40,6 +40,12 @@ sources:
 # Ordinary repeated reseeding
 
 ## Review junction: what should reseed accomplish?
+
+**Subsequent commission:** [up and shared copying policy](up0.gpt6a.md) now
+separates ordinary keep-target reseeding from explicit upstream advancement.
+It commissions current-target/current-donor ergonomics and the new up command,
+including unpublished-target bookmarks. The discussion below remains the
+reasoning checkpoint, rather than the final implementation handoff.
 
 The human challenged the retained keep-target default during review: changing
 physical files without advancing the workspace may not be the intended meaning
