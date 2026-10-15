@@ -7,14 +7,17 @@ status: proposed
 generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-15
 extensions:
   ticket: jjwaltz-reseed-freshen
   followup_ticket: jjwaltz-reseed-freshen-default
   epic: jjwaltz-reseed
-  execution: design and tracking only; implementation requires a later commission
+  execution: explicit freshen implementation commissioned; default-on activation remains a separate follow-up
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: User commissioned design and tickets only; confirmed fetch, source advancement, configured dependencies, and separate default-on delivery
+    title: User confirmed freshening scope and separate default activation, then commissioned explicit freshen implementation with Sol medium
   - resource: /design/workspace-reseed/reseed0.gpt6a.md#prepare-the-source
     title: Existing manual fetch, JJ new, and frozen dependency installation workflow
   - resource: /docs/reseed.md
@@ -36,8 +39,9 @@ tree and installed dependencies to existing workspaces in one invocation.
 Today those are separate actions: fetch, select a clean source baseline, install
 dependencies, then `jw reseed`.
 
-The human commissioned **a design document followed by tickets, not execution**.
-Confirmed source-freshening scope:
+The initial commission was **a design document followed by tickets, not execution**.
+The human subsequently authorized Sol medium to implement the explicit feature.
+Default-on configuration remains a separate follow-up. Confirmed freshening scope:
 
 1. Fetch the chosen remote.
 2. Advance the source to a fresh empty JJ child of the chosen baseline, preserving
@@ -218,6 +222,20 @@ Source preparation needs its own recoverable progress:
 Detailed journal schema and multi-batch receipt linkage are implementation
 choices to review before coding. The invariant is firm: partially prepared ignored
 dependencies must never be presented as a verified donor.
+
+### Accepted implementation checkpoint
+
+The implementation uses a source-keyed preparation **batch** journal. It stores
+all frozen target plans atomically before handing them to individual target
+pending records; preparation IDs link those records and their completion receipts.
+This keeps later targets' frozen intent recoverable after a partial handoff.
+
+New freshening must not invalidate any unfinished target that depends on that
+donor, including an ordinary older reseed pending record outside the selected
+batch. Existing records or receipts from another preparation are never overwritten
+or mistaken for completion. Preparation policy is frozen before source mutation;
+tracked shared-link configuration is read after source checkout, because the
+chosen baseline may legitimately change it.
 
 ## Default-on configuration: second delivery only
 

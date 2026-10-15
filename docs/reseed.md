@@ -9,7 +9,7 @@ generated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implemented and verified reseeding, clarified safe snapshots, and documented primary-source inference
+    title: Implemented reseeding and source defaults; commissioned and documented explicit source freshening and recovery
   - resource: "opencode://ses_ec376c0e6ffewASuAvkLjXLTTU"
     title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
   - resource: "opencode://ses_ec31c20c0ffeQNfMhRNezv4uuM"
@@ -18,6 +18,8 @@ sources:
     title: Designed and implemented wildcard groups, strict or warn selection policy, and aggregate diagnostics
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Prepared-source contract and stock-JJ sparse-prefill design
+  - resource: /design/workspace-reseed/source-freshen0.gpt61sol.md
+    title: Explicit fetch, source advancement, dependency preparation, and separately deferred default activation
   - resource: /CONTEXT.md
     title: Workspace identity, lifecycle metadata, and external ownership contracts
 ---
@@ -98,6 +100,63 @@ package-manager links.
 `--replace-content` explicitly authorizes deleting other unrecorded target
 contents, including `.env`, except `.jj`, before refilling. It does not copy
 arbitrary source dotfiles. There is no additional confirmation prompt.
+
+## Freshen the source (implementation in progress)
+
+The explicit `--freshen` feature is being built under `jjwaltz-reseed-freshen`.
+The following is its commissioned interface, not yet a verified delivery claim.
+
+Freshening prepares the donor before distributing it: fetch one declared remote,
+select an empty JJ child of the requested source baseline, then run a dependency
+preparation command in that donor. It does not automatically reset feature targets.
+
+Declare the project-specific preparation argv in the primary checkout's ignored
+`.jwreseed.local.toml`:
+
+```toml
+source_at = "dev@origin"
+copy_ignored = ["node_modules", "packages/*/node_modules"]
+
+[prepare]
+remote = "origin"
+command = ["bun", "install", "--frozen-lockfile"]
+```
+
+The command is an argv array, not an implicitly shell-expanded string. It runs in
+the selected source root, including when `--from` overrides the primary donor.
+No package manager or install command is guessed. This is trusted execution policy;
+an installer may run project/package scripts, and `jw` is not a sandbox.
+
+```sh
+# Prepare the donor, but keep this feature's snapshotted revision.
+jw reseed my-feature --freshen --source-at 'dev@origin' --dry-run
+
+# Also start the target on an empty child of the updated baseline.
+jw reseed worker-a --freshen --source-at 'dev@origin' \
+  --at 'dev@origin' --copy-ignored node_modules --dry-run
+
+# Explicit donor override; preparation happens here, not in the caller.
+jw reseed worker-a --from ~/a/a/opencode --freshen \
+  --source-at 'dev@origin' --copy-ignored node_modules --dry-run
+```
+
+With `--freshen`, `source_at` is the goal resolved after fetching, not a claim that
+the old donor is already prepared. Without the flag, the existing source-baseline
+assertion remains unchanged. Target `--at` and `--replace-content` stay separate.
+
+Preparation settings alone do not activate freshening. Default-on `freshen = true`
+and a one-run opt-out belong to the separate `jjwaltz-reseed-freshen-default` ticket;
+they are not part of this first delivery.
+
+Remove `--dry-run` only when the source, remote, argv/cwd, and target policy are
+right. A freshening dry-run must not fetch, select a new source change, install, or
+refill files; its post-fetch goal is prospective. Normal real-work snapshots are
+preserved, and writers must be paused. Installation failures or tracked-file changes
+stop the batch before target contents are cleared. Partial dependency installation
+requires recorded recovery before the donor can be borrowed again.
+
+See the [source freshening design](../design/workspace-reseed/source-freshen0.gpt61sol.md)
+for sequencing and recovery details.
 
 ## Optional shortcuts
 
