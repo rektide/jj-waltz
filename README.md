@@ -289,6 +289,11 @@ jw shell init powershell | Out-String | Invoke-Expression
 Without shell initialization, the raw `jw` binary can only print the target path
 or status; it cannot change the directory of the parent shell process.
 
+Zsh users on [Zim](https://zimfw.sh/) can instead install
+[rektide/zim-jj-waltz](https://github.com/rektide/zim-jj-waltz): it caches and
+precompiles the generated wrapper, keeps completions regenerated on `fpath`, and
+follows binary upgrades automatically.
+
 To generate completions manually:
 
 ```bash
