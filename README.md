@@ -10,6 +10,8 @@ updated:
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Implemented reseeding and clarified this fork's carried features, installation, and source defaults
+  - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
+    title: Added wildcard reseed groups with opt-in aggregate unmatched warnings
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: In-place reseeding behavior and safety contract
 ---
@@ -37,6 +39,10 @@ patched `workspace add --adopt` command.
 - **One-offs first, batches when useful:** named targets need no groups. Local
   configuration and groups are optional shortcuts; `--dry-run` previews the plan
   and `--resume` safely finishes an interrupted refill.
+- **Wildcard batches without touching unrelated checkouts:** group `name_globs`
+  or `path_globs` select registered workspaces. Opt into `on_unmatched = "warn"`
+  to skip unrelated candidates and list them in one warning line; see
+  [wildcard groups](docs/reseed.md#wildcard-groups).
 
 Upstream already provides switching, workspace links, CoW **creation**, shell
 integration, the interactive manager, and lifecycle checks. Our addition is CoW

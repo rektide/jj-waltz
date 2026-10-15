@@ -16,7 +16,7 @@ sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Implementation delivery, one-off guidance, and source-freshening design with separate default activation
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
-    title: Added wildcard-group design with configurable unmatched selection policy
+    title: Designed and implemented wildcard groups with configurable unmatched selection policy
 ---
 
 # In-place workspace reseeding
@@ -24,9 +24,10 @@ sources:
 - [Repeatable in-place reflink reseeding](reseed0.gpt6a.md) — recommended
   `jw reseed` interface, prepared-source workflow, ignored dependencies, stock-JJ
   sparse-prefill mechanism, local verification, and implementation acceptance checks.
-- [Wildcard reseed groups](groups0.gpt61sol.md) — proposed name/path patterns,
+- [Wildcard reseed groups](groups0.gpt61sol.md) — design evidence for name/path patterns,
   optional warn-and-skip for unrelated sibling checkouts, and one aggregate
-  warning line; preserves strict target safety and current literal array groups.
+  warning line. Implemented under `jjwaltz-reseed-groups`; current interface:
+  [wildcard groups](../../docs/reseed.md#wildcard-groups).
 - [Freshen the donor before reseeding](source-freshen0.gpt61sol.md) — design-only
   fetch, source advancement, and configured dependency preparation under explicit
   `--freshen`; default-on activation is a separate dependent delivery. No live

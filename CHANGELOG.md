@@ -10,6 +10,8 @@ updated:
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Added reseeding and its verified primary-checkout source default
+  - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
+    title: Implemented wildcard groups and configurable aggregate unmatched diagnostics
   - resource: /docs/reseed.md
     title: One-off and batch reseeding, replacement policy, and recovery
 ---
@@ -18,6 +20,11 @@ sources:
 
 ## Unreleased
 
+- Extend reseed groups with `names`, `name_globs`, and `path_globs`. Match exact
+  registrations in the current repository, with optional `on_unmatched = "warn"`
+  and `--on-unmatched error|warn` overrides. List all skipped unrelated candidates
+  in one escaped warning; keep positional names and target safety failures strict.
+  Preserve literal array groups and show selected roots/origins in dry-run output.
 - Add `jw reseed NAME...` for repeatable in-place CoW refills of full JJ-only
   workspaces. Individual one-offs need no groups or configuration. Preserve
   feature revisions by default, or explicitly start children with `--at`;

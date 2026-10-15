@@ -10,6 +10,8 @@ updated:
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Defined reseeding, preserved snapshot safety, and added verified primary-source defaults
+  - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
+    title: Defined wildcard selection and bounded warn-and-skip without weakening target safety
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Reseeding identity, content, and recovery contract
 ---
@@ -154,6 +156,10 @@ by itself a claim that a command exposing that concept already exists.
 - Shell adapters implement the same switching behavior.
 - Reseed selection is explicit: individual literal names work without groups or
   local configuration. No selection ever implies all workspaces.
+- Reseed groups can explicitly select registered workspace names or root-path
+  patterns. Opt-in warn skips selection misses in one diagnostic, never actual
+  target safety failures. Positional names stay strict; no remaining targets is
+  an error. Selection does not adopt unrelated checkouts or traverse symlinks.
 - Reseed donor selection uses explicit `--from`, configured `source`, then a
   verified primary checkout of the same repository. It never guesses an archive
   location or silently substitutes the current feature checkout. The source

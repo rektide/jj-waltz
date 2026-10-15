@@ -10,6 +10,8 @@ updated:
 sources:
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Integrated reseeding, verified recovery, and primary-source selection into the module map
+  - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
+    title: Added snapshot-free wildcard group resolution and early structured selection diagnostics
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Reseed planning, prefill, verification, and durable recovery design
 ---
@@ -172,6 +174,16 @@ directory. Snapshot and doctor commands still leave the JJ operation and working
 copy unchanged.
 
 ### In-place reseeding
+
+`reseed::selection` resolves legacy literal groups and table groups with explicit
+name/path patterns against a frozen, snapshot-disabled registration inventory.
+It retains missing-root registrations rather than classifying broken targets as
+unrelated checkouts. Selection never initializes or adopts matched directories.
+The optional unmatched policy affects group misses only, not positional names or
+target safety. Its aggregate warning is emitted through `run_with_diagnostics`
+before planning (and survives later errors); successful reports retain structured
+skips and selected roots/origins. Empty remaining selections fail. Resume never
+re-expands groups. See [operator syntax](reseed.md#wildcard-groups).
 
 Reseeding records pending intent and successful receipts separately from creation
 metadata, beside the repository-scoped store. A reseed advisory lock serializes

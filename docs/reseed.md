@@ -14,6 +14,8 @@ sources:
     title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
   - resource: "opencode://ses_ec31c20c0ffeQNfMhRNezv4uuM"
     title: Implemented primary-source inference and verified 30 real-CoW integration cases on official JJ 0.46
+  - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
+    title: Designed and implemented wildcard groups, strict or warn selection policy, and aggregate diagnostics
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Prepared-source contract and stock-JJ sparse-prefill design
   - resource: /CONTEXT.md
@@ -119,11 +121,77 @@ jw reseed --group workers
 jw reseed --group workers --at 'dev@origin' --dry-run
 ```
 
-Groups are just optional lists of literal workspace names. Positional names and
-groups can be combined; duplicates are removed. CLI source arguments override
-configuration. Repeated `--copy-ignored` flags replace the configured selection;
+Array groups remain lists of literal workspace names; even `"worker-*"` in an
+array is literal. Positional names and groups can be combined; duplicates are
+removed. CLI source arguments override configuration. Repeated `--copy-ignored`
+flags replace the configured selection;
 `--no-copy-ignored` disables copying it. Reset behavior cannot be configured:
 `--at` must be supplied for that run.
+
+### Wildcard groups
+
+Use a group table to match workspace names or filesystem locations. For example,
+when `~/src/opencode-*` also contains unrelated projects:
+
+```toml
+[groups.opencode]
+path_globs = ["~/src/opencode-*"]
+on_unmatched = "warn"
+```
+
+```sh
+jw reseed --group opencode --dry-run
+jw reseed --group opencode
+
+# Require every group candidate to match for this run:
+jw reseed --group opencode --on-unmatched error --dry-run
+```
+
+Only exact registered workspace roots **in this JJ repository** are selected;
+directory basenames need not equal JJ workspace names. Plain directories,
+independent JJ repositories, and unrelated Git checkouts are not adopted or
+modified. With `warn`, all skipped candidates appear together in one escaped
+stderr line, without truncation:
+
+```text
+warning: skipped 2 unmatched group candidates: "/home/me/src/opencode-notes" (not a workspace of this repository), "/home/me/src/opencode-tools" (not a workspace of this repository)
+```
+
+Group tables support `names` (literal names), `name_globs` (registered workspace
+names), and `path_globs` (root locations). Lists are unioned; repeated groups and
+selectors run each workspace only once. For instance:
+
+```toml
+[groups.workers]
+names = ["special-worker"]
+name_globs = ["ocw-*"]
+```
+
+Patterns are case-sensitive whole-name or whole-path matches. `*` and `?` match
+within one path component. Recursive `**`, character classes, braces, backslash
+escapes, and `..` path components are rejected. A leading `~/` expands the home
+directory; other relative paths start at the configuration's default/primary
+workspace, regardless of the caller's workspace or subdirectory. There is no
+environment-variable or shell expansion. Symlinks are not traversed, including
+in a pattern's prefix. Files and symlinks are reported as non-directory misses.
+This group syntax is separate from `copy_ignored`, which still supports `**`.
+
+`on_unmatched` defaults to `"error"`. A group can opt into `"warn"`, or
+`--on-unmatched error|warn` overrides all selected groups, including legacy
+arrays. The policy covers unknown group-member names, unmatched expressions,
+and paths that are not workspace roots of this repository. Direct positional
+names are **always strict**. Unknown/empty groups and malformed patterns always
+fail. Strict selection misses abort before source or target snapshots; warning
+skips are reported before later source/target preflight, even if it fails.
+
+A broken registered workspace is not an unrelated checkout. Missing/stale roots,
+inconsistent identity, primary/source selection, external ownership, unsupported
+colocation/sparsity/monitoring, pending recovery, I/O errors, and CoW failures
+remain errors under `warn`. Path selection fails closed if a registration's root
+cannot be resolved at all. If no targets remain, the command fails with
+`no workspaces selected; nothing reseeded` rather than selecting everything or
+claiming success. Dry-run shows selected names, paths, and selector origins.
+Resume requires literal names and rejects groups or `--on-unmatched` overrides.
 
 ## Safety and recovery
 
@@ -186,6 +254,8 @@ targets and exits nonzero for partial failure. Recovery never uses repository-wi
   explain why public sparse-prefill works and the verification obligations.
 - [Architecture](architecture.md#module-map) separates the command adapter,
   reseed coordination, JJ operations, filesystem cloning, links, and metadata.
+- [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md) preserves
+  the selection rationale; this guide describes the implemented interface.
 
 ## Verification and limits
 
@@ -199,6 +269,15 @@ Primary-source inference and final-operation revalidation expanded the suite to
 30 cases, all passing on official JJ 0.46.0 with real CoW required.
 Focused engine tests cover every write-ahead boundary and safe tracked-only type
 transitions. Existing integration regressions, Clippy, and formatting also passed.
+
+Wildcard groups at implementation checkpoint `9bd3a1c1` add six native cases
+(36 total) and nine selection unit cases. All 353 regression tests passed with
+official JJ 0.46.0 using an external temporary directory and explicit nextest
+binary lookup. Separately, all 81 CoW/reseed tests passed on Linux Btrfs with
+`JW_TEST_REQUIRE_COW=1` on official JJ 0.39.0 and 0.46.0, so unsupported-cloning
+early returns in general temporary-directory fixtures are not counted as
+real-CoW evidence.
+The wildcard build has not yet been rerun on 0.44.0 or 0.45.1.
 
 This is not a representative opencode throughput benchmark or proof of live
 Watchman behavior. Watchman-enabled mutation, sparse targets, and colocated targets
