@@ -45,6 +45,7 @@ pub struct AddOptions {
     /// Clone tracked files from this checkout root instead of letting JJ write them.
     pub clone_from: Option<PathBuf>,
     pub colocate: bool,
+    pub destination: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +66,7 @@ pub struct WorkspaceInventory {
     previous_error: Option<String>,
     default: Option<String>,
     current_root: PathBuf,
+    primary_root: Option<PathBuf>,
 }
 
 impl WorkspaceInventory {
@@ -124,21 +126,35 @@ impl WorkspaceInventory {
             entry.is_current = entry.name == current;
         }
 
-        let default_root = workspace_base_root(&current_root, &current)?;
-        if let Some(entry) = entries
-            .iter_mut()
-            .find(|entry| entry.name == "default" && entry.root.is_none())
-            && default_root.is_dir()
-        {
-            entry.root = Some(default_root.clone());
-        }
-        let default = if names.iter().any(|name| name == "default") {
-            Some("default".to_owned())
-        } else if canonicalize_dir(&default_root).ok().as_ref() == Some(&current_root) {
-            Some(current.clone())
-        } else {
-            None
-        };
+        // Placement follows JJ repository-storage ownership, not Git colocation or a
+        // naming convention. The owner can still exist after its workspace is forgotten.
+        let repository =
+            crate::context::repository_path(&current_root).map_err(anyhow::Error::msg)?;
+        let primary_root = repository
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == ".jj"))
+            .and_then(Path::parent)
+            .filter(|root| {
+                root.join(".jj/repo").is_dir()
+                    && root.join(".jj/repo").canonicalize().ok().as_ref() == Some(&repository)
+            })
+            .map(Path::to_path_buf);
+        let default = names
+            .iter()
+            .find(|name| *name == "default")
+            .cloned()
+            .or_else(|| {
+                primary_root.as_deref().and_then(|primary| {
+                    entries
+                        .iter()
+                        .find(|entry| {
+                            entry.root.as_deref().is_some_and(|root| {
+                                canonicalize_dir(root).ok().as_deref() == Some(primary)
+                            })
+                        })
+                        .map(|entry| entry.name.clone())
+                })
+            });
 
         let (previous, previous_error) = read_previous_workspace(&current_root, &names)?;
 
@@ -149,6 +165,7 @@ impl WorkspaceInventory {
             previous_error,
             default,
             current_root,
+            primary_root,
         })
     }
 
@@ -547,7 +564,10 @@ fn add_workspace_by_name_with_inventory(
     inventory: &WorkspaceInventory,
 ) -> Result<AddResult> {
     validate_workspace_name(name)?;
-    let path = workspace_dir_for_name(name, inventory)?;
+    let path = match &options.destination {
+        Some(path) => path.clone(),
+        None => workspace_dir_for_name(name, inventory)?,
+    };
     require_absent_workspace_path(&path)?;
 
     let mut args = vec![
@@ -752,12 +772,19 @@ fn require_absent_workspace_path(path: &Path) -> Result<()> {
     }
 }
 
-pub(crate) fn preflight_add_workspace(inventory: &WorkspaceInventory, name: &str) -> Result<()> {
+pub(crate) fn preflight_add_workspace(
+    inventory: &WorkspaceInventory,
+    name: &str,
+    destination: Option<&Path>,
+) -> Result<()> {
     validate_workspace_name(name)?;
     if inventory.contains(name) {
         bail!("workspace already exists: {name}")
     }
-    let path = workspace_dir_for_name(name, inventory)?;
+    let path = match destination {
+        Some(path) => path.to_path_buf(),
+        None => workspace_dir_for_name(name, inventory)?,
+    };
     require_absent_workspace_path(&path)?;
     Ok(())
 }
@@ -966,8 +993,10 @@ pub(crate) fn workspace_dir_for_name(
     name: &str,
     inventory: &WorkspaceInventory,
 ) -> Result<PathBuf> {
-    let default_root = workspace_base_root(inventory.current_root(), inventory.current_name())?;
-    if name == "default" {
+    let default_root = inventory.primary_root.clone().context(
+        "cannot choose a workspace destination without a verified primary checkout; use --path",
+    )?;
+    if inventory.default.as_deref() == Some(name) {
         Ok(default_root)
     } else {
         let parent = default_root
@@ -978,6 +1007,91 @@ pub(crate) fn workspace_dir_for_name(
             .ok_or_else(|| anyhow!("workspace root has no valid basename"))?;
         Ok(parent.join(format!("{}.{name}", base_name.to_string_lossy())))
     }
+}
+
+/// Resolve existing ancestors so aliases and symlinked parents cannot hide collisions.
+/// Missing parent directories are left for JJ to create.
+pub(crate) fn normalize_destination(path: &Path) -> Result<PathBuf> {
+    let absolute = std::path::absolute(path).context("cannot resolve destination path")?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut root) => {
+                for component in missing.iter().rev() {
+                    root.push(component);
+                }
+                return Ok(root);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid destination path"))?,
+                );
+                ancestor = ancestor
+                    .parent()
+                    .ok_or_else(|| anyhow!("invalid destination path"))?;
+            }
+            Err(error) => return Err(error).context("cannot resolve destination path"),
+        }
+    }
+}
+
+pub(crate) fn name_for_destination(
+    inventory: &WorkspaceInventory,
+    explicit_name: Option<&str>,
+    destination: &Path,
+) -> Result<String> {
+    let registered = inventory.entries().iter().find(|entry| {
+        entry
+            .root
+            .as_deref()
+            .is_some_and(|root| normalize_destination(root).ok().as_deref() == Some(destination))
+    });
+    let name = match explicit_name {
+        Some(name) => inventory.resolve(name)?,
+        None => match registered {
+            Some(entry) => entry.name.clone(),
+            None => {
+                let primary = inventory.primary_root.as_deref()
+                    .context("cannot infer a workspace name without a verified primary checkout; provide NAME")?;
+                let repo = primary
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .context("primary checkout has no valid basename")?;
+                let basename = destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .context("destination has no valid basename")?;
+                basename
+                    .strip_prefix(&format!("{repo}-"))
+                    .filter(|suffix| !suffix.is_empty())
+                    .unwrap_or(basename)
+                    .to_owned()
+            }
+        },
+    };
+    validate_workspace_name(&name)?;
+    if let Some(entry) = registered
+        && entry.name != name
+    {
+        bail!(
+            "destination is registered as workspace {}, not {name}",
+            entry.name
+        )
+    }
+    if inventory.contains(&name) {
+        let root = normalize_destination(&inventory.root(&name)?)?;
+        if root != destination {
+            bail!(
+                "workspace {name} is already registered at {}, not {}",
+                root.display(),
+                destination.display()
+            )
+        }
+    }
+    Ok(name)
 }
 
 pub(crate) fn workspace_base_root(current_root: &Path, current_name: &str) -> Result<PathBuf> {

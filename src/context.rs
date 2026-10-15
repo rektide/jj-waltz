@@ -571,7 +571,7 @@ fn workspace_root_for(path: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
-fn repository_path(workspace_root: &Path) -> Result<PathBuf, String> {
+pub(crate) fn repository_path(workspace_root: &Path) -> Result<PathBuf, String> {
     let pointer = workspace_root.join(".jj/repo");
     let metadata = fs::symlink_metadata(&pointer).map_err(|error| {
         format!(

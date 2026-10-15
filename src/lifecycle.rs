@@ -18,6 +18,7 @@ pub struct CreationPolicy {
     copy_on_write: bool,
     config: Config,
     colocate_override: Option<bool>,
+    destination: Option<PathBuf>,
 }
 
 impl CreationPolicy {
@@ -45,11 +46,17 @@ impl CreationPolicy {
             copy_on_write: copy_on_write.unwrap_or(config.workspace.copy_on_write),
             config,
             colocate_override: None,
+            destination: None,
         })
     }
 
     pub fn with_colocation_override(mut self, value: Option<bool>) -> Self {
         self.colocate_override = value;
+        self
+    }
+
+    pub fn with_destination(mut self, destination: Option<PathBuf>) -> Self {
+        self.destination = destination;
         self
     }
 
@@ -152,6 +159,7 @@ struct CheckoutPlan {
 #[derive(Debug, Clone)]
 struct PlannedWorkspace {
     name: String,
+    destination: Option<PathBuf>,
     bookmark: Option<String>,
     created_at_unix_ms: u64,
 }
@@ -183,6 +191,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         .map(|name| {
             Ok(PlannedWorkspace {
                 bookmark: policy.bookmark_for(&name, true),
+                destination: policy.destination.clone(),
                 name,
                 created_at_unix_ms: unix_timestamp_ms()?,
             })
@@ -275,6 +284,7 @@ fn switch_workspaces_with_creation(
         if available.insert(name.clone()) {
             intermediate_plans.push(PlannedWorkspace {
                 bookmark: policy.bookmark_for(name, false),
+                destination: None,
                 name: name.clone(),
                 created_at_unix_ms: unix_timestamp_ms()?,
             });
@@ -283,6 +293,7 @@ fn switch_workspaces_with_creation(
     let final_plan = if available.insert(resolved_final.clone()) {
         Some(PlannedWorkspace {
             bookmark: policy.bookmark_for(&resolved_final, true),
+            destination: policy.destination.clone(),
             name: resolved_final.clone(),
             created_at_unix_ms: unix_timestamp_ms()?,
         })
@@ -604,7 +615,7 @@ fn preflight_creations(
         if !names.insert(plan.name.as_str()) {
             bail!("workspace listed more than once: {}", plan.name)
         }
-        workspace::preflight_add_workspace(inventory, &plan.name)?;
+        workspace::preflight_add_workspace(inventory, &plan.name, plan.destination.as_deref())?;
         if store.get(&plan.name)?.is_some() {
             bail!("workspace is already managed: {}", plan.name)
         }
@@ -641,7 +652,10 @@ fn plan_checkout(
         return Ok(CheckoutPlan::default());
     };
     let source_root = inventory.current_root();
-    let destination = workspace::workspace_dir_for_name(&first.name, inventory)?;
+    let destination = match &first.destination {
+        Some(path) => path.clone(),
+        None => workspace::workspace_dir_for_name(&first.name, inventory)?,
+    };
     let destination_parent = destination
         .parent()
         .ok_or_else(|| anyhow!("workspace path has no parent directory"))?;
@@ -678,6 +692,7 @@ fn create_workspace(
             bookmark: plan.bookmark.clone(),
             clone_from: checkout.clone_from.clone(),
             colocate,
+            destination: plan.destination.clone(),
         },
     )
     .with_context(|| format!("failed to add workspace {}", plan.name))?;

@@ -61,6 +61,202 @@ macro_rules! skip_without_jj {
 }
 
 #[test]
+fn explicit_destinations_infer_variants_from_primary_and_preserve_named_placement() {
+    skip_without_jj!();
+    let repo = TestRepo::new().unwrap();
+    repo.run_jj(["workspace", "rename", "primary"]);
+    let parent = repo.default_root.parent().unwrap();
+    let other_default = parent.join("unrelated-default");
+    repo.run_jj([
+        "workspace",
+        "add",
+        other_default.to_str().unwrap(),
+        "--name",
+        "default",
+    ]);
+    repo.cmd()
+        .args(["path", "default"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", other_default.display()));
+    let fix = parent.join("repo-fix");
+    repo.cmd()
+        .args(["add", "--path"])
+        .arg(&fix)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created workspace: fix"));
+
+    // The donor's basename is not the repository name, even at an arbitrary location.
+    let arbitrary = parent.join("myfix");
+    repo.cmd_at(&fix)
+        .args(["s", "--path"])
+        .arg(&arbitrary)
+        .args(["--print-path"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", arbitrary.join("").display()));
+    let next = parent.join("repo-next");
+    repo.cmd_at(&arbitrary)
+        .args(["add", "--path"])
+        .arg(&next)
+        .args(["--cow", "--at", "@"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created workspace: next"));
+    repo.cmd_at(&arbitrary)
+        .args(["add", "named"])
+        .assert()
+        .success();
+    assert!(parent.join("repo.named").is_dir());
+    assert_eq!(
+        repo.jj_stdout(&arbitrary, &["workspace", "root", "--name", "myfix"]),
+        arbitrary.display().to_string()
+    );
+
+    // Native registrations outrank basename inference, including explicitly named destinations.
+    let custom = parent.join("unrelated-location");
+    repo.cmd()
+        .args(["add", "custom", "--path"])
+        .arg(&custom)
+        .assert()
+        .success();
+    let before = repo.operation_id();
+    repo.cmd()
+        .args(["s", "--path"])
+        .arg(&custom)
+        .args(["--print-path"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", custom.join("").display()));
+    assert_eq!(before, repo.operation_id());
+}
+
+#[test]
+fn explicit_destination_rejects_name_path_and_directory_collisions() {
+    skip_without_jj!();
+    let repo = TestRepo::new().unwrap();
+    let parent = repo.default_root.parent().unwrap();
+    let fix = parent.join("repo-fix");
+    repo.cmd()
+        .args(["add", "--path"])
+        .arg(&fix)
+        .assert()
+        .success();
+    let before = repo.operation_id();
+    for command in ["add", "s"] {
+        repo.cmd()
+            .args([command, "other", "--path"])
+            .arg(&fix)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("registered as workspace fix"));
+        repo.cmd()
+            .args([command, "fix", "--path"])
+            .arg(parent.join("elsewhere"))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("already registered at"));
+        repo.cmd()
+            .args([command, "one", "two", "--path"])
+            .arg(parent.join("many"))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("single workspace"));
+        repo.cmd()
+            .args([command, "--path"])
+            .arg(&repo.config_home)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("directory already exists"));
+    }
+    repo.cmd()
+        .args(["add", "--path"])
+        .arg(&fix)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("workspace already exists"));
+    assert_eq!(before, repo.operation_id());
+}
+
+#[test]
+fn explicit_source_uses_its_revision_and_caller_relative_destination() {
+    skip_without_jj!();
+    let repo = TestRepo::new().unwrap();
+    let parent = repo.default_root.parent().unwrap();
+    repo.cmd().args(["add", "donor"]).assert().success();
+    let donor = parent.join("repo.donor");
+    fs::write(donor.join("README.md"), "donor state\n").unwrap();
+    let donor_commit = repo.jj_stdout(&donor, &["log", "-r", "@", "--no-graph", "-T", "commit_id"]);
+    // Invocation need not be inside any checkout. --path is relative to the caller.
+    repo.cmd_at(parent)
+        .args(["add", "--from"])
+        .arg(&donor)
+        .args([
+            "--path",
+            "repo-chosen",
+            "--at",
+            "@",
+            "--no-cow",
+            "--no-colocate",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created workspace: chosen"));
+    let chosen = parent.join("repo-chosen");
+    assert_eq!(
+        fs::read_to_string(chosen.join("README.md")).unwrap(),
+        "donor state\n"
+    );
+    assert_eq!(
+        repo.jj_stdout(
+            &chosen,
+            &["log", "-r", "parents(@)", "--no-graph", "-T", "commit_id"]
+        ),
+        donor_commit
+    );
+    repo.cmd_at(parent)
+        .args(["s", "--from"])
+        .arg(&donor)
+        .args(["--path", "repo-chosen", "--print-path"])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", chosen.join("").display()));
+}
+
+#[test]
+#[cfg(unix)]
+fn shell_switch_enters_explicit_destination_from_selected_source() {
+    skip_without_jj!();
+    if !command_available("bash") {
+        return;
+    }
+    let repo = TestRepo::new().unwrap();
+    let parent = repo.default_root.parent().unwrap();
+    let binary = assert_cmd::cargo::cargo_bin("jw");
+    let mut shell = Command::new("bash");
+    shell
+        .current_dir(parent)
+        .env("XDG_CONFIG_HOME", &repo.config_home)
+        .env(
+            "PATH",
+            env::join_paths(
+                std::iter::once(binary.parent().unwrap().to_path_buf())
+                    .chain(env::split_paths(&env::var_os("PATH").unwrap())),
+            )
+            .unwrap(),
+        )
+        .env("SOURCE", &repo.default_root)
+        .args([
+            "-c",
+            "eval \"$(jw shell init bash)\"; jw s --from \"$SOURCE\" --path repo-shell; pwd",
+        ])
+        .assert()
+        .success()
+        .stdout(format!("{}\n", parent.join("repo-shell").display()));
+}
+
+#[test]
 fn switch_creates_workspace_and_path_reports_it() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");

@@ -88,10 +88,16 @@ struct AddCommand {
     #[arg(
         value_name = "NAME",
         num_args = 1..,
-        required = true,
+        required_unless_present = "path",
         add = ArgValueCompleter::new(complete_workspaces)
     )]
     names: Vec<String>,
+    /// Exact destination; infer NAME from its basename when omitted.
+    #[arg(long, value_name = "DESTINATION")]
+    path: Option<std::path::PathBuf>,
+    /// Source checkout (default: current checkout).
+    #[arg(long = "from", value_name = "SOURCE")]
+    source: Option<std::path::PathBuf>,
     #[arg(
         long,
         value_name = "REVSET",
@@ -141,10 +147,16 @@ struct SwitchCommand {
     #[arg(
         value_name = "NAME",
         num_args = 1..,
-        required = true,
+        required_unless_present = "path",
         add = ArgValueCompleter::new(complete_workspaces)
     )]
     names: Vec<String>,
+    /// Exact destination; infer NAME from its basename when omitted.
+    #[arg(long, value_name = "DESTINATION")]
+    path: Option<std::path::PathBuf>,
+    /// Source checkout (default: current checkout).
+    #[arg(long = "from", value_name = "SOURCE")]
+    source: Option<std::path::PathBuf>,
     #[arg(
         long,
         value_name = "REVSET",
@@ -717,13 +729,14 @@ fn normalized_args() -> Vec<OsString> {
 }
 
 fn run_add(cmd: AddCommand) -> Result<()> {
+    let (names, destination) = creation_location(cmd.names, cmd.path, cmd.source)?;
     let policy = CreationPolicy::load(
         cmd.at,
         cmd.bookmark,
         cmd.no_bookmark,
         cmd.no_links,
         copy_on_write_override(cmd.cow, cmd.no_cow),
-        cmd.names.len(),
+        names.len(),
     )?
     .with_colocation_override(if cmd.colocate {
         Some(true)
@@ -731,8 +744,9 @@ fn run_add(cmd: AddCommand) -> Result<()> {
         Some(false)
     } else {
         None
-    });
-    let outcome = lifecycle::add_workspaces(&cmd.names, &policy)?;
+    })
+    .with_destination(destination);
+    let outcome = lifecycle::add_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);
     for created in &outcome.created {
         print_created_workspace(created, false);
@@ -745,13 +759,14 @@ fn run_switch(cmd: SwitchCommand) -> Result<()> {
     if cmd.execute.is_none() && !cmd.execute_args.is_empty() {
         bail!("arguments after -- require --execute")
     }
+    let (names, destination) = creation_location(cmd.names, cmd.path, cmd.source)?;
     let policy = CreationPolicy::load(
         cmd.at,
         cmd.bookmark,
         cmd.no_bookmark,
         cmd.no_links,
         copy_on_write_override(cmd.cow, cmd.no_cow),
-        cmd.names.len(),
+        names.len(),
     )?
     .with_colocation_override(if cmd.colocate {
         Some(true)
@@ -759,8 +774,9 @@ fn run_switch(cmd: SwitchCommand) -> Result<()> {
         Some(false)
     } else {
         None
-    });
-    let outcome = lifecycle::switch_workspaces(&cmd.names, &policy)?;
+    })
+    .with_destination(destination);
+    let outcome = lifecycle::switch_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);
     for created in &outcome.intermediate {
         if !cmd.print_path {
@@ -788,6 +804,38 @@ fn run_switch(cmd: SwitchCommand) -> Result<()> {
         println!("  bookmark: {bookmark}");
     }
     Ok(())
+}
+
+/// Establish the explicit source as the command context before loading repository state.
+/// Destination paths stay relative to the caller, not to --from. This CLI process performs
+/// one command, so all existing lifecycle/JJ helpers share the same source context.
+fn creation_location(
+    names: Vec<String>,
+    path: Option<std::path::PathBuf>,
+    source: Option<std::path::PathBuf>,
+) -> Result<(Vec<String>, Option<std::path::PathBuf>)> {
+    if path.is_some() && names.len() > 1 {
+        bail!("--path selects a single workspace; provide at most one NAME")
+    }
+    let destination = path
+        .as_deref()
+        .map(workspace::normalize_destination)
+        .transpose()?;
+    if let Some(source) = source {
+        std::env::set_current_dir(&source)
+            .with_context(|| format!("cannot enter source checkout {}", source.display()))?;
+    }
+    let names = if let Some(destination) = &destination {
+        let inventory = workspace::WorkspaceInventory::load()?;
+        vec![workspace::name_for_destination(
+            &inventory,
+            names.first().map(String::as_str),
+            destination,
+        )?]
+    } else {
+        names
+    };
+    Ok((names, destination))
 }
 
 fn print_switch_path(result: &workspace::SwitchResult) -> Result<()> {
