@@ -61,6 +61,8 @@ enum Commands {
     Repair(RepairCommand),
     #[command(about = "Reseed existing workspaces in place with copy-on-write files")]
     Reseed(ReseedCommand),
+    #[command(about = "Freshen the donor and advance selected workspaces with copy-on-write files")]
+    Up(UpCommand),
     #[command(about = "Print a workspace path")]
     Path(PathCommand),
     #[command(alias = "rm", about = "Forget a workspace")]
@@ -397,12 +399,9 @@ struct ReseedCommand {
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
-    /// Donor tree assertion (CLI > local source_at > snapshotted @); required goal with --freshen.
+    /// Donor tree assertion (CLI > local source_at > snapshotted @).
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    /// Fetch the donor remote, then run configured local preparation commands in order.
-    #[arg(long, conflicts_with = "resume")]
-    freshen: bool,
     /// Start a fresh empty change at this base instead of keeping target revisions.
     #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
     at: Option<String>,
@@ -420,6 +419,43 @@ struct ReseedCommand {
     dry_run: bool,
     /// Safely finish an interrupted operation using its frozen pending plan.
     #[arg(long, conflicts_with_all = ["source", "source_at", "groups"])]
+    resume: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpCommand {
+    /// Literal targets (default: current variant; at primary: source only).
+    #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
+    names: Vec<String>,
+    /// Select a local group instead of implicitly selecting the current variant.
+    #[arg(long = "group", value_name = "GROUP", conflicts_with = "resume")]
+    groups: Vec<String>,
+    /// Override group misses: error (default) or warn and skip; names stay strict.
+    #[arg(long, value_enum, conflicts_with = "resume")]
+    on_unmatched: Option<crate::reseed::UnmatchedPolicy>,
+    /// Donor root (default: configured source or verified primary); caller still selects targets.
+    #[arg(long = "from", value_name = "PATH", conflicts_with = "resume")]
+    source: Option<std::path::PathBuf>,
+    /// Upstream goal override; otherwise infer one native tracked or exact remote line before fetch.
+    #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
+    source_at: Option<String>,
+    /// Privately CoW-copy ignored source roots (repeatable; replaces local/global selection).
+    #[arg(long, value_name = "PATTERN", conflicts_with = "resume")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for this run, including an explicit selection.
+    #[arg(long, conflicts_with = "resume")]
+    no_copy_ignored: bool,
+    /// Leave unpublished target work in JJ history without an automatic freshen timestamp bookmark.
+    #[arg(long, conflicts_with = "resume")]
+    no_freshen_bookmark: bool,
+    /// Delete unrecorded target contents except .jj before refilling.
+    #[arg(long, conflicts_with = "resume")]
+    replace_content: bool,
+    /// Explain prospective fetch, commands and target preservation without performing them.
+    #[arg(long)]
+    dry_run: bool,
+    /// Resume frozen preparation or target plans; no refetch after goal freeze.
+    #[arg(long)]
     resume: bool,
 }
 
@@ -474,7 +510,19 @@ struct ShellInitCommand {
 
 pub fn run() -> Result<()> {
     shell::complete_if_requested(Cli::command);
-    let cli = Cli::parse_from(normalized_args());
+    let args = normalized_args();
+    if args.get(1).is_some_and(|a| a == "reseed")
+        && args
+            .iter()
+            .skip(2)
+            .take_while(|a| *a != "--")
+            .any(|a| a == "--freshen")
+    {
+        bail!(
+            "reseed --freshen was removed; use `jw up` to freshen and advance targets, or `jw reseed --resume` to finish a legacy preparation without changing its recorded intent"
+        );
+    }
+    let cli = Cli::parse_from(args);
 
     let Some(command) = cli.command else {
         return run_default(cli.ui_path).map_err(context::add_workspace_hint);
@@ -490,6 +538,7 @@ pub fn run() -> Result<()> {
         Commands::Adopt(cmd) => run_adopt(cmd),
         Commands::Repair(cmd) => run_repair(cmd),
         Commands::Reseed(cmd) => run_reseed(cmd),
+        Commands::Up(cmd) => run_up(cmd),
         Commands::Path(cmd) => run_path(cmd),
         Commands::Remove(cmd) => run_remove(cmd),
         Commands::Prune => run_prune(),
@@ -567,25 +616,47 @@ fn run_context(cmd: ContextCommand) -> Result<()> {
 }
 
 fn run_reseed(cmd: ReseedCommand) -> Result<()> {
-    use crate::reseed::{ReseedRequest, ReseedStatus};
+    use crate::reseed::ReseedRequest;
 
-    let report = crate::reseed::run_with_diagnostics(
-        ReseedRequest {
-            names: cmd.names,
-            groups: cmd.groups,
-            on_unmatched: cmd.on_unmatched,
-            source: cmd.source,
-            source_at: cmd.source_at,
-            at: cmd.at,
-            copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
-            no_copy_ignored: cmd.no_copy_ignored,
-            replace_content: cmd.replace_content,
-            dry_run: cmd.dry_run,
-            resume: cmd.resume,
-            freshen: cmd.freshen,
-        },
-        |diagnostic| eprintln!("{diagnostic}"),
-    )?;
+    run_refill(ReseedRequest {
+        names: cmd.names,
+        groups: cmd.groups,
+        on_unmatched: cmd.on_unmatched,
+        source: cmd.source,
+        source_at: cmd.source_at,
+        at: cmd.at,
+        copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
+        no_copy_ignored: cmd.no_copy_ignored,
+        replace_content: cmd.replace_content,
+        dry_run: cmd.dry_run,
+        resume: cmd.resume,
+        ..Default::default()
+    })
+}
+
+fn run_up(cmd: UpCommand) -> Result<()> {
+    run_refill(crate::reseed::ReseedRequest {
+        names: cmd.names,
+        groups: cmd.groups,
+        on_unmatched: cmd.on_unmatched,
+        source: cmd.source,
+        source_at: cmd.source_at,
+        copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
+        no_copy_ignored: cmd.no_copy_ignored,
+        no_freshen_bookmark: cmd.no_freshen_bookmark,
+        replace_content: cmd.replace_content,
+        dry_run: cmd.dry_run,
+        resume: cmd.resume,
+        up: true,
+        ..Default::default()
+    })
+}
+
+fn run_refill(request: crate::reseed::ReseedRequest) -> Result<()> {
+    use crate::reseed::ReseedStatus;
+    let command = if request.up { "up" } else { "reseed" };
+    let report =
+        crate::reseed::run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))?;
     if report.dry_run {
         for selected in &report.selections {
             println!(
@@ -618,7 +689,7 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         println!("{label} {}: {}", target.name, target.message);
     }
     if report.has_failures() {
-        bail!("reseed did not complete for every target; use --resume for pending targets")
+        bail!("{command} did not complete for every target; use --resume for pending targets")
     }
     Ok(())
 }
@@ -1339,20 +1410,18 @@ mod reseed_cli_tests {
     use super::*;
 
     #[test]
-    fn freshen_is_explicit_and_conflicts_with_resume() {
-        let cli = Cli::try_parse_from([
-            "jw",
-            "reseed",
-            "feature",
-            "--freshen",
-            "--source-at",
-            "new@origin",
-        ])
-        .unwrap();
-        let Some(Commands::Reseed(cmd)) = cli.command else {
-            panic!("expected reseed")
+    fn up_replaces_freshen_and_freezes_resume_policy() {
+        let cli =
+            Cli::try_parse_from(["jw", "up", "feature", "--source-at", "new@origin"]).unwrap();
+        let Some(Commands::Up(cmd)) = cli.command else {
+            panic!("expected up")
         };
-        assert!(cmd.freshen);
+        assert_eq!(cmd.source_at.as_deref(), Some("new@origin"));
+        assert!(Cli::try_parse_from(["jw", "up"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "up", "--resume", "--dry-run"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "up", "--resume", "--no-freshen-bookmark"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "up", "--at", "dev@origin"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen"]).is_err());
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen", "--resume"]).is_err());
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--no-freshen"]).is_err());
     }

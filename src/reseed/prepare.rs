@@ -1,6 +1,7 @@
 //! Source preparation is a batch prerequisite, never a target-recovery mutation.
 //! This journal retains frozen target intent until every receipt is accounted for.
 use super::*;
+use crate::freshen::source::SourceSelection;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,6 +101,9 @@ pub(super) struct Batch {
     config_root: PathBuf,
     local_config: Option<Vec<u8>>,
     remote: String,
+    /// V3 up intent. Absent v1/v2 journals retain legacy keep-target semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_selection: Option<SourceSelection>,
     /// V1 journal input only; new records freeze command_sequence instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     command: Option<Vec<String>>,
@@ -190,10 +194,14 @@ impl Batch {
                 self.schema_version = 2;
                 self.legacy_v1 = true;
             }
-            2 if self.command.is_none() => {}
+            2 if self.command.is_none() && !self.request.up && self.source_selection.is_none() => {}
+            3 if self.command.is_none() && self.request.up && self.source_selection.is_some() => {}
             _ => bail!("invalid source preparation journal version or legacy command field"),
         }
         self.validate_commands()?;
+        if self.request.up != self.source_selection.is_some() {
+            bail!("preparation workflow/source selection mismatch");
+        }
         // Legacy v1/v2 requests already froze an effective array, including [].
         // Option preserves that wire form as Some(array), never new inheritance.
         if self.request.copy_ignored.is_none() {
@@ -226,10 +234,20 @@ impl Batch {
     }
 }
 
-pub(super) fn find_resume(store: &Store, names: &[String]) -> Result<Option<Batch>> {
+pub(super) fn find_resume(
+    store: &Store,
+    names: &[String],
+    default: &Path,
+) -> Result<Option<Batch>> {
     let matching = batches(store)?
         .into_iter()
-        .filter(|b| b.request.names.iter().any(|n| names.contains(n)))
+        .filter(|b| {
+            if names.is_empty() {
+                b.request.up && b.request.names.is_empty() && b.config_root == default
+            } else {
+                b.request.names.iter().any(|n| names.contains(n))
+            }
+        })
         .collect::<Vec<_>>();
     if matching.len() > 1 {
         bail!("resume targets belong to different preparation batches; resume them separately");
@@ -245,6 +263,7 @@ pub(super) fn find_resume(store: &Store, names: &[String]) -> Result<Option<Batc
 
 pub(super) fn validate_resume_request(request: &ReseedRequest) -> Result<()> {
     if request.freshen
+        || request.no_freshen_bookmark
         || request.source.is_some()
         || request.source_at.is_some()
         || request.at.is_some()
@@ -261,33 +280,14 @@ pub(super) fn ensure_available(store: &Store, source: &Path, own: Option<&Batch>
     for batch in batches(store)? {
         if batch.source == source && own.is_none_or(|own| own.id != batch.id) {
             bail!(
-                "source has an active preparation batch in phase {:?}; use `jw reseed {:?} --resume`; source progress was not rolled back",
+                "source has an active preparation batch in phase {:?}; use `jw {} {:?} --resume`; source progress was not rolled back",
                 batch.phase,
+                if batch.request.up { "up" } else { "reseed" },
                 batch.request.names
             );
         }
     }
     Ok(())
-}
-
-fn remote(source: &Path, settings: Option<&Settings>) -> Result<String> {
-    let chosen = settings
-        .and_then(|s| s.remote.as_deref())
-        .unwrap_or("origin");
-    if chosen.is_empty() {
-        bail!("freshen.remote must not be empty");
-    }
-    let output = JjClient::new(source).run(["--ignore-working-copy", "git", "remote", "list"])?;
-    if !output
-        .stdout()?
-        .lines()
-        .any(|line| line.split_whitespace().next() == Some(chosen))
-    {
-        bail!(
-            "freshen remote {chosen:?} is not configured in the source; set freshen.remote (origin fallback requires origin)"
-        );
-    }
-    Ok(chosen.to_owned())
 }
 
 pub(super) fn preflight(
@@ -316,7 +316,7 @@ pub(super) fn preflight(
         }
         if p.source == source || p.source.canonicalize().ok().as_deref() == Some(source) {
             bail!(
-                "source is borrowed by unfinished target {}; resume its frozen reseed before freshening the donor",
+                "source is borrowed by unfinished target {}; resume its frozen refill before freshening the donor",
                 p.name
             );
         }
@@ -331,7 +331,6 @@ pub(super) fn preflight(
         bail!("source registration changed");
     }
     validate_ownership(source, name, metadata)?;
-    remote(source, settings)?;
     configured_argv(settings)?;
     // The coordinator compiles new/unverified selectors before fetch. Verified
     // recovery validates recorded roots instead of reinterpreting old patterns.
@@ -358,16 +357,19 @@ fn validate_ownership(source: &Path, name: &str, metadata: &WorkspaceMetadataSto
 
 pub(super) fn describe(
     source: &Path,
-    rev: &str,
+    selected: &SourceSelection,
     settings: Option<&Settings>,
     ignored: &[String],
 ) -> Result<String> {
     let commands = configured_argv(settings)?;
     Ok(format!(
-        "Freshen donor {:?}; remote {:?}; prospective post-fetch goal {:?}; preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
+        "Freshen donor {:?}; pinned {:?} bookmark {:?}@{:?}; prospective post-fetch goal {:?} (currently {:?}); preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
         source,
-        remote(source, settings)?,
-        rev,
+        selected.kind,
+        selected.name,
+        selected.remote,
+        selected.source_at,
+        selected.old_goal,
         commands,
         source,
         ignored,
@@ -385,7 +387,14 @@ pub(super) fn summary(batch: &Batch) -> String {
         .as_ref()
         .expect("validated command sequence");
     format!(
-        "Recorded freshen: remote {:?}, exact source goal {:?}, preparation argv sequence {:?}, cwd {:?}; commands completed {}/{}{}, {}; {}",
+        "Recorded freshen ({}): remote {:?}, exact source goal {:?}, preparation argv sequence {:?}, cwd {:?}; commands completed {}/{}{}, {}; {}",
+        if batch.request.up && batch.request.names.is_empty() {
+            "source-only up"
+        } else if batch.request.up {
+            "up"
+        } else {
+            "legacy reseed"
+        },
         batch.remote,
         batch.goal,
         sequence.argv,
@@ -400,7 +409,11 @@ pub(super) fn summary(batch: &Batch) -> String {
         if batch.legacy_v1 {
             "v1 single-command journal loaded compatibly; only Verified proves legacy completion"
         } else {
-            "v2 sequence journal"
+            if batch.request.up {
+                "v3 up sequence journal"
+            } else {
+                "v2 legacy reseed sequence journal"
+            }
         },
         if sequence.argv.is_empty() {
             "tracked-source preparation only; no configured commands; selected ignored payload is existing data, not freshly built"
@@ -421,11 +434,14 @@ pub(super) fn begin(
     inventory: &Inventory,
     names: &[String],
     request: &ReseedRequest,
-    rev: &str,
     settings: Option<&Settings>,
     ignored: &[String],
     local_config: Option<Vec<u8>>,
+    source_selection: SourceSelection,
 ) -> Result<Batch> {
+    if !request.up {
+        bail!("new source preparation requires up; legacy reseed preparation is resume-only");
+    }
     verify_policy(default, &local_config)?;
     let operation = client.operation_id()?;
     let source_client = JjClient::new(source);
@@ -457,11 +473,18 @@ pub(super) fn begin(
         });
     }
     let mut frozen_request = request.clone();
+    let source_rev = source_selection.source_at.clone().unwrap_or_else(|| {
+        format!(
+            "{}@{}",
+            serde_json::to_string(&source_selection.name).expect("JSON string"),
+            serde_json::to_string(&source_selection.remote).expect("JSON string"),
+        )
+    });
     frozen_request.names = names.to_vec();
     frozen_request.groups.clear();
     frozen_request.on_unmatched = None;
     frozen_request.source = Some(source.to_path_buf());
-    frozen_request.source_at = Some(rev.into());
+    frozen_request.source_at = Some(source_rev.clone());
     frozen_request.copy_ignored = Some(ignored.to_vec());
     let nonce = tempfile::NamedTempFile::new_in(&store.root)?;
     let id = Sha256::digest(serde_json::to_vec(&(
@@ -476,7 +499,7 @@ pub(super) fn begin(
     .map(|b| format!("{b:02x}"))
     .collect();
     let batch = Batch {
-        schema_version: 2,
+        schema_version: 3,
         id,
         request: frozen_request,
         source: source.to_path_buf(),
@@ -489,7 +512,8 @@ pub(super) fn begin(
         repository: repository(client)?,
         config_root: default.to_path_buf(),
         local_config,
-        remote: remote(source, settings)?,
+        remote: source_selection.remote.clone(),
+        source_selection: Some(source_selection),
         command: None,
         command_sequence: Some(CommandSequence {
             argv: configured_argv(settings)?,
@@ -497,7 +521,7 @@ pub(super) fn begin(
             in_flight: false,
         }),
         legacy_v1: false,
-        source_rev: rev.into(),
+        source_rev,
         old_operation: operation,
         old_commit,
         selected_commit: None,
@@ -659,7 +683,9 @@ pub(super) fn execute(
         verify_targets(batch)?;
         let client = JjClient::new(&batch.source);
         if batch.goal.is_none() {
-            if current_commit(&client)?.1 != batch.old_commit {
+            if let Some(selected) = &batch.source_selection {
+                selected.verify_source_at(&client, &client.operation_id()?)?;
+            } else if current_commit(&client)?.1 != batch.old_commit {
                 bail!(
                     "source changed before frozen fetch goal; restore recorded source work before resume"
                 );
@@ -676,20 +702,27 @@ pub(super) fn execute(
                 "Freshen: fetching remote {:?} in {:?}; previous work preserved at {}",
                 batch.remote, batch.source, batch.old_commit
             ));
-            let output = client.run([
-                "--config=fsmonitor.backend=none",
-                "git",
-                "fetch",
-                "--remote",
-                &batch.remote,
-            ])?;
+            let output = if let Some(selected) = &batch.source_selection {
+                client.fetch_bookmark(&selected.remote, &selected.name)?
+            } else {
+                client.run([
+                    "--config=fsmonitor.backend=none",
+                    "git",
+                    "fetch",
+                    "--remote",
+                    &batch.remote,
+                ])?
+            };
             diagnostics(output.stderr());
             let operation = client.operation_id()?;
-            batch.goal = Some(
-                client
-                    .resolve_one_at(&operation, &batch.source_rev)?
-                    .commit_id,
-            );
+            batch.goal = Some(match &batch.source_selection {
+                Some(selected) => selected.resolve_fetched(&client, &operation)?,
+                None => {
+                    client
+                        .resolve_one_at(&operation, &batch.source_rev)?
+                        .commit_id
+                }
+            });
             batch.phase = PreparationPhase::Selecting;
             save(store, batch)?;
         }
@@ -716,9 +749,12 @@ pub(super) fn execute(
             symlink_bytes(&client, &operation, &goal, &entry.path)?;
         }
         if batch.selected_commit.is_none() {
-            if current != batch.old_commit
-                && !exact_empty_child(&client, &operation, &current, &goal)?
-            {
+            let unchanged_source = if let Some(selected) = &batch.source_selection {
+                selected.verify_source_at(&client, &operation).is_ok()
+            } else {
+                current == batch.old_commit
+            };
+            if !unchanged_source && !exact_empty_child(&client, &operation, &current, &goal)? {
                 bail!(
                     "source changed during interrupted jj new; preparation retained without snapshot"
                 );
@@ -737,7 +773,11 @@ pub(super) fn execute(
                 batch.phase = PreparationPhase::Selecting;
                 save(store, batch)?;
                 validate(batch)?;
-                let output = client.run(["--config=fsmonitor.backend=none", "new", &goal])?;
+                let output = client.run([
+                    "--config=fsmonitor.backend=none",
+                    "new",
+                    &crate::jj::commit_id_revset(&goal)?,
+                ])?;
                 diagnostics(output.stderr());
             }
             let (operation, current) = current_commit(&client)?;
@@ -831,8 +871,13 @@ pub(super) fn execute(
         verify_verified(batch)?;
         save(store, batch)?;
         diagnostic(&format!(
-            "Freshen: donor verified at exact goal {:?}; targets not yet refilled; source preparation is not rolled back if later planning fails",
-            batch.goal
+            "Freshen: donor verified at exact goal {:?}; {}; source preparation is not rolled back if later planning fails",
+            batch.goal,
+            if batch.targets.is_empty() {
+                "source-only completion; no targets selected"
+            } else {
+                "targets not yet refilled"
+            },
         ));
         Ok(())
     })();
@@ -928,6 +973,20 @@ pub(super) fn finish_if_complete(store: &Store, batch: &Batch) -> Result<()> {
     atomic_json(&receipt, batch)?;
     fs::remove_file(active)?;
     File::open(&store.root)?.sync_all()?;
+    Ok(())
+}
+
+pub(super) fn source(batch: &Batch) -> &Path {
+    &batch.source
+}
+
+/// Include not-yet-created bookmarks in other batches' atomic target intents.
+pub(super) fn reserve_bookmarks(store: &Store, names: &mut BookmarkNames) -> Result<()> {
+    for batch in batches(store)? {
+        for plan in batch.plans.iter().flatten() {
+            reserve_history(plan, names);
+        }
+    }
     Ok(())
 }
 

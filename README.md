@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Integrated public up, native inference, source-only preparation, target preservation, and legacy resume migration
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Fixed nested payload creation preflight and implemented explicit creation assertions, optional reseed assertions, current-variant selection, and frozen recovery checks
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
@@ -49,9 +51,9 @@ patched `workspace add --adopt` command.
   snapshotted before replacement.
 - **Private dependency copies:** `--copy-ignored node_modules` replaces selected
   ignored directories with independent CoW copies, not shared-directory symlinks.
-- **Freshen the donor on demand:** `--freshen` fetches its declared remote, selects
-  the requested source baseline, and runs configured dependency preparation before
-  distributing it. Existing work is snapshotted; activation is explicit, not automatic.
+- **Advance with `up`:** infer/pin native upstream, fetch, run local preparation,
+  preserve unpublished target work with timestamp bookmarks, and start targets on
+  new empty changes at the exact prepared goal. Bare up at primary is source-only.
 - **One-offs first, batches when useful:** named targets need no groups. Local
   configuration and groups are optional shortcuts; `--dry-run` previews the plan
   and `--resume` safely finishes an interrupted refill.
@@ -101,9 +103,10 @@ jw reseed worker-a --source-at BASE --at BASE \
 
 Replace `BASE` with a revset such as `main@origin`, and remove `--dry-run` when
 the plan is right. Use `--from /path/to/prepared-source` for another source.
-No fetch or package install happens without explicit `--freshen`. Reseeding requires
+No fetch or package install happens during reseed. Use `jw up --dry-run` to preview
+freshening and advancement of this variant (at primary: source-only). Reseeding requires
 full, JJ-only targets and a reflink-capable filesystem; pause writers first.
-Freshening still requires a CLI/configured goal; see
+Up infers a unique native line or accepts `--source-at`; see
 [source freshening](docs/reseed.md#freshen-the-source).
 
 Fish has the richest shell integration. See [shell setup](#shell-setup) for
@@ -127,7 +130,7 @@ The responsibility split is deliberate:
 - Forge tools such as `gh` and `glab` own pull requests, merge requests, and CI.
 
 Core workspace operations remain offline unless source preparation is explicitly
-requested with `jw reseed --freshen`. That requested fetch/preparation must succeed
+requested with `jw up`. That requested fetch/preparation must succeed
 before distribution. Optional forge information remains nonessential enrichment.
 
 ## Features
@@ -360,9 +363,8 @@ matches nothing. Literal target names are not navigation tokens.
 This preserves the target's snapshotted working-copy revision and feature changes,
 root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
 `--at 'dev@origin'` to start an empty child of that base instead. The source's
-tracked tree must match any supplied/configured assertion. To advance the donor,
-opt into source preparation with `--freshen`, a required CLI/configured source
-goal, and optional local commands:
+tracked tree must match any supplied/configured assertion. To advance the donor
+and targets together, use `up` with optional local commands:
 
 ```toml
 # .jwreseed.local.toml in the primary checkout (keep it ignored)
@@ -372,18 +374,25 @@ commands = [["bun", "install", "--frozen-lockfile"], ["bun", "run", "build"]]
 ```
 
 ```sh
-jw reseed my-feature --freshen --source-at 'dev@origin' \
+jw up my-feature --source-at 'dev@origin' \
   --copy-ignored node_modules --dry-run
 ```
 
-Freshening snapshots existing work, fetches, selects the post-fetch source goal,
-and runs configured commands sequentially. It still keeps the feature revision
-unless `--at` is explicit. A single `command = [...]` is also supported; declaring
+Up snapshots real work, pins native upstream before fetch, freezes the fetched
+goal, and runs configured commands sequentially. Targets start new empty changes
+on that goal, not rebases. Unpublished work gets a `freshen-<UTC timestamp>` bookmark
+unless `--no-freshen-bookmark` is supplied; feature bookmarks never move. Bare up
+inside a variant updates that variant; at primary it prepares the donor only.
+Names/groups suppress implicit current selection. `--from` changes only the donor.
+No unique native tracked/exact remote line? Supply a one-run `--source-at`.
+Unpublished source work blocks advancement. A single `command = [...]` is also supported; declaring
 both forms is an error. No commands means no guessed build: selected ignored
 payload is existing data, not freshly built. The table alone never activates
 freshening. `[prepare]` remains a warned alias; migrate it after pending recovery
 finishes. Completed steps are skipped on resume; an interrupted in-flight command
-may retry. See [source freshening](docs/reseed.md#freshen-the-source).
+may retry. `reseed --freshen` is removed; old pending batches still use
+`reseed ORIGINAL-NAMES --resume` without changing their frozen history intent.
+See [source freshening](docs/reseed.md#freshen-the-source).
 
 Use `--copy-ignored node_modules` to replace an ignored dependency directory with
 a private CoW copy, or `--replace-content` to explicitly discard all other
@@ -599,8 +608,7 @@ and the retained metadata before recovering the link or finishing cleanup.
 copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
 ```
 
-This opt-in setting applies to new workspaces from `add`/`s` and to reseed,
-including `reseed --freshen`. Up integration remains pending.
+This opt-in setting applies to new workspaces from `add`/`s`, reseed, and up.
 CLI lists replace repository-local lists, which replace global lists. Missing
 local `copy_ignored` inherits; local `copy_ignored = []` or `--no-copy-ignored`
 disables inheritance/copying. Broad patterns select only ignored source roots:

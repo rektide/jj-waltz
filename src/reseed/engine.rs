@@ -7,7 +7,8 @@ use crate::cow::payload::{
     Entry, IgnoreRules, Stamp, confined_parents, directory_identity, entries, file_bytes,
     payload_digest, relative, stamp,
 };
-use crate::freshen::history::TargetHistory;
+use crate::freshen::history::{BookmarkNames, TargetHistory};
+use crate::freshen::source::SourceSelection;
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
@@ -106,7 +107,7 @@ struct Pending {
     link_config: Vec<(String, Option<Vec<u8>>)>,
     #[serde(default)]
     preparation_id: Option<String>,
-    /// Optional up foundation: immutable name/exact-tip intent, never recomputed
+    /// Up's immutable name/exact-tip intent, never recomputed
     /// during recovery. Absent in legacy and ordinary reseed plans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     history: Option<TargetHistory>,
@@ -143,7 +144,7 @@ impl Store {
             .truncate(false)
             .open(lock_path)?;
         lock.try_lock_exclusive()
-            .context("another jw reseed is running; pause other writers before retrying")?;
+            .context("another jw reseed/up is running; pause other writers before retrying")?;
         Ok(Self { root, _lock: lock })
     }
     fn path(&self, name: &str, suffix: &str) -> PathBuf {
@@ -172,11 +173,38 @@ impl Store {
     fn save(&self, pending: &Pending) -> Result<()> {
         atomic_json(&self.path(&pending.name, "pending"), pending)
     }
+    fn reserve_bookmarks(&self, names: &mut BookmarkNames) -> Result<()> {
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".pending.json")
+            {
+                continue;
+            }
+            if !entry.file_type()?.is_file() {
+                bail!("pending record is not a regular file");
+            }
+            let plan: Pending = serde_json::from_slice(&fs::read(entry.path())?)?;
+            if plan.schema_version != 1 || self.path(&plan.name, "pending") != entry.path() {
+                bail!("invalid pending identity/version");
+            }
+            reserve_history(&plan, names);
+        }
+        prepare::reserve_bookmarks(self, names)
+    }
     fn finish(&self, pending: &Pending) -> Result<()> {
         atomic_json(&self.path(&pending.name, "receipt"), pending)?;
         fs::remove_file(self.path(&pending.name, "pending"))?;
         File::open(&self.root)?.sync_all()?;
         Ok(())
+    }
+}
+
+fn reserve_history(plan: &Pending, names: &mut BookmarkNames) {
+    if let Some(bookmark) = plan.history.as_ref().and_then(|h| h.bookmark.as_ref()) {
+        names.reserve(&bookmark.name);
     }
 }
 
@@ -195,8 +223,16 @@ pub(super) fn run(
     mut request: ReseedRequest,
     diagnostic: &mut dyn FnMut(&str),
 ) -> Result<ReseedReport> {
-    if request.freshen && request.resume {
-        bail!("--freshen and --resume conflict; resume uses recorded preparation only");
+    if request.freshen {
+        bail!(
+            "reseed --freshen was removed; use `jw up` (old preparation journals still use `jw reseed --resume`)"
+        );
+    }
+    if request.up && request.at.is_some() {
+        bail!("up starts targets at the exact fetched goal; --at belongs to reseed");
+    }
+    if !request.up && request.no_freshen_bookmark {
+        bail!("--no-freshen-bookmark belongs to up");
     }
     if request.resume && (!request.groups.is_empty() || request.on_unmatched.is_some()) {
         bail!(
@@ -227,15 +263,19 @@ pub(super) fn run(
     let inventory = Inventory::load(&client)?;
     let default = inventory.default.clone();
     let implicit_current = request.names.is_empty() && request.groups.is_empty();
+    let source_only =
+        implicit_current && request.up && inventory.root(&inventory.current)? == default;
     if implicit_current {
-        if inventory.root(&inventory.current)? == default {
+        if inventory.root(&inventory.current)? == default && !request.up {
             bail!(
                 "reseed at the primary checkout requires literal target names or --group; never selects all implicitly"
             );
         }
         // Resolve to one registered literal identity before source/target refresh
         // or pending lookup. Do not introduce navigation-token interpretation.
-        request.names.push(inventory.current.clone());
+        if !source_only {
+            request.names.push(inventory.current.clone());
+        }
     }
     let (mut config, mut preparation_config) = if request.resume && request.groups.is_empty() {
         (LocalConfig::default(), None)
@@ -243,18 +283,24 @@ pub(super) fn run(
         load_config(&default)?
     };
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let mut selection = selection::resolve(
-        &request,
-        &config.groups,
-        &inventory.registered,
-        &default,
-        home.as_deref(),
-    )?;
+    let mut selection = if source_only {
+        selection::SelectionPlan::default()
+    } else {
+        selection::resolve(
+            &request,
+            &config.groups,
+            &inventory.registered,
+            &default,
+            home.as_deref(),
+        )?
+    };
     if let Some(warning) = selection.warning() {
         diagnostic(&warning);
     }
-    selection.validate()?;
-    if implicit_current {
+    if !source_only {
+        selection.validate()?;
+    }
+    if implicit_current && !source_only {
         selection.selections[0].origins = vec!["current".into()];
     }
     let names = selection
@@ -268,10 +314,27 @@ pub(super) fn run(
     let mut plans = Vec::new();
     let mut completed = Vec::new();
     let mut batch = if request.resume {
-        prepare::find_resume(&store, &names)?
+        prepare::find_resume(&store, &names, &default)?
     } else {
         None
     };
+    if let Some(record) = &batch {
+        if record.request.up != request.up {
+            bail!(
+                "recorded workflow is {}; resume with that subcommand, without changing its target-history intent",
+                if record.request.up {
+                    "jw up"
+                } else {
+                    "legacy jw reseed"
+                }
+            );
+        }
+    } else if request.resume && source_only {
+        bail!("no pending source-only up; resume a target batch with its literal names");
+    }
+    if !request.resume && source_only && prepare::find_resume(&store, &[], &default)?.is_some() {
+        bail!("source-only up has an active preparation batch; use `jw up --resume`");
+    }
     let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
     if recovering_preparation {
         let record = batch.as_ref().unwrap();
@@ -329,6 +392,9 @@ pub(super) fn run(
             )?;
             validate_identities(plan)?;
         }
+        if source_only {
+            prepare::verify_verified(batch.as_mut().unwrap())?;
+        }
     } else if request.resume {
         if request.source.is_some()
             || request.source_at.is_some()
@@ -336,6 +402,7 @@ pub(super) fn run(
             || request.copy_ignored.is_some()
             || request.no_copy_ignored
             || request.replace_content
+            || request.no_freshen_bookmark
         {
             bail!(
                 "--resume uses the frozen pending plan; source/revision/content overrides are not allowed"
@@ -345,6 +412,16 @@ pub(super) fn run(
             let mut pending = store
                 .pending(name)?
                 .with_context(|| format!("no pending reseed for {name}"))?;
+            if request.up != pending.history.is_some() {
+                bail!(
+                    "pending target {name} belongs to {}; resume with that subcommand",
+                    if pending.history.is_some() {
+                        "up"
+                    } else {
+                        "reseed"
+                    }
+                );
+            }
             if inventory.root(name)?.canonicalize()? != pending.root
                 || pending.repository != repository_path
             {
@@ -369,9 +446,14 @@ pub(super) fn run(
     } else {
         // Pending detection precedes every source/target snapshot, even when called inside a target.
         for name in &names {
-            if store.pending(name)?.is_some() {
+            if let Some(pending) = store.pending(name)? {
                 bail!(
-                    "workspace {name} has a pending reseed; use `jw reseed --resume {name}` before snapshotting it"
+                    "workspace {name} has a pending reseed/refill; use `jw {} --resume {name}` before snapshotting it",
+                    if pending.history.is_some() {
+                        "up"
+                    } else {
+                        "reseed"
+                    },
                 );
             }
         }
@@ -447,12 +529,11 @@ pub(super) fn run(
             ensure_quiescence(&JjClient::new(&root))?;
             require_full(&JjClient::new(&root))?;
             validate_contents(&root, false)?;
-            if request.freshen {
+            if request.up || request.freshen {
                 cow::probe_between(&source, &root)?;
             }
         }
-        if request.freshen {
-            let source_rev = source_rev.expect("freshening goal checked before snapshots");
+        if request.up || request.freshen {
             let ignored_patterns = ignored_policy.patterns.as_slice();
             prepare::verify_policy(&default, &preparation_config)?;
             prepare::preflight(
@@ -467,18 +548,60 @@ pub(super) fn run(
                 for root in &roots {
                     snapshot(&JjClient::new(root))?;
                 }
+                let (source_operation, source_commit) = current_commit(&source_client)?;
+                let source_before = stamp(&source)?;
+                let source_entries = entries(&source_client, &source_operation, &source_commit)?;
+                verify_disk(
+                    &source_client,
+                    &source_operation,
+                    &source_commit,
+                    &source,
+                    &source_entries,
+                )?;
+                let selected = SourceSelection::select(
+                    &source_client,
+                    &source_operation,
+                    source_rev,
+                    config.freshen.as_ref().and_then(|s| s.remote.as_deref()),
+                )?;
+                if stamp(&source)? != source_before
+                    || current_commit(&source_client)?.1 != source_commit
+                {
+                    bail!(
+                        "source changed during upstream selection; pause writers before retrying"
+                    );
+                }
                 if request.dry_run {
-                    let summary = prepare::describe(
+                    let mut summary = prepare::describe(
                         &source,
-                        source_rev,
+                        &selected,
                         config.freshen.as_ref(),
                         ignored_patterns,
                     )?;
+                    if source_only {
+                        summary.push_str("; source-only up, no targets or target refill");
+                    }
                     diagnostic(&summary);
                     return Ok(ReseedReport {
-                        dry_run: true, source, source_commit_id: None, preparation_summary: Some(summary),
-                        targets: names.iter().map(|name| ReseedOutcome { name: name.clone(), status: ReseedStatus::Planned, message: format!("{}; ignored selection {:?}; no fetch/new/preparation/refill performed; real work snapshotted", request.at.as_ref().map(|at| format!("reset at prospective {at}")).unwrap_or_else(|| "keep snapshotted target revision".into()), ignored_patterns) }).collect(),
-                        selections: selection.selections, skipped: selection.skipped,
+                        dry_run: true,
+                        source,
+                        source_commit_id: None,
+                        preparation_summary: Some(summary),
+                        targets: names.iter().map(|name| ReseedOutcome {
+                            name: name.clone(),
+                            status: ReseedStatus::Planned,
+                            message: format!(
+                                "new empty change on exact fetched goal (not a rebase); {}; ignored selection {:?}; no fetch/new/preparation/bookmark/refill performed; real work snapshotted",
+                                if request.no_freshen_bookmark {
+                                    "automatic freshen bookmark disabled; history retained"
+                                } else {
+                                    "freshen timestamp bookmark if snapshotted work is not upstream; exact ancestry checked after fetch"
+                                },
+                                ignored_patterns,
+                            ),
+                        }).collect(),
+                        selections: selection.selections,
+                        skipped: selection.skipped,
                     });
                 }
                 batch = Some(prepare::begin(
@@ -489,10 +612,10 @@ pub(super) fn run(
                     &inventory,
                     &names,
                     &request,
-                    source_rev,
                     config.freshen.as_ref(),
                     ignored_patterns,
                     preparation_config.clone(),
+                    selected,
                 )?);
             }
             if request.dry_run {
@@ -583,11 +706,22 @@ pub(super) fn run(
         // Keep the already asserted source commit pinned, but freeze all journal
         // facts at the final operation shared with the refreshed target trees.
         let source_operation = operation.clone();
-        let base = request
-            .at
-            .as_ref()
-            .map(|rev| client.resolve_one_at(&operation, rev).map(|r| r.commit_id))
-            .transpose()?;
+        let base = if request.up {
+            Some(source_commit.clone())
+        } else {
+            request
+                .at
+                .as_ref()
+                .map(|rev| client.resolve_one_at(&operation, rev).map(|r| r.commit_id))
+                .transpose()?
+        };
+        let mut bookmark_names = if request.up {
+            let mut allocator = BookmarkNames::at(&client, &operation, jiff::Timestamp::now())?;
+            store.reserve_bookmarks(&mut allocator)?;
+            Some(allocator)
+        } else {
+            None
+        };
         let source_rules = IgnoreRules::new(
             &source_client,
             &source_operation,
@@ -725,7 +859,19 @@ pub(super) fn run(
                 config_root: default.clone(),
                 link_config: link_config_bytes(&default)?,
                 preparation_id: batch.as_ref().map(|b| b.id.clone()),
-                history: None,
+                history: bookmark_names
+                    .as_mut()
+                    .map(|allocator| {
+                        TargetHistory::plan(
+                            &client,
+                            &operation,
+                            &fact.commit_id,
+                            &source_commit,
+                            request.no_freshen_bookmark,
+                            allocator,
+                        )
+                    })
+                    .transpose()?,
                 execution_diagnostics: Vec::new(),
             });
         }
@@ -740,19 +886,29 @@ pub(super) fn run(
             prepare::handoff(&store, plan, request.dry_run)?;
         }
     }
-    let first = plans
-        .first()
-        .or_else(|| {
-            batch
-                .as_ref()
-                .and_then(|b| b.plans.as_ref())
-                .and_then(|p| p.first())
-        })
-        .context("select at least one workspace")?;
+    let first = plans.first().or_else(|| {
+        batch
+            .as_ref()
+            .and_then(|b| b.plans.as_ref())
+            .and_then(|p| p.first())
+    });
+    let (report_source, report_commit) = match first {
+        Some(first) => (first.source.clone(), first.source_commit.clone()),
+        None => {
+            let b = batch.as_ref().context("select at least one workspace")?;
+            if !b.request.up || !b.request.names.is_empty() {
+                bail!("select at least one workspace");
+            }
+            (
+                prepare::source(b).to_path_buf(),
+                b.goal.clone().context("source-only up lacks frozen goal")?,
+            )
+        }
+    };
     let mut report = ReseedReport {
         dry_run: request.dry_run,
-        source: first.source.clone(),
-        source_commit_id: Some(first.source_commit.clone()),
+        source: report_source,
+        source_commit_id: Some(report_commit),
         preparation_summary: batch.as_ref().map(prepare::summary),
         targets: completed,
         selections: selection.selections,
@@ -2025,7 +2181,9 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     transition(store, plan, Phase::Empty)?;
     if let Some(base) = plan.base_commit.clone() {
         let (operation, current) = current_commit(&client)?;
-        if !exact_empty_child(&client, &operation, &current, &base)? {
+        if (plan.history.is_some() && current == plan.old_commit)
+            || !exact_empty_child(&client, &operation, &current, &base)?
+        {
             // A crash after `new` but before its journal update is distinguished
             // from concurrent graph changes by the write-ahead Newing phase.
             transition(store, plan, Phase::Newing)?;
@@ -2033,7 +2191,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
                 "--config=fsmonitor.backend=none",
                 "--config=snapshot.auto-track=none()",
                 "new",
-                &base,
+                &crate::jj::commit_id_revset(&base)?,
             ])?;
             diagnostics(output.stderr());
             fault_after_new()?;

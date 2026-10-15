@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Delivered up integration, source-only receipts, native fetch pinning, frozen target preservation and legacy resume compatibility
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Delivered donor assertions/current-variant selection, corrected phase-specific preparation and subset frozen-target recovery, and fixed nested payload preflight
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -26,6 +28,15 @@ sources:
 
 ## Unreleased
 
+- Add `jw up`: native pre-fetch upstream selection, exact-name/remote fetch,
+  sequential local commands, and private CoW refill on new empty target changes at
+  the exact fetched goal. Bare up in a variant updates it; at primary it prepares
+  only the donor with a real receipt. Explicit targets/groups suppress current.
+  Preserve unpublished target work with frozen collision-safe freshen timestamp
+  bookmarks; `--no-freshen-bookmark` opts out without moving feature bookmarks.
+  Reject unpublished source work. V3 preparation journals freeze workflow and native
+  selection. Remove `reseed --freshen`; legacy v1/v2 `reseed --resume` retains original
+  keep-target/explicit-base intent. No new following state or default-main inference.
 - Add optional add/s `--source-at` as a snapshotted donor tracked-tree assertion,
   independent of target `--at`. Equal trees may have different commit IDs; the
   default target parent remains donor `@`. Creation inherits only local ignored-copy
@@ -33,8 +44,8 @@ sources:
 - Ordinary reseed uses CLI `--source-at` > local `source_at` > freshly snapshotted
   donor `@`. Bare reseed selects only the current registered variant; primary
   invocation requires names/groups. Explicit selection suppresses implicit current,
-  even when a group matches nothing. Keep target work by default. Legacy `--freshen`
-  still requires a goal. Resolve current/pending identity without snapshots; resume
+  even when a group matches nothing. Keep target work by default. Resolve
+  current/pending identity without snapshots; resume
   uses recorded IDs. Complete original target order is required only while source
   preparation has no frozen target plans; frozen targets/subsets resume independently
   without refetch/build, and bare resume selects only the current target.
@@ -68,13 +79,12 @@ sources:
   `colocate=true` alone works, while both explicitly true settings conflict unless
   overridden. Ordinary-checkout fallbacks remain and now all report warnings,
   including rejected copied state and Watchman, in CLI and manager output.
-- Add explicit `jw reseed --freshen`: snapshot real work, fetch one declared remote,
-  select a post-fetch source baseline, and run trusted configured `[freshen]`
-  argv before distribution. Keep target reset independent. Add prospective/no-action
+- Add recoverable donor preparation (now activated through `up`): snapshot real
+  work, fetch upstream, select a post-fetch source baseline, and run trusted local
+  argv before distribution. Add prospective/no-action
   previews, source ownership checks, verified dependency payload binding, and
   recoverable atomic batch handoff with completion receipts. Source preparation
   blocks unsafe borrowing after failure; settings alone never activate it.
-  Its commissioned explicit `up` replacement is not yet integrated.
 - Extend reseed groups with `names`, `name_globs`, and `path_globs`. Match exact
   registrations in the current repository, with optional `on_unmatched = "warn"`
   and `--on-unmatched error|warn` overrides. List all skipped unrelated candidates

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Integrated native source selection into shared preparation, v3 up mode and source-only receipts, and atomic target-history planning
   - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
     title: Implemented target-history planning, collision-safe timestamp allocation, and exact create-only bookmark recovery through existing pending and preparation intent
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -89,7 +91,7 @@ offline.
 - `freshen::history` owns target work-tip/publication planning, timestamp bookmark
   allocation, and create-only verification of a previously journaled name/tip.
   The reseed executor checks this optional frozen intent before clearing or
-  advancing; the public up/opt-out connection remains an integration task.
+  advancing; up populates it before atomic batch-plan freeze, including opt-out.
 - `links` owns config merging, path confinement, link classification, preflight,
   and filesystem changes.
 - `shell` owns shared shell behavior. Each shell adapter varies syntax, not policy.
@@ -270,12 +272,13 @@ Ordinary donor baseline selection is CLI `--source-at`, then configured `source_
 otherwise the freshly snapshotted donor `@`. Asserted tree identity is checked at
 the same captured source operation before target snapshots. A donor/target tree
 difference is handled per path; an explicit/configured mismatch remains an error.
-Legacy `--freshen` still requires a CLI/configured goal before any snapshots.
+Up uses native source selection instead of ordinary reseed's tree assertion.
 
 Snapshot-free `Inventory` retains the caller's verified registered name. With no
 names/groups, `run` inserts that one non-primary literal target before pending
 lookup or source/target snapshots and reports origin `current`. At the primary it
-requires explicit selection. Explicit names/groups suppress this default even for
+requires explicit selection for reseed; bare up at primary is source-only.
+Explicit names/groups suppress this default even for
 an empty group result. No navigation-token semantics or implicit-all selection is
 introduced. Resume uses recorded source IDs and ignores newly configured defaults.
 While source preparation has no frozen target plans, recovery requires the complete
@@ -283,8 +286,9 @@ recorded target order. After plans freeze, each selected target/receipt is recov
 independently against its frozen identity, without refetching or rebuilding. Bare
 current selection never expands to the rest of the batch in either phase.
 
-With explicit `--freshen`, `reseed::prepare` first snapshots real source/target
-work, fetches the declared remote through `JjClient`, pins the source goal, selects
+With explicit `up`, `reseed::prepare` first snapshots real source/target
+work, freezes native upstream selection, fetches only that bookmark/remote through
+`JjClient::fetch_bookmark`, validates/pins the source goal, selects
 its empty child, and runs trusted configured argv in the donor. Preparation settings
 alone never activate it. The source-keyed journal stays active through target
 handoff and blocks new borrowing or freshening that would invalidate unfinished
@@ -303,8 +307,19 @@ associate pending records/receipts, while mutable runtime link diagnostics are
 separate from planned warnings. Lost handoff recreates only missing recorded
 intent; completed receipts prevent rerunning finished targets or preparation.
 Target checks refuse changed/stale work rather than snapshotting installer changes
-into it. The commissioned replacement is explicit `up`, not default-on reseed
-freshening; orchestration has not yet been connected to the new source foundation.
+into it. No second preparation/refill engine was introduced. Up v3 journals freeze
+`SourceSelection` and the request's bookmark opt-out before preparation; legacy
+v1/v2 records have no native selection and remain resume-only reseed operations,
+using their recorded remote/revset/base rather than acquiring up reset semantics.
+
+Caller inventory is resolved before donor selection; `--from` never changes process
+cwd or reinterprets a bare variant invocation as donor-only. Both commands require
+a registered caller in the repository. Source-only up uses empty names/targets and
+an explicitly verified empty `plans` array, not an empty group or fake target. Its
+receipt records the same final source/payload proof. Bare primary `up --resume`
+finds the unique active source-only journal before any snapshot, even for an
+alternate donor; a second unfinished source-only operation is refused. Frozen
+source-only completion revalidates the verified donor before finalizing its receipt.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
 prefills tree-identical paths, expands sparsity, and verifies the exact target
@@ -431,7 +446,7 @@ The local loader retains `[prepare]` as a deprecated, warned alias and rejects
 both table names together. This preserves frozen legacy policy bytes during
 recovery instead of silently ignoring old settings or forcing a mid-flight edit.
 
-Preparation journal v2 freezes a `command_sequence` containing `argv`, `completed`,
+Preparation journals v2/v3 freeze a `command_sequence` containing `argv`, `completed`,
 and `in_flight`. Before spawning a command, the engine durably marks it in flight.
 After successful exit, it checks source ownership/policy, the same selected source
 change and exact goal parent, the unchanged tracked tree (including new tracked
@@ -457,18 +472,17 @@ closed. Target pending/receipt schemas are unchanged.
 
 No commands means fetch/advance only, not a guessed build. Existing selected
 ignored payload may still be copied, explicitly reported as existing rather than
-freshly built. There is no automatic payload pruning. The command engine remains
-reachable through legacy `reseed --freshen` until the commissioned up integration;
-this stage introduces no partial public up command. See
+freshly built. There is no automatic payload pruning. Up reuses this engine;
+`reseed --freshen` is removed, while old preparation uses `reseed --resume` and
+retains its original target policy. See
 [operator configuration and retry guidance](reseed.md#freshen-the-source).
 
 ### Target history preservation foundation
 
 [`TargetHistory`](../src/freshen/history.rs) implements the target-preservation
 foundation of [commissioned up](../design/workspace-reseed/up0.gpt6a.md#unpublished-target-preservation).
-It is **not yet activated by a public command**. Ordinary reseed and legacy
-`reseed --freshen` keep their existing behavior; up and `--no-freshen-bookmark`
-remain in `jjwaltz-variants-up-flow`.
+It is activated by `up` and `--no-freshen-bookmark`. Ordinary reseed and legacy
+preparation recovery retain their existing history behavior.
 
 After snapshotting target work and proving its disk bytes, the coordinator calls
 `TargetHistory::plan(client, operation, target_commit, fetched_goal,
@@ -484,7 +498,7 @@ still records this history assessment; it only suppresses the bookmark.
 allocator per batch. Names use UTC `freshen-YYYYMMDDTHHMMSS.nnnnnnnnnZ`, with
 `-2`, `-3`, ... on collision, including identical timestamps/clock repeats.
 Existing local/remote names and deleted tracked relationships are reserved.
-Before planning a new batch, integration must also call `reserve(name)` for names
+Before planning a new batch, the coordinator also calls `reserve(name)` for names
 in other active pending/preparation intents: those bookmarks may not exist yet.
 Do not rebuild an allocator or replan when recovering frozen targets.
 
@@ -492,8 +506,8 @@ The existing target pending/receipt schema has an optional `history` field;
 legacy absence stays absent on serialization. It holds target facts/operation,
 work tip, exact upstream goal, publication assessment, and the chosen bookmark
 name/exact tip. Preparation's atomic `plans` and immutable handoff comparison
-carry the same field without adding permanent workspace tracking. The eventual
-up planner must populate it **before** the batch plans are saved/handed off.
+carry the same field without adding permanent workspace tracking. The up planner
+populates it **before** the batch plans are saved/handed off.
 The executor verifies it matches the frozen old commit and new source/base goal,
 durably saves intent, then ensures the pair before sparse clearing or advancement.
 This also applies on later-phase recovery, before partial-tree reconstruction.
@@ -512,7 +526,9 @@ which stop the operation rather than being repaired. Pause writers; this is not
 a cross-process compare-and-swap or a guarantee against later external movement.
 
 No existing feature bookmark is moved. Advancement remains a new empty change on
-the prepared baseline, not a rebase; opting out leaves the old JJ history intact.
+the prepared baseline, not a rebase; even an already empty old target gets a new
+empty change (recovery recognizes a completed new without repeating it). Opting
+out leaves the old JJ history intact.
 Focused native tests cover scratch/meaningful empty/merge publication, exact-ID
 shadowing, deterministic collisions and reserved uncreated intents, a precheck/
 create collision, serialization/replay, lost success, immutable handoff identity,
@@ -526,10 +542,10 @@ a rerun of the full JJ release matrix or unrelated suites.
 
 ### Native freshening source foundation
 
-[`SourceSelection`](../src/freshen/source.rs) implements the first foundation of
-the [commissioned up workflow](../design/workspace-reseed/up0.gpt6a.md), not a new
-CLI command yet. Existing `reseed --freshen` still uses its earlier preparation
-path until that integration lands.
+[`SourceSelection`](../src/freshen/source.rs) implements native upstream selection
+for the [up workflow](../design/workspace-reseed/up0.gpt6a.md), now called by the
+shared coordinator before creating an up preparation journal. Only legacy v1/v2
+resume retains the earlier stored remote/revset fetch behavior.
 
 The caller snapshots real source work, verifies filesystem bytes, and supplies one
 captured operation. Selection and validation use only frozen read-only JJ queries:
@@ -559,7 +575,7 @@ captured operation. Selection and validation use only frozen read-only JJ querie
    local bookmark any authority, and that local bookmark remains untouched.
 
 The serializable selection freezes names, tracking state, old target IDs, source
-facts, and operation for the eventual preparation journal. After the coordinator
+facts, and operation in the preparation journal. After the coordinator
 fetches, validation rereads **the same ref**, requires old remote ancestry in the
 fetched remote (not merely source-base ancestry), and rejects deletion, conflicts,
 tracking changes, local unpublished work, or sideways/rewound goals. A tracked
@@ -619,8 +635,9 @@ The missing-ref extension adds six focused cases: all 20 source cases pass on th
 installed JJ 0.45.1 development build, with the six missing-ref cases separately
 verified on official JJ 0.46.0. This extension did not rerun the full release
 matrix or unrelated suites. No live source was mutated.
-These are graph/reference checks; this foundation changes no CoW copying path and
-does not claim a new end-to-end up or reflink verification.
+Those foundation checks concern graph/reference semantics. End-to-end up and
+reflink verification are recorded separately in the
+[operator guide](reseed.md#up-integration-verification).
 
 ### Metadata repair
 

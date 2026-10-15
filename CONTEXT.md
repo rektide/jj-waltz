@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Connected up activation, native upstream inference, immutable target preservation, source-only receipts, and legacy recovery
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Defined delivered donor assertions/current-variant targeting and corrected phase-specific preparation versus frozen-target recovery intent
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -182,7 +184,7 @@ by itself a claim that a command exposing that concept already exists.
 - Removal preserves bookmarks unless the user confirms deletion.
 - Publication and cleanup remain separate workflows.
 - Core workspace lifecycle and local status remain offline unless explicit donor
-  preparation is requested with `reseed --freshen`. That requested fetch/install
+  preparation is requested with `up`. That requested fetch/install
   is a prerequisite, not optional forge enrichment.
 - JSON stdout contains only its versioned document; diagnostics use stderr.
 - Herdr provenance survives until Herdr close succeeds.
@@ -200,11 +202,22 @@ by itself a claim that a command exposing that concept already exists.
   location or silently substitutes the current feature checkout. The source
   baseline is CLI `--source-at`, then configured `source_at`, otherwise freshly
   snapshotted donor `@`; tree assertions do not require equal commit identities.
-  Legacy `--freshen` still needs a CLI/configured goal. Differences from a target
-  are handled per path, not treated as a reason to discard feature changes.
+  Differences from a target are handled per path, not treated as a reason to
+  discard feature changes.
   Resume uses recorded IDs, not reevaluated defaults. Source preparation requires
   the full recorded target order until target plans freeze; frozen targets/subsets
   can then resume independently. Current selection never infers an entire batch.
+- Up selects/pins upstream before fetch: explicit CLI/local goal, otherwise a unique
+  applicable tracked pair, otherwise a unique exact remote at the clean source base
+  (including untracked refs), otherwise require `--source-at`. No default-main,
+  new following state or operation-log mining. Unpublished source work blocks.
+  Targets start new empty changes at the exact fetched goal, not rebases. Unpublished
+  target work gets an immutable `freshen-<UTC timestamp>` bookmark unless opted out;
+  existing feature bookmarks never move. Bare up in a variant selects it; at primary
+  it completes source-only preparation with a receipt, not a fake target. Explicit
+  selection suppresses current; `--from` changes only the donor. New up journals are
+  v3. Removed `reseed --freshen` journals remain resumable through `reseed --resume`
+  with their original v1/v2 history intent, not silently upgraded to up resets.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work during resume.

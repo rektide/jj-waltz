@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Reseed an existing workspace in place
-description: One-off and batch copy-on-write reseeding, opt-in donor freshening, replacement policy, and interrupted-operation recovery.
+description: Keep-history CoW reseeding, native-upstream up advancement, private payloads, preservation bookmarks, and frozen recovery.
 resource: /docs/reseed.md
 status: maintained
 generated:
@@ -11,6 +11,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Integrated up with native source selection, source-only receipts, frozen preservation intent, legacy recovery, and native real-CoW verification
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Implemented optional donor assertions, current-variant targeting, and phase-specific recovery with full preparation selection and independent frozen targets
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
@@ -41,7 +43,8 @@ sources:
 
 `jw reseed` replenishes copy-on-write sharing in existing JJ workspaces. It keeps
 the workspace root, `.jj`, registration, name, bookmarks, and lifecycle metadata.
-Without `--freshen`, it neither fetches upstream changes nor installs dependencies.
+It never fetches upstream changes or installs dependencies. Use **`jw up`** to
+freshen the donor and advance targets; `reseed --freshen` has been removed.
 
 ## One-off use
 
@@ -145,7 +148,7 @@ freshening/build commands.
 | any | any | `--no-copy-ignored` | `[]` |
 
 The same policy and selector apply to `add`/`s` **new workspaces**, `reseed`, and
-its legacy `--freshen` preparation path. Up remains unintegrated. Creation reads
+`up`. Creation reads
 only the verified primary store owner's local copy list, without adopting local
 source or freshening settings. It creates selected payloads after the tracked
 checkout and before workspace links; an existing switch never refills payloads.
@@ -173,14 +176,62 @@ arbitrary source dotfiles. There is no additional confirmation prompt.
 
 ## Freshen the source
 
-Freshening prepares the donor before distributing it: fetch one declared remote,
-select an empty JJ child of the requested source baseline, then run any configured
-preparation commands in that donor. It does not automatically reset feature targets.
+`jw up` fetches one pinned native upstream bookmark, selects an empty donor child
+of the exact fetched goal, runs configured preparation commands, then starts each
+target on a **new empty change at that same goal** and refills it with private CoW
+files. This is not a rebase and does not move existing feature bookmarks.
+
+| Invocation (inside this JJ repository) | Selection |
+| --- | --- |
+| `jw up` in a variant | Freshen the primary/configured donor and update this variant |
+| `jw up` at primary | Freshen the donor only; no target or dummy workspace |
+| `jw up worker-a worker-b` or `jw up --group workers` | Only explicit targets, never also current |
+
+`--from` changes the donor, **not the caller's target role**. Both commands require
+invocation within a registered workspace, even with `--from`. At primary, bare
+`up --from OTHER` prepares OTHER only. Empty explicit group results remain errors.
+
+### Native upstream selection
+
+CLI `--source-at`, then local `source_at`, overrides automatic selection. Otherwise
+select before fetching: one applicable native tracked local/remote pair related
+to the clean donor base; if none, one remote bookmark exactly at that base,
+including untracked refs. Ambiguity stops and asks for a one-run `--source-at`.
+There is no default-main/origin inference, operation-log mining, or new following
+state. Optional `[freshen].remote` constrains selection; it cannot redirect a
+different explicitly selected remote. Fetch addresses only the pinned name/remote.
+
+Unpublished donor work blocks advancement, including local commits beneath an
+empty scratch change. Directly published source revisions and ordinary empty
+children of published bases work. Post-fetch checks require publication and a
+fast-forward selected remote. A missing goal may use the explicit simple form
+`--source-at introduced-later@origin` when that native remote is configured;
+preview leaves its exact goal unknown. No source advance occurs until fetch proves
+the base is published there. The fetched goal is frozen once for commands/targets.
+
+Unlike reseed's **tree assertion**, up's `--source-at` selects the source's
+**advancement goal**. Neither command writes a standing following preference.
+
+### Preserve work left behind
+
+Before any target is cleared or advanced, all target history plans are saved
+atomically. Work not contained in the exact fetched goal gets a collision-safe
+UTC bookmark `freshen-YYYYMMDDTHHMMSS.nnnnnnnnnZ` (suffix `-2`, etc. if needed).
+An ordinary undescribed empty one-parent target uses its parent as its work tip;
+described empty changes and merges retain `@`. Publication uses ancestry, not
+equal file trees. Existing feature bookmarks never move.
+
+`--no-freshen-bookmark` disables this automatic bookmark only; old JJ history and
+source-work checks remain. The choice is frozen before preparation. Resume reuses
+the exact stored name/tip, never reallocates or overwrites a conflicting bookmark.
+
+### Local commands
 
 Declare the project-specific preparation argv in the primary checkout's ignored
 `.jwreseed.local.toml`:
 
 ```toml
+# Optional override; omit to use native upstream inference.
 source_at = "dev@origin"
 copy_ignored = ["node_modules", "packages/*/node_modules"]
 
@@ -210,27 +261,22 @@ Legacy `[prepare]` remains a deprecated alias with a warning; `[prepare]` and
 the exact frozen local policy bytes, so renaming the table mid-operation stops it.
 
 ```sh
-# Prepare the donor, but keep this feature's snapshotted revision.
-jw reseed my-feature --freshen --source-at 'dev@origin' --dry-run
+# Preview advancing this variant (or source-only when called at primary).
+jw up --dry-run
 
-# Also start the target on an empty child of the updated baseline.
-jw reseed worker-a --freshen --source-at 'dev@origin' \
-  --at 'dev@origin' --copy-ignored node_modules --dry-run
+# Explicit target and upstream override, with private installed dependencies.
+jw up worker-a --source-at 'dev@origin' --copy-ignored node_modules --dry-run
 
 # Explicit donor override; preparation happens here, not in the caller.
-jw reseed worker-a --from ~/a/a/opencode --freshen \
+jw up worker-a --from /path/to/prepared-source \
   --source-at 'dev@origin' --copy-ignored node_modules --dry-run
 ```
 
-With `--freshen`, CLI `--source-at` or local `source_at` is still a **required** goal
-resolved after fetching, not a claim that the old donor is already prepared. This
-legacy freshening path never defaults its goal to donor `@`. Without the flag,
-assertions are optional as described above. Target `--at` and `--replace-content`
-stay separate.
-
-Preparation settings alone do not activate freshening: pass `--freshen` explicitly.
-The commissioned `up` replacement is not integrated yet; the current public
-interface remains `reseed --freshen`. Default-on freshening is not planned.
+Preparation settings alone never activate freshening: use `up` explicitly.
+`up` has no `--at`: all targets use its exact prepared goal. `--replace-content`
+remains separate explicit authorization to discard unrecorded target contents.
+To freshen a donor yet keep a feature revision, run source-only `up` at primary,
+then ordinary `reseed` for the feature. This replaces the old keep-target flag path.
 
 Remove `--dry-run` only when the source, remote, argv/cwd, and target policy are
 right. A freshening dry-run does not fetch, select a new source change, install, or
@@ -240,7 +286,7 @@ preserved, and writers must be paused. Installation failures or tracked-file cha
 stop the batch before target contents are cleared. Partial dependency installation
 requires recorded recovery before the donor can be borrowed again.
 
-Only the declared remote is fetched, with `origin` as the fallback when it exists.
+Only the pinned bookmark on its selected native remote is fetched.
 With no commands, freshening performs fetch/source advancement only. Selected
 existing ignored payload may still be copied privately, but is reported as
 **existing data, not freshly built**. Its presence does not require a builder;
@@ -249,20 +295,26 @@ command that changes tracked files still fails the baseline check. Source progre
 is not automatically rolled back.
 
 For interrupted source preparation, use `--resume` with all original literal target
-names in their recorded order. Do not add `--freshen`, new source/goal overrides,
+names in their recorded order. Do not add new source/goal overrides,
 or replacement flags. Once preparation has frozen its target plans, individual
 recorded targets or subsets can resume independently using their exact frozen
 intent and completion receipts, without fetching or installing again. Bare resume
 inside a variant selects only its current target, never the rest of the batch.
 
 ```sh
-jw reseed worker-a worker-b --resume  # required while source preparation is unfinished
-jw reseed worker-a --resume           # one target after plans have frozen
+jw up worker-a worker-b --resume  # required until target plans freeze
+jw up worker-a --resume           # one frozen target
+jw up --resume                   # current frozen target, or source-only at primary
 ```
+
+Source-only preparation records a verified completion receipt with an empty target
+plan, not a dummy target. Resume it at primary with `up --resume`; the active journal
+is found before snapshotting, including when the recorded donor is another workspace.
 
 ### Command progress and older preparation journals
 
-New source preparation journals use version 2 and freeze the entire argv sequence,
+New up journals use version 3 and freeze native source selection, workflow mode,
+bookmark opt-out, and the entire argv sequence,
 completed count, and whether the next command was in flight. A step is durably
 completed only after successful exit and baseline/source/target checks. Resume
 skips completed steps and does not refetch a frozen goal.
@@ -275,12 +327,16 @@ restore the required partial state deliberately. A later command may have change
 earlier commands' ignored outputs; completed steps are still not replayed. Until
 all commands and the final source/payload proof succeed, borrowing is blocked.
 
-Existing v1 journals remain resumable. Their single command becomes a one-step
+Existing v1/v2 **legacy reseed preparation** journals remain resumable with
+`jw reseed ORIGINAL-NAMES --resume`, retaining their original keep-target/explicit
+`--at` behavior. Do not use `up --resume` to reinterpret them. The removed
+`--freshen` flag is not needed for recovery. A v1 single command becomes a one-step
 sequence. A v1 `Verified` preparation is already completed and is not rerun;
 otherwise completion was not recorded, so an unfinished command may retry. The
 v2 representation is written on real resumed progress, not merely on lookup or
 `--resume --dry-run`. Frozen source/target proofs and policy bytes are retained.
-Target pending records and their receipts retain their existing schema.
+Legacy progress stays v2 rather than acquiring up semantics. Target pending records
+and receipts retain their schema and optional immutable `history` field.
 
 An unfinished batch blocks new borrowing or freshening from its donor. Restore
 installer-modified tracked bytes to the recorded goal before retrying; the same
@@ -469,6 +525,28 @@ selected root still require exact payload restoration.
   the selection rationale; this guide describes the implemented interface.
 
 ## Verification and limits
+
+### Up integration verification
+
+All 39 cases in `tests/freshen.rs` passed on installed JJ
+`0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b`, with disposable local
+remotes, fake argv preparers, Btrfs temporary workspaces and `JW_TEST_REQUIRE_COW=1`.
+Coverage includes tracked/non-origin and untracked-exact inference, missing-ref
+preview/fetch/resume, unpublished source rejection, source-only preparation and
+completion recovery, sequential command retries, frozen target subsets, exact
+bookmark replay/opt-out, legacy v1/v2 keep-target/explicit-base recovery, and the
+removed-flag migration error. Private inodes, shared FIEMAP extents and independent
+writes are verified for tracked and globally selected ignored payloads. The focused
+35-case engine/CLI nextest run passed; format and all-target/all-feature Clippy
+checks passed (the existing manifest homepage warning remains).
+
+The final combined native run passed all 39 preparation cases and two ordinary
+reseed checks before its command timeout cancelled two further ordinary-reseed
+checks; both cancelled checks passed on their focused retry (four ordinary reseed
+checks total). This is not a new full JJ release
+matrix, live-source exercise, installation, or unrelated cleanup-suite run.
+
+### Earlier verification
 
 The [native integration cases](../tests/reseed.rs) were verified on Linux Btrfs
 with actual reflinks required, including FIEMAP shared-extents checks. The original

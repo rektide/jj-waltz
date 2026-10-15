@@ -11,6 +11,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Connected implemented up orchestration to native selection, command sequences, target history, and operator guidance
   - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
     title: Connected delivered target-history preservation and exact bookmark replay foundation to its remaining up integration boundary
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -37,15 +39,15 @@ sources:
   implemented operation-bound upstream identity and post-fetch graph proofs, with
   disposable native JJ verification. Includes frozen explicit not-yet-imported
   `branch@remote` intent with unknown IDs and deferred publication checks.
-  Not yet connected to the existing CLI.
+  Connected to `up` before preparation/fetch, with v3 frozen selection.
 - [Local command sequences and recovery](../../docs/architecture.md#local-freshening-commands-and-recovery) —
   implemented `[freshen]` single/ordered argv policy in the existing preparation
   engine, durable per-step progress, deprecated `[prepare]` alias, and v1 journal
-  compatibility. Still activated through `reseed --freshen` pending up integration.
+  compatibility. Activated through `up`; legacy preparation still uses `reseed --resume`.
 - [Target history preservation](../../docs/architecture.md#target-history-preservation-foundation) —
   implemented effective work-tip/selected-fetched-goal ancestry, shared UTC
   timestamp-name allocation, and create-only exact-pair replay in existing target
-  and preparation intent. Public up and opt-out activation remain integration work;
+  and preparation intent. Public up freezes preservation and opt-out before mutation;
   existing feature bookmarks and opt-out JJ history are left intact.
 - [Shared ignored-copy policy and selection](../../docs/architecture.md#shared-ignored-copy-policy-and-selection) —
   root global/local/CLI precedence with explicit empty lists, one compiled

@@ -22,15 +22,14 @@ pub enum UnmatchedPolicy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
-    /// Literal targets; empty names/groups select the current non-primary workspace.
+    /// Literal targets; empty names/groups select current variant, or source-only up at primary.
     pub names: Vec<String>,
     pub groups: Vec<String>,
     /// Override group selection-miss policy; positional names are always strict.
     pub on_unmatched: Option<UnmatchedPolicy>,
     /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
-    /// Donor tree assertion: CLI > local source_at > snapshotted @. Freshening
-    /// still requires an explicit/configured goal; recovery uses recorded IDs.
+    /// Donor tree assertion for reseed; upstream goal override for up.
     pub source_at: Option<String>,
     pub at: Option<String>,
     /// None inherits local/global policy; Some([]) explicitly disables inheritance.
@@ -39,8 +38,16 @@ pub struct ReseedRequest {
     pub replace_content: bool,
     pub dry_run: bool,
     pub resume: bool,
-    /// Fetch and prepare the chosen donor before freezing target plans.
+    /// Legacy journal input only. New source preparation uses up.
+    #[serde(default)]
+    #[doc(hidden)]
     pub freshen: bool,
+    /// Advance source and targets to the exact fetched goal, not a rebase.
+    #[serde(default)]
+    pub up: bool,
+    /// Freeze preservation opt-out before source preparation starts.
+    #[serde(default)]
+    pub no_freshen_bookmark: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

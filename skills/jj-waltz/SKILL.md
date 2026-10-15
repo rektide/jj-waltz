@@ -5,6 +5,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
+    title: Updated skill to integrated up source/target roles, native upstream selection, preservation bookmarks, and versioned recovery
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Aligned donor assertions/current-target reseed and phase-specific full-preparation versus individual frozen-target recovery with delivered behavior
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -140,20 +142,28 @@ disables copying. Matching nonignored source directories are skipped/reported;
 eligible ignored descendants remain discoverable. Selected payload still requires
 source/target tracked-overlap and ignored/confinement checks plus real private CoW.
 No matches succeeds; trailing `/` is accepted. These controls apply to add/s new
-workspaces and reseed/preparation; public up is not integrated. Creation reads only
+workspaces, reseed, and up. Creation reads only
 the primary store owner's local ignored-copy list. Actual selected payload forbids
 nested donor destinations; choose an external `--path` or `--no-copy-ignored`.
 Existing switches never refill payloads. Recovery
 retains frozen selections, including legacy recorded `[]`, rather than inheriting
 new global defaults. Read the [policy guide](../../docs/reseed.md#ignored-copy-policy-layers).
 
-Use `--freshen` only when source mutation is requested: it fetches the declared
-remote, requires a CLI/configured source goal (never implicit `@`), and runs local
+Use `jw up` only when source **and target advancement** is requested. Bare up in a
+variant updates it; at primary it prepares only the donor. Names/groups select only
+explicit targets; `--from` changes donor, not caller role. Run inside a registered
+workspace. Pin before fetch: CLI/local source goal, otherwise unique applicable
+native tracked pair, otherwise unique exact remote (including untracked refs),
+otherwise ask for one-run `--source-at`. Do not guess main/origin, mine operation
+logs, or invent following state. Unpublished source work blocks. Up runs local
 `[freshen]` `command` or ordered `commands` argv in donor cwd; both fields together are an error even
 when empty. There are no global/guessed build commands. With no commands, selected
 existing ignored payload can still be borrowed but is not freshly built.
-Preview with `--dry-run`; source freshening does not imply target
-`--at`. Preparation settings alone do not activate it. While source preparation has
+Preview with `--dry-run`. Targets start **new empty changes on the exact fetched
+goal**, not rebases; up has no independent `--at`. Unpublished target work gets a
+collision-safe `freshen-<UTC timestamp>` bookmark unless `--no-freshen-bookmark`
+was frozen before preparation. Existing feature bookmarks never move. Preparation
+settings alone do not activate up. While source preparation has
 no frozen target plans, resume all original literal targets in their recorded order.
 Once plans freeze, individual targets/subsets can resume without refetching or
 rebuilding; bare `--resume` selects only the current recorded target. Do not add
@@ -161,7 +171,10 @@ freshening/selection overrides or borrow partially installed ignored dependencie
 Completed command steps are skipped;
 an in-flight step may retry, not exactly-once. `[prepare]` is a deprecated alias:
 rename it only after recovery finishes, since frozen policy bytes must match.
-V1 preparation journals remain resumable. Public up integration is still pending.
+Use `up --resume` for up journals; at primary bare resume discovers source-only
+preparation without snapshots. `reseed --freshen` is removed. Legacy v1/v2 batches
+still use `reseed ORIGINAL-NAMES --resume` with original keep-target/explicit-base
+intent, never reinterpret them as up. Up v3 freezes native selection and opt-out.
 
 #### Status, adoption, cleanup, or recovery
 
