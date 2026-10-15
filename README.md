@@ -1,13 +1,15 @@
 ---
 type: Guide
 title: jj-waltz — CoW reseeding fork
-description: A user-facing guide to this jj-waltz fork, its carried reseeding features, and everyday JJ workspace use.
+description: A user-facing guide to this jj-waltz fork, chosen-destination CoW variants, and existing-workspace reseeding.
 resource: /README.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Implemented and verified add/s destinations, source selection, CoW defaults, and explicit mode precedence; aligned operator guidance
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Implemented reseeding and explicit donor freshening; clarified carried features, installation, and source defaults
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
@@ -23,12 +25,17 @@ one, jump into it, or refill it with private copy-on-write files without changin
 its location.
 
 **This is a working fork of [EzraCerpac/jj-waltz](https://github.com/EzraCerpac/jj-waltz).**
-We carry in-place workspace reseeding on top of upstream's workspace switcher.
+We carry chosen-destination CoW variants and in-place workspace reseeding on top
+of upstream's workspace switcher.
 This forks **jj-waltz, not Jujutsu**: reseeding works with stock JJ, without a
 patched `workspace add --adopt` command.
 
 ## What this fork carries
 
+- **Create where you choose:** `jw add --path DESTINATION` and `jw s --path DESTINATION`
+  infer a workspace name, with optional `--from SOURCE`.
+- **Everyday creation defaults:** CoW, JJ-only, and an empty child of the source's
+  current snapshotted `@`; explicit mode and revision selections remain available.
 - **Refill an existing workspace:** `jw reseed NAME` renews CoW sharing while
   keeping the root directory, `.jj`, registration, bookmarks, and workspace identity.
 - **Keep features or reset worker slots:** keep the target revision by default;
@@ -48,8 +55,9 @@ patched `workspace add --adopt` command.
   [wildcard groups](docs/reseed.md#wildcard-groups).
 
 Upstream already provides switching, workspace links, CoW **creation**, shell
-integration, the interactive manager, and lifecycle checks. Our addition is CoW
-**reseeding of existing workspaces**. See the [reseeding guide](docs/reseed.md)
+integration, the interactive manager, and lifecycle checks. This fork extends
+creation placement/defaults and adds CoW **reseeding of existing workspaces**.
+See the [reseeding guide](docs/reseed.md)
 for the full contract and [changelog](CHANGELOG.md) for the carried changes.
 
 ## Get this fork running
@@ -60,10 +68,13 @@ From this checkout, install the binary carrying these changes:
 cargo install --path . --locked
 ```
 
+Source commits do not update an already installed `jw`. For development, use
+`cargo build --bin jw` and invoke `target/debug/jw` explicitly instead of installing.
+
 Then try the everyday workspace commands:
 
 ```sh
-jw add my-feature --no-colocate  # create a JJ-only workspace
+jw add my-feature               # CoW/JJ-only, at current source @
 jw s my-feature                # print its path; shell setup below enables cd
 jw list
 ```
@@ -131,10 +142,42 @@ before distribution. Optional forge information remains nonessential enrichment.
 - `--execute` support for jumping into editors or agents after switching
 - optional automatic bookmark creation for new workspaces
 - optional workspace links via `.jwlinks.toml` for sharing large ignored directories
-- optional copy-on-write workspace creation (`--cow`) on APFS, Btrfs, and XFS
+- copy-on-write workspace creation by default on APFS, Btrfs, and XFS; explicit `--no-cow` opt-out
 - `jw reseed <name>...` refills existing JJ-only workspaces in place with copy-on-write files
 - shell integration for `fish`, `zsh`, `bash`, `elvish`, and `powershell`
 - generated shell completions from the CLI definition
+
+## Create at a chosen destination
+
+`add` and `s` share source, placement, and creation policy. From the `opencode`
+repository, for example:
+
+```sh
+cd ~/src/opencode
+jw add --path ~/src/opencode-fix  # workspace name: fix; no duplicate NAME needed
+jw s --path ~/src/myfix          # workspace name: myfix; no clear repo- prefix
+```
+
+Or select the source explicitly, including from outside a checkout:
+
+```sh
+jw s --from ~/src/opencode --path ~/src/opencode-review  # workspace name: review
+```
+
+Without `--from`, the current checkout supplies the repository, files, and revision
+context. Repository identity follows verified JJ storage ownership, not the current
+variant's directory name or a workspace merely named `default`. Relative destinations
+are resolved from the caller's directory, before entering `--from`.
+
+`--path` selects one exact destination. An existing registration there supplies its
+actual workspace name; `s` enters it without recreation, while `add` reports that it
+already exists. Conflicting name/path registrations and occupied new destinations
+are errors. An optional explicit `NAME` can name a new destination instead of inference.
+
+Name-only usage is unchanged: `jw add fix` creates a sibling named `repo.fix` for a
+primary checkout named `repo`; `jw s fix` uses its registered path. No automatic
+`~/src` destination is selected. Shell initialization is needed for `s` to change
+the parent shell directory; the raw binary only reports the selection.
 
 ## Checkout discovery and Codex
 
@@ -222,30 +265,35 @@ is `SKIP`.
 
 ## Copy-on-write workspaces
 
-`jw add --cow` and `jw switch --cow` fill a new workspace by cloning the current
-workspace's tracked files instead of letting JJ write each one. Clones share
+`jw add` and `jw switch` default to cloning the source checkout's tracked files
+instead of letting JJ write each one. New workspaces are JJ-only, even when the
+source is colocated. Clones share
 storage until either copy changes: APFS `clonefile(2)` on macOS and reflinks on
-Linux filesystems such as Btrfs and XFS. Creation is typically several times
-faster, and a new workspace uses almost no extra disk space. Enable it for every
-new workspace in config, and use `--no-cow` to opt out for one command:
+Linux filesystems such as Btrfs and XFS. Use `--no-cow` for an ordinary JJ checkout,
+or disable CoW in user configuration:
 
 ```toml
 [workspace]
-copy_on_write = true
+copy_on_write = false
 ```
 
 The result matches an ordinary JJ checkout of the creation base, including the
-current workspace’s sparse patterns. Only files JJ tracks are cloned, so
-ignored and untracked files such as `.env` or `node_modules` never reach the new
-workspace; use [workspace links](#workspace-links) to share those. JJ adopts the
-clone with the current workspace's working-copy state, then `jw` restores `@` from
-its parent, so uncommitted edits in the current workspace never leak into the new
-one.
+source checkout's sparse patterns. Without `--at`, `jw` snapshots that source
+before freezing its current `@` as the base, so dirty tracked changes are included.
+Normal JJ auto-tracking rules apply during this snapshot. The new workspace starts
+as an empty child of that exact commit. `--at REVSET` instead selects one explicit
+base; it is not replaced by the current source revision.
+
+Only files JJ tracks are cloned. Ignored files such as `.env` or `node_modules`
+are not copied; use [workspace links](#workspace-links) only when deliberate sharing
+is wanted. Tracked directories are not replaced by whole-directory links.
 
 When the filesystem cannot clone, `jw` warns and uses ordinary JJ workspace
 creation. With Watchman configured, or if JJ rejects the copied working-copy
-state, `jw` also recreates through the ordinary path. Every fallback preserves
-the current workspace’s sparse patterns.
+state, `jw` also warns and recreates through the ordinary path. These are ordinary
+checkouts, not CoW successes. CLI warnings go to stderr, including when shell
+switching reserves stdout for a path; the interactive manager shows a warning report.
+Every fallback preserves the source checkout's sparse patterns.
 
 ### Reseed an existing workspace
 
@@ -440,35 +488,20 @@ the remaining path as a partial removal after cleaning bookmarks and lifecycle m
 
 ### Colocated workspaces
 
-**Breaking change in v0.8.0:** new workspace creation can inherit colocation from
-its primary workspace; earlier jw versions defaulted to JJ-only. To retain that
-previous behavior, set the following in jw configuration:
-
-```toml
-[workspace]
-colocate = false
-```
-
-Or pass `--no-colocate` for one command. Existing workspaces are not converted.
-Automatic copy-on-write creation remains JJ-only.
-
 `jw add feature --colocate` and `jw switch feature --colocate` create a JJ workspace
 with a linked Git worktree on JJ 0.46 or another build advertising that capability.
-Git-aware tools can use the new workspace's `.git` link. Without a jw override,
-new workspaces inherit the primary workspace's actual colocation when its
-effective JJ `git.colocate` setting is true and JJ advertises workspace colocation.
-Creation from a registered JJ-only sibling uses the same primary policy. An unverified or
-non-colocated primary, a disabled JJ setting, or an older JJ keeps creation JJ-only.
-To explicitly enable colocation globally:
+Git-aware tools can use the new workspace's `.git` link. `--colocate` alone opts out
+of default CoW. This fork no longer inherits colocation from primary topology or
+JJ's `git.colocate` setting. To select colocation in user configuration:
 
 ```toml
 [workspace]
 colocate = true
 ```
 
-Set `colocate = false` to explicitly keep new workspaces JJ-only; omit the setting
-to inherit automatically. `--colocate` and `--no-colocate` override the jw setting
-for one command. They affect
+That setting alone also opts out of default CoW. Omit it or set `colocate = false`
+for JJ-only creation. See [mode precedence](#creation-mode-precedence) for explicit
+CoW/configuration combinations. These settings affect
 only newly created workspaces; switching to an existing workspace never converts
 it. Explicit colocation requests on unsupported JJ versions fail before creation and
 advise upgrading to JJ 0.46+ or using `--no-colocate`. Non-Git backends also fail
@@ -497,15 +530,32 @@ and Git administrative ownership marker for cleanup, and use a current jw versio
 If a process is interrupted after detaching `.git`, inspect `.jj/jw-detached-git`
 and the retained metadata before recovering the link or finishing cleanup.
 
-Automatic inheritance chooses JJ-only when copy-on-write is selected, including
-through global config. Explicit colocation and copy-on-write cannot be combined.
-Use `--no-cow` or `--no-colocate` to override one configured option for a command.
-
-
 ## Config
 
 `jw` reads user config from `$XDG_CONFIG_HOME/jj-waltz/config.toml`, or
 `~/.config/jj-waltz/config.toml` when `XDG_CONFIG_HOME` is not set.
+
+### Creation-mode precedence
+
+Mode settings are user-scoped, not repository-scoped. Omitted settings mean CoW
+and JJ-only. Explicit `false` remains distinct from omission.
+
+| Selection | New workspace mode |
+| --- | --- |
+| No mode settings | CoW, JJ-only |
+| CLI `--colocate` | Ordinary colocated checkout, overriding configured CoW |
+| CLI `--cow` | CoW/JJ-only, overriding configured colocation |
+| CLI `--cow --colocate` | Conflict |
+| Config `colocate = true` alone | Ordinary colocated checkout |
+| Config `copy_on_write = true` and `colocate = true` | Conflict unless a CLI override resolves it |
+| `--no-cow`, otherwise unset | Ordinary JJ-only checkout |
+
+Positive CLI mode selections take precedence over configuration. Otherwise CLI
+opt-outs override their corresponding config fields: `--no-cow` plus configured
+`colocate = true` keeps colocation; `--no-colocate` plus configured CoW keeps CoW.
+`--cow --no-cow` and `--colocate --no-colocate` are invalid combinations.
+
+### Bookmarks and trunk
 
 To create a bookmark automatically whenever `jw switch` creates a workspace:
 
@@ -531,11 +581,13 @@ Status compares against one configured trunk revision. It defaults to JJ's
 revset = "trunk()"
 ```
 
-The revset must resolve to exactly one revision. Workspace creation also resolves
-one exact base before changing anything. With no `--at`, `jw` uses the sole
-`parents(@)` revision, preserving sibling-workspace behavior. An empty merge
-working copy has multiple parents, so implicit creation stops before mutation;
-use `--at @` when creating directly from that merge is intentional.
+The trunk revset must resolve to exactly one revision; it does not choose the
+creation base. With no `--at`, `jw` snapshots the source working copy, captures
+its JJ operation, and resolves `@` there before creating destinations. A merge
+working-copy commit is itself a valid single base. Explicit `--at REVSET` must
+resolve to one exact commit through the existing frozen-operation path; it does
+not request the implicit source refresh. To select a sole parent deliberately,
+use `--at 'parents(@)'`; multiple parents remain an error for that explicit revset.
 
 ## Semantic status and JSON
 

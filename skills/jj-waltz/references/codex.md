@@ -1,3 +1,17 @@
+---
+type: Reference
+title: Native app checkout ownership
+description: Keep native app checkout identity and lifecycle ownership separate from optional jw management.
+resource: /skills/jj-waltz/references/codex.md
+status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-15
+sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Clarified current JJ-only/CoW creation defaults while retaining existing external ownership guidance
+---
+
 # Native app checkout ownership
 
 A native app owns the checkout it creates and its Git worktree registration. Keep
@@ -29,8 +43,9 @@ writers in separately authorized app checkouts, with independent mutable outputs
 lifecycle action. Live linked Git topology is protected even without `jw` metadata.
 Recording lifecycle metadata with `jw adopt` also persists the external owner so
 missing or damaged checkout metadata cannot silently transfer ownership to `jw`.
-`jw add` creates an ordinary JJ checkout, opting out of Git worktree colocation on
-builds that support that option.
+`jw add` defaults to JJ-only creation with CoW when available, not inherited Git
+colocation. Explicit `--colocate` selects Git worktree creation instead; it does
+not transfer ownership of any existing native app checkout.
 
 For cleanup, let the owning app remove both the checkout and Git registration.
 After verifying both are gone, explicitly run `jw reconcile-external NAME` to forget

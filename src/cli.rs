@@ -92,7 +92,7 @@ struct AddCommand {
         add = ArgValueCompleter::new(complete_workspaces)
     )]
     names: Vec<String>,
-    /// Exact destination; infer NAME from its basename when omitted.
+    /// Exact destination for one workspace; infer NAME when omitted.
     #[arg(long, value_name = "DESTINATION")]
     path: Option<std::path::PathBuf>,
     /// Source checkout (default: current checkout).
@@ -101,7 +101,7 @@ struct AddCommand {
     #[arg(
         long,
         value_name = "REVSET",
-        help = "Create a new workspace at a revset"
+        help = "Create at one exact revset (default: snapshotted source @)"
     )]
     at: Option<String>,
     #[arg(
@@ -123,19 +123,19 @@ struct AddCommand {
         long,
         action = ArgAction::SetTrue,
         conflicts_with = "no_cow",
-        help = "Clone new workspace files from the current workspace with copy-on-write"
+        help = "Use copy-on-write from the source checkout (default; overrides config colocation)"
     )]
     cow: bool,
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Let JJ write every file of a new workspace, ignoring config"
+        help = "Use ordinary JJ checkout instead of copy-on-write"
     )]
     no_cow: bool,
     #[arg(
         long,
         conflicts_with = "no_colocate",
-        help = "Create new workspaces with a Git worktree (JJ 0.46+)"
+        help = "Create with a Git worktree instead of default CoW (JJ 0.46+; conflicts with --cow)"
     )]
     colocate: bool,
     #[arg(long, help = "Override workspace.colocate for new workspaces")]
@@ -151,7 +151,7 @@ struct SwitchCommand {
         add = ArgValueCompleter::new(complete_workspaces)
     )]
     names: Vec<String>,
-    /// Exact destination; infer NAME from its basename when omitted.
+    /// Exact destination for one workspace; infer NAME when omitted.
     #[arg(long, value_name = "DESTINATION")]
     path: Option<std::path::PathBuf>,
     /// Source checkout (default: current checkout).
@@ -160,7 +160,7 @@ struct SwitchCommand {
     #[arg(
         long,
         value_name = "REVSET",
-        help = "Create a new workspace at a revset"
+        help = "Create at one exact revset (default: snapshotted source @)"
     )]
     at: Option<String>,
     #[arg(
@@ -191,19 +191,19 @@ struct SwitchCommand {
         long,
         action = ArgAction::SetTrue,
         conflicts_with = "no_cow",
-        help = "Clone new workspace files from the current workspace with copy-on-write"
+        help = "Use copy-on-write from the source checkout (default; overrides config colocation)"
     )]
     cow: bool,
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Let JJ write every file of a new workspace, ignoring config"
+        help = "Use ordinary JJ checkout instead of copy-on-write"
     )]
     no_cow: bool,
     #[arg(
         long,
         conflicts_with = "no_colocate",
-        help = "Create new workspaces with a Git worktree (JJ 0.46+)"
+        help = "Create with a Git worktree instead of default CoW (JJ 0.46+; conflicts with --cow)"
     )]
     colocate: bool,
     #[arg(long, help = "Override workspace.colocate for new workspaces")]

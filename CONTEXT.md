@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Aligned workspace/variant identity and creation contracts with verified placement, CoW defaults, and snapshotted source @
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Defined reseeding, safe snapshots, primary-source defaults, and explicit source preparation
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
@@ -28,8 +30,13 @@ by itself a claim that a command exposing that concept already exists.
 ## Terms
 
 - **Workspace** — a named Jujutsu working copy with its own filesystem root.
-- **Default workspace** — the repository's base workspace, selected by `^` or
-  `default`. Removal is never allowed.
+- **Default workspace** — the registered `default` workspace when present,
+  otherwise the registered JJ storage-owning checkout, selected by `^` or
+  `default`. Removal is never allowed. It need not identify the repository's
+  storage owner when another workspace was explicitly named `default`.
+- **Variant** — a workspace of the same JJ repository, possibly at an arbitrary
+  registered location. New destination-name inference uses the verified storage
+  owner's basename, not the current variant's basename.
 - **Current workspace** — the workspace containing the command's current root,
   selected by `@`.
 - **Previous workspace** — the last workspace visited from the current one,
@@ -202,9 +209,15 @@ by itself a claim that a command exposing that concept already exists.
   the workspace and inputs at one frozen operation, preserves historical fields,
   and performs no JJ or working-copy mutation. It has no JSON or `jw status` output
   contract beyond the ordinary human command result.
-- New workspace creation resolves an exact base before mutation. Implicit creation
-  requires exactly one `parents(@)` revision. A merge working copy therefore needs
-  an explicit exact base such as `--at @`.
+- `add` and `s` share creation policy. Optional `--from SOURCE` chooses the source;
+  otherwise it is the current checkout. `--path DESTINATION` selects one exact
+  destination with optional name inference; existing registrations stay authoritative.
+- New workspace creation defaults to CoW/JJ-only. Implicit creation snapshots the
+  source before freezing its current `@` as the exact base, including a merge `@`.
+  Explicit `--at REVSET` keeps the existing exact-one frozen-resolution path.
+  Mode precedence and visible ordinary-checkout fallback are described in the
+  [operator guide](README.md#creation-mode-precedence); these creation defaults do
+  not change reseed's separate shipped semantics.
 
 
 ## Checkout lifecycle ownership

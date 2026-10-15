@@ -1,3 +1,19 @@
+---
+type: Reference
+title: Workspace lifecycle
+description: Operator guidance for workspace inspection, creation, adoption, repair, and cleanup.
+resource: /skills/jj-waltz/references/lifecycle.md
+status: maintained
+updated:
+  by: model:openai/gpt-6.1-sol
+  at: 2026-10-15
+sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Aligned existing creation reference with delivered placement, current-source base, mode precedence, and visible fallback
+  - resource: /README.md
+    title: Current creation and colocation operator contract
+---
+
 # Workspace lifecycle
 
 Read this reference for semantic inspection, diagnosis, adoption, removal, or pruning.
@@ -52,11 +68,27 @@ operation diff matches the intended repair.
 
 ## Copy-on-write creation
 
-`jw add --cow` and `jw switch --cow` clone the current workspace's tracked files
-into the new workspace on APFS, Btrfs, or XFS. `workspace.copy_on_write = true`
-makes it the default; `--no-cow` opts out. The result matches a full checkout of
-the creation base: ignored and untracked files are not carried over. A warning on
-stderr means the filesystem could not clone and a full checkout was used.
+`jw add` and `jw switch` default to CoW/JJ-only creation on APFS, Btrfs, or XFS.
+Optional `--from SOURCE` selects the source; otherwise it is the current checkout.
+Without `--at`, the source is snapshotted before its current `@` becomes the exact
+base. Dirty tracked work and normal JJ auto-tracking participate; ignored files
+are not copied. Explicit `--at REVSET` keeps exact-one frozen revision selection.
+
+`--path DESTINATION` selects one exact root without requiring `NAME` twice. From
+`opencode`, `opencode-fix` infers `fix` and `myfix` stays `myfix`; existing registered
+names/paths take precedence. Name-only creation remains `repo.NAME`. See
+[chosen destinations](../../../README.md#create-at-a-chosen-destination).
+
+`--no-cow` opts out. `--colocate` alone selects ordinary colocated creation over
+default/configured CoW; `--cow` selects CoW/JJ-only over configured colocation.
+Both positive CLI flags conflict, as do both explicitly true config settings
+without a resolving CLI override. Config `colocate=true` alone remains usable.
+Full [mode precedence](../../../README.md#creation-mode-precedence) is user-scoped.
+
+The checkout matches the selected base within the source's sparse patterns.
+Unsupported cloning, Watchman, or rejected copied JJ state retain the existing
+ordinary-checkout fallback, reported on CLI stderr or in a manager warning report.
+That outcome is not CoW success.
 
 ## Adopt
 
@@ -137,8 +169,8 @@ ownership or explicit jw-created Git provenance. Live topology checks protect ol
 records without inferring ownership. `jw add --colocate`, `jw switch --colocate`,
 and `workspace.colocate = true` opt into creation on JJ 0.46+; `--no-colocate`
 overrides config, and existing workspaces are never converted. Unsupported explicit
-requests advise upgrading to JJ 0.46+ or passing `--no-colocate`; automatic inheritance
-continues to use JJ-only workspaces on older builds. For a jw-created
+requests advise upgrading to JJ 0.46+ or passing `--no-colocate`; omitted colocation
+defaults to JJ-only, without primary-topology inheritance. For a jw-created
 colocated workspace, removal validates its provenance token and reciprocal Git
 metadata and cleans only that Git registration. `--keep-dir` preserves files but
 disconnects the Git link. Changed topology, locks, and missing/damaged provenance

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Implemented and verified explicit add/s destinations and source selection, then CoW/JJ-only/current-source creation defaults
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Added reseeding, primary donor defaults, and explicit recoverable source freshening
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
@@ -20,6 +22,18 @@ sources:
 
 ## Unreleased
 
+- Add shared `add`/`s` `--path DESTINATION` and optional `--from SOURCE`, defaulting
+  to the current checkout. Honor registered names/paths; otherwise infer `fix` from
+  `opencode-fix` under repository `opencode`, or keep a basename such as `myfix`.
+  Name-only placement remains `repo.NAME` beside the verified JJ storage owner.
+- Default new workspaces to CoW/JJ-only and an empty child of the source's current
+  `@`, snapshotting before freezing the implicit base. Preserve explicit `--at`
+  resolution. This supersedes v0.8.0's automatic colocation inheritance.
+  Explicit CLI `--colocate` opts out of default/configured CoW; `--cow` overrides
+  configured colocation. Both explicit positive CLI modes conflict; config
+  `colocate=true` alone works, while both explicitly true settings conflict unless
+  overridden. Ordinary-checkout fallbacks remain and now all report warnings,
+  including rejected copied state and Watchman, in CLI and manager output.
 - Add explicit `jw reseed --freshen`: snapshot real work, fetch one declared remote,
   select a post-fetch source baseline, and run trusted configured `[prepare]`
   argv before distribution. Keep target reset independent. Add prospective/no-action
@@ -48,8 +62,8 @@ sources:
   Keep-directory and missing-directory cleanup continue to use guarded forgetting.
   Verify native partial progress, including warning-only directory deletion failures,
   without retrying through custom deletion. Minimum JJ remains 0.39.
-- Explicit unsupported workspace colocation now advises upgrading to JJ 0.46+
-  or using `--no-colocate`; automatic inheritance still falls back to JJ-only.
+- Explicit unsupported workspace colocation advises upgrading to JJ 0.46+
+  or using `--no-colocate`; default creation is JJ-only.
 
 ## Version 0.8.0 (2026-10-09)
 

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Implemented and verified shared add/s placement, snapshotted-current creation bases, explicit mode resolution, and visible fallback reporting
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Integrated reseeding, verified recovery, primary-source selection, and preparation-batch ownership
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
@@ -128,14 +130,45 @@ fakes.
 
 ### Creation-base contract
 
-Milestone-zero creation planning must resolve one exact base commit before any
-mutation. Default creation preserves existing sibling semantics by resolving
-`parents(@)` and requiring exactly one parent; that parent becomes the recorded
-creation base and the explicit input to JJ. Zero or multiple parents are
-ambiguous and fail before mutation. A user who deliberately wants to continue
-from a merge working copy can select the single revision explicitly with
-`--at @`. Any other `--at <revset>` must likewise resolve to exactly one commit.
-Creation, switching, metadata provenance, and rollback implement this contract.
+Creation resolves one exact base commit before creating destination workspaces.
+With no `--at`, `resolve_creation_base` first runs source `jj status`, then captures
+the operation and resolves `@` at that operation. This refresh is necessary because
+`operation_id()` and frozen revision queries deliberately do not snapshot. Dirty
+tracked changes and normal JJ auto-tracking therefore enter the implicit base.
+An empty merge working copy is itself one valid commit, not an ambiguous parent set.
+
+Explicit `--at REVSET` retains the existing frozen-operation resolution branch,
+without the new implicit refresh. It must resolve to exactly one commit; no policy
+substitutes source `@` for that selection. JJ creates an empty child of the exact
+base, which is also recorded in lifecycle metadata. Creation, switching, provenance,
+and rollback share this contract; reseed's separate keep/reset semantics are unchanged.
+
+### Source, destination, and creation mode
+
+The CLI resolves an explicit destination against the caller's directory before
+entering optional `--from SOURCE`. Existing lifecycle/JJ helpers then share that
+source command context. Without `--from`, the current checkout is the source.
+
+`WorkspaceInventory` validates the source's JJ repository pointer and identifies
+the owning `.jj/repo` directory for placement. This ownership is distinct from Git
+colocation eligibility or a registration named `default`; it remains useful when
+the primary registration has been forgotten. Native workspace registrations remain
+authoritative for existing names and paths.
+
+For one `--path`, shared resolution uses a matching registration first. Otherwise
+it strips a clear primary-basename-plus-`-` prefix (`opencode-fix` becomes `fix`),
+or keeps the destination basename (`myfix` stays `myfix`). An explicit `NAME` can
+override inference for a new path, but cannot contradict an existing registration.
+Destination paths flow through creation preflight, CoW probing, and `AddOptions`,
+including ordinary-checkout fallback. Name-only placement remains `repo.NAME`
+beside the owning checkout, not an automatic `~/src` or hyphen-based destination.
+
+`CreationMode::resolve` is the single mode policy: CoW/JJ-only by default; positive
+CLI choices override config; otherwise CLI opt-outs overlay their matching config
+fields. Config preserves unset/true/false intent, allowing `colocate=true` alone
+while rejecting explicitly configured CoW plus colocation. Explicit CLI `--cow`
+plus `--colocate` also conflicts. No primary-topology or JJ-setting inheritance
+selects colocation. See the [operator precedence table](../README.md#creation-mode-precedence).
 
 ## Repository-scoped metadata
 
@@ -372,16 +405,25 @@ health field to `jw status`.
 
 ## Copy-on-write creation
 
-When copy-on-write is requested, creation probes the destination filesystem before
-any mutation and falls back to ordinary JJ workspace creation with a warning if it cannot clone.
+Copy-on-write is the default creation mode. Creation probes the destination
+filesystem before destination mutation and falls back to ordinary JJ workspace
+creation with a warning if it cannot clone.
 Otherwise it adds the workspace with empty sparse patterns, clones the files JJ
-tracks in the current workspace's working-copy commit, and copies the current
-workspace's working-copy state. Ignored and untracked files are never cloned.
+tracks in the source workspace's working-copy commit, and copies that source's
+working-copy state. Ignored and untracked files are never cloned; the implicit
+base refresh may first auto-track files according to ordinary JJ rules.
 A JJ snapshot validates the copied state; if JJ rejects it, the previous state is
 restored, the attempted clone workspace is rolled back, and JJ recreates it
 through its ordinary workspace-add path, preserving the source sparse patterns.
 On successful state adoption, `jj restore` then makes `@` match the creation base exactly before provenance is
 captured, so the recorded creation operation describes a complete checkout.
+
+Watchman or rejected copied state also trigger the existing ordinary-checkout
+fallback. Each materialization fallback carries a reason in `AddResult`; lifecycle
+outcomes collect it alongside filesystem-preflight warnings. The CLI renders these
+on stderr, preserving shell path stdout, and the manager displays a warning report.
+Ordinary-checkout fallback is not reported as CoW success. No strict-mode flag or
+fallback-policy change is introduced here.
 
 ## Failure order
 
@@ -430,15 +472,14 @@ CLI removal, manager preview and execution, pruning, and rollback revalidate own
 before native `workspace remove` or `workspace forget`. An externally owned linked
 Git checkout or remaining external Git registration is
 ineligible for destructive cleanup; uncertainty fails closed. A native app owns its
-checkout even after JJ adoption. Creation resolves CLI overrides, explicit jw config,
-then automatic inheritance from verified primary topology and its effective JJ
-`git.colocate` setting. Automatic CoW creation and automatic inheritance on
-unsupported JJ remain JJ-only.
+checkout even after JJ adoption. Creation uses the shared
+[mode resolver](#source-destination-and-creation-mode), defaulting to CoW/JJ-only.
+Explicit `--colocate` or configured colocation requests an ordinary Git worktree
+checkout; `--colocate` alone overrides default/configured CoW.
 New colocated workspaces have jw ownership recorded through the same explicit
 creation path; existing workspaces are never converted by a default change.
-This is a breaking creation-default change in v0.8.0. Set
-`workspace.colocate = false` or pass `--no-colocate` to preserve the previous
-JJ-only creation behavior; automatic CoW remains JJ-only.
+This fork's current defaults supersede v0.8.0's automatic colocation inheritance.
+Explicit colocation still requires advertised JJ support and a Git backend.
 
 Existing-directory removal probes `workspace remove --help` and uses native
 snapshotting/removal when advertised (JJ 0.46+); minimum support remains JJ 0.39.

@@ -5,6 +5,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
+    title: Aligned creation guidance with shared add/s destinations, source selection, snapshotted-current base, and mode precedence
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Added reseeding, primary-source defaults, explicit freshening, and safe preparation recovery
   - resource: /docs/reseed.md
@@ -55,9 +57,24 @@ Choose only the branch the request needs. Load only the reference linked by that
 
 - `jw add <name>...` creates workspaces without switching.
 - `jw switch <name>...` creates missing workspaces and selects the last name.
-- Without `--at`, creation requires `parents(@)` to resolve to exactly one revision. For a merge working copy, choose the intended base explicitly with `--at`.
+- Both accept `--path DESTINATION` for one workspace without repeating `NAME`, and
+  optional `--from SOURCE` (default: current checkout). From repository `opencode`,
+  `--path ~/src/opencode-fix` infers `fix`; `--path ~/src/myfix` infers `myfix`.
+  Existing registrations take precedence. Name-only creation remains `repo.NAME`
+  beside the verified owning checkout, not an automatic `~/src` destination.
+- Without `--at`, creation snapshots the source and uses its current `@` as the
+  base, including dirty tracked work and a merge `@`. Explicit `--at REVSET` keeps
+  exact-one frozen revision selection rather than requesting the implicit refresh.
+- Creation defaults to CoW/JJ-only. `--colocate` alone selects an ordinary colocated
+  checkout, overriding default/configured CoW; `--cow` overrides configured colocation.
+  Explicit `--cow --colocate` conflicts. `--no-cow` alone keeps the JJ-only default.
+  See [mode precedence](../../README.md#creation-mode-precedence) for config opt-outs.
+  Existing ordinary-checkout fallbacks warn; do not claim CoW success after a warning.
 - `--bookmark` applies to one workspace. For batch creation, use the configured `bookmark_template` or omit bookmarks.
 - Prefer `jw switch --execute <command> <name>` when a tool or agent should run inside the target. The command runs there without changing the parent shell's directory.
+
+These are this checkout's implemented interfaces; source changes do not update an
+installed executable. Inspect the actual binary before relying on them.
 
 Use `jw` for requested JJ workspace lifecycle actions and ordinary `jj` commands
 for revision history, bookmarks, and remotes. The native app owns its created Git
