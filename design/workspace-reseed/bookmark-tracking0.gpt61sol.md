@@ -9,7 +9,7 @@ generated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1feb5c1ffe6ndPdipJnsLfEF"
-    title: User-directed native bookmark research, live-source inspection, disposable fetch and tracking experiments, and bounded donor-line selection proposal
+    title: Native bookmark research and fixtures, then correction of exact-match selection, explicit remote fast-forward checks, and recovery-state boundaries
   - resource: https://github.com/jj-vcs/jj/tree/803ef00a0a6ee4ddc275d3138d5f9e7326399906
     title: Read-only archived JJ source for tracking metadata, fetch merging, structured templates, and bookmark advancement
   - resource: https://github.com/jj-vcs/jj/tree/33d3a595429b7e3b54a8ea769560247913bc8a1b
@@ -31,10 +31,11 @@ of the updated tip, run `[freshen].commands` in order, and hand the prepared
 donor to target advancement/CoW refill. No new following record, op-log search,
 or mandatory `source_at` configuration is needed.
 
-An already-fetched bookmark is not a problem: find the **unique tracked local
-bookmark at or descending from the donor's clean base**, not only the labels
-currently printed at `@-`. This is a bounded selection policy, not an assertion
-that JJ secretly stores a checked-out bookmark name.
+An already-fetched bookmark can still be identified when there is **one tracked
+pair across all local targets at or descending from the donor's clean base**,
+not only the labels currently printed at `@-`. An exact match cannot outrank a
+qualifying descendant: both remain candidates. This is a bounded selection
+policy, not an assertion that JJ secretly stores a checked-out bookmark name.
 
 ## What JJ actually records and does
 
@@ -91,7 +92,9 @@ them for `jw up`; they are neither required nor a branch-selection oracle.
 
 `W` is the snapshotted donor `@`; `B` is its clean base; `L` is a tracked local
 bookmark target; `R` is the corresponding tracked remote target. `X <= Y` means
-equal or ancestor. Keep selected names and old IDs **only in this invocation**.
+equal or ancestor. Selection creates **no standing following state**. The
+existing in-flight preparation journal may persist chosen names and IDs for
+interrupted-operation recovery; that is not a permanent source association.
 
 1. **Snapshot, inspect, and reject local donor work.** An ordinary native query
    snapshots working files first. Read `W`, parents, `empty`, description and
@@ -106,19 +109,28 @@ equal or ancestor. Keep selected names and old IDs **only in this invocation**.
    a merge scratch checkout, or conflicts stop.
 2. **Select the line from native tracking.** Enumerate tracked remote refs
    excluding synthetic `@git`, join each to its same-named local bookmark.
-   Prefer pairs whose local target is exactly `B`; if none, take pairs with
-   `B <= L`. Require one distinct `(local name, remote)` pair. Do not silently
-   drop a conflicting exact-match bookmark and then switch to a different line.
+   Collect **all** distinct `(local name, remote)` pairs with `B <= L`, including
+   equality; require exactly one. Never prioritize an exact match over another
+   qualifying descendant, or filter away a pair merely because its publication
+   checks fail: stop rather than selecting another line. For conflicted local
+   targets, inspect added and removed alternatives conservatively: any related
+   alternative keeps the pair in consideration and blocks automatic selection.
+   Likewise, a relevant conflicted remote is a stop, not a removable candidate.
+   If conflict relevance cannot be established safely, stop for clarification.
    This handles `release` as naturally as `dev`, without consulting trunk.
 3. **Check publication, then fetch the selected pair.** Resolved present targets
    must satisfy `B <= R` and `L <= R`: no unpublished base or local bookmark
-   work. If local is ahead of the last-fetched remote, a fetch-only refresh may
-   establish it was published elsewhere; otherwise stop before moving the donor
-   or running commands. Pin the selected names, fetch that remote/branch using
-   native JJ, then reread the same pair and donor facts. Check the pre-fetch
-   base and local target remain ancestors of the fetched `R`, and local/remote
-   references are resolved, present and synchronized. Reject divergence,
-   deletion or a non-fast-forward upstream move rather than choosing a side.
+   work. If local is ahead of the last-fetched remote, a fetch-only refresh of
+   an **already uniquely selected pair** may establish it was published
+   elsewhere; otherwise stop before moving the donor or running commands.
+   Fetch cannot recover ambiguous source intent and must not be used to pick
+   between candidate lines. Pin the selected names and old `B`, `L`, and `R`,
+   fetch that remote/branch using native JJ, then reread the same pair and donor
+   facts. Explicitly require **old `R` <= new `R`**, as well as old `B` <= new
+   `R` and old `L` <= new `R`; the latter two alone would permit an upstream
+   rewind when local `L` lagged remote `R`. Require local/remote references to
+   be resolved, present and synchronized. Reject divergence, deletion or a
+   non-fast-forward upstream move rather than choosing a side or another pair.
    Recheck donor work before advancement; a fetch changes the repo view and can
    abandon/rewrite affected commits under native policy.
 4. **Advance and prepare.** `jj new <exact fetched commit ID>` in the donor;
@@ -128,7 +140,8 @@ equal or ancestor. Keep selected names and old IDs **only in this invocation**.
    work or alter the target-placement contract.
 
 Thus, a donor at `empty @ -> A`, where `dev` and `dev@origin` have already moved
-to `C` on `A..C`, selects that pair through `B <= L`. An empty child of local
+to `C` on `A..C`, selects that pair through `B <= L` **only if no other tracked
+pair qualifies**. An empty child of local
 work `P` fails `P <= R`, **even when `@` itself is empty**. Comparing trees alone
 would miss local commit history, including committed edits later reverted.
 
@@ -136,6 +149,13 @@ The unique-descendant rule is sound for **safe published advancement under this
 declared default policy**. It cannot reconstruct intent that no longer exists
 in the graph. If several tracked lines descend from the same old base, it must
 ask rather than invent a "closest", newest, or trunk tie-breaker.
+
+**Correction to the first checkpoint (`214a2ac3`):** exact-match preference was
+unsafe. Suppose donor base `B` originally had both tracked `main` and `dev`,
+then another fetch moves `dev` to descendant `C` while `main` stays at `B`.
+Exact-first selects `main` and silently changes lines. The corrected rule sees
+both `main@origin` and `dev@origin` and reports ambiguity. Neither an exact
+label nor a fetch is permission to infer the missing source intent.
 
 ### Native machine-readable interfaces, not display scraping
 
@@ -196,6 +216,13 @@ The initial fixture run reached the divergent case but queried a conflicted
 bookmark as a single symbol; using `bookmarks(exact:"release")` corrected that
 auxiliary check, and the full run passed. Direct-at-immutable checkout support
 above is source/graph reasoning, not a separate executed fixture case.
+
+A separate targeted native fixture, `exact-match-counterexample.py`, verified
+the correction without rerunning the broader suite: donor stayed on empty
+`@ -> 787e2c5c`; tracked `main@origin` remained at that base while fetching only
+`dev` moved local/remote `dev` to `53809d6d`. Both targets matched `B::`.
+`exact-match-results.json` records the native references: exact-first would
+choose `main`, whereas the corrected algorithm must report both pairs.
 
 **Unavoidable ambiguities:** multiple tracked names at the anchor; multiple
 tracked remotes for the chosen name (even if they currently point to equal
