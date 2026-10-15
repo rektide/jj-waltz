@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Implemented native freshening source selection and frozen post-fetch validation, verified against disposable native Git/JJ sources
+    title: Implemented native source selection and frozen post-fetch validation, then extended explicit missing-ref intent with unknown IDs, exact fetch selection, and deferred publication checks
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified shared add/s placement, snapshotted-current creation bases, explicit mode resolution, and visible fallback reporting
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -303,21 +303,20 @@ captured operation. Selection and validation use only frozen read-only JJ querie
    or empty child above unpublished history is not.
 2. An explicit source revset wins. Named remote symbols retain their identity even
    when other refs share the same tip. A tracked local symbol can identify its
-   remote; other expressions must resolve to a unique recorded remote tip. The
-   expression currently must resolve before fetch. Legacy freshening also permits
-   an explicit not-yet-imported branch; retaining that behavior is an open resolver
-   extension before up integration, not a change to the existing CLI path.
-   A configured remote constrains selection;
-   it never silently redirects an explicitly named remote.
+   remote; other expressions must resolve to a unique recorded remote tip.
+   An explicit not-yet-imported branch uses the narrower form described below.
+   A configured remote constrains selection; it never silently redirects an
+   explicitly named remote.
 3. Otherwise collect all applicable tracked pairs. Both the remote and some local
    target alternative must contain `B`. A deleted local relationship or relevant
    remote conflict is retained as a blocker, not silently discarded. Exact and
    descendant local targets compete in the same tier; any ambiguity stops.
    Only when this tier is empty may a unique exact remote target at `B` win,
    including **untracked** refs. Synthetic `@git` refs never identify an upstream.
-4. Before fetch, require the base, explicit goal, and selected tracked local target
-   to be published on the chosen remote. An unrelated tracked branch whose local
-   target descends from `B`, but whose remote does not contain `B`, is inapplicable.
+4. For a recorded remote, require the base, explicit goal, and selected tracked
+   local target to be published there before fetch. An unrelated tracked branch
+   whose local target descends from `B`, but whose remote does not contain `B`,
+   is inapplicable.
    An applicable tracked pair with unpublished local work blocks rather than
    falling through. An untracked remote does not give its unrelated same-named
    local bookmark any authority, and that local bookmark remains untouched.
@@ -330,6 +329,40 @@ tracking changes, local unpublished work, or sideways/rewound goals. A tracked
 local may lag the remote if it remains published; no repair is performed.
 Explicit revsets are reevaluated as goals on that pinned line; a fixed ID can
 deliberately stay fixed rather than implicitly becoming a bookmark-following rule.
+
+For an **explicit not-yet-imported branch**, the supported form is unquoted
+`branch@remote`, for example `introduced-later@origin` or
+`feature/new-line@origin`. Branch components contain ASCII letters, digits, `_`,
+internal `-` and `.`, separated by `/`; a component cannot begin/end with `.` or
+`-`, contain `..`, or end in `.lock`. The remote uses one such component and must
+already be configured in native JJ Git configuration. Synthetic `git` is excluded.
+This deliberately narrow interface does not reinterpret quoted names, patterns,
+operators, arbitrary revsets, or nonexistent local bookmark names as new branches.
+Use explicit `branch@remote` rather than asking a missing local name to imply a
+remote; pre-import unusually named branches with native JJ before selecting them.
+
+Selection first asks native JJ whether the expression resolves. Syntax/query
+errors and multiple results are not treated as absence. Existing unresolved or
+deleted remote records remain blockers, including native tracked placeholders;
+they are not reclassified as new branches. Existing known-ref conflict and
+fast-forward checks remain unchanged.
+
+Missing-ref intent serializes old remote ID, old goal ID, and tracking state as
+**unknown (`null`)**, alongside the exact requested name/remote and full source
+snapshot. Preview does not fetch or claim the goal is prepared. The adapter's
+`fetch_bookmark` fetches that one exact branch from that one remote, not all
+remotes or guessed/default branches. Native Git remote configuration is live,
+not part of the frozen JJ operation; the coordinator must retain its existing
+policy/identity revalidation boundary before mutation.
+
+Publication may only become knowable after this fetch. Until then, potentially
+local source history is preserved, not discarded as scratch. Afterward the same
+source/base and fetched-goal publication checks must pass before any source
+advancement or configured command. Still-absent refs, divergent source history,
+and unpublished source work stop there. Native auto-tracking may import the new
+line; any resulting tracked local conflict/unpublished work also blocks. With no
+old remote ID there is **no prior fast-forward proof**; validation establishes
+publication on the newly imported goal without inventing an old remote baseline.
 
 The source must remain the same revision. One safe normalization is allowed:
 native JJ can create an ordinary empty child above a directly published source
@@ -344,7 +377,11 @@ default-branch heuristic, or automatic bookmark movement.
 using disposable local Git remotes, including the exact-main/advanced-dev
 ambiguity, untracked remote with unrelated local dev, unpublished empty-parent
 history, conflicts, old-remote rewind, and native immutable-checkout normalization.
-All 14 cases passed on pinned JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0. No live source was mutated.
+The original 14 cases passed on pinned JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0.
+The missing-ref extension adds six focused cases: all 20 source cases pass on the
+installed JJ 0.45.1 development build, with the six missing-ref cases separately
+verified on official JJ 0.46.0. This extension did not rerun the full release
+matrix or unrelated suites. No live source was mutated.
 These are graph/reference checks; this foundation changes no CoW copying path and
 does not claim a new end-to-end up or reflink verification.
 

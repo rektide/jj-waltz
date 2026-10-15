@@ -21,12 +21,15 @@ pub struct SourceSelection {
     pub base: String,
     pub name: String,
     pub remote: String,
-    pub old_remote: String,
+    /// None for an explicitly requested branch not yet imported into JJ.
+    pub old_remote: Option<String>,
     pub old_local: Option<String>,
-    pub tracked: bool,
+    /// Unknown until fetch for a not-yet-imported branch, not assumed untracked.
+    pub tracked: Option<bool>,
     /// An explicit revset remains an explicit goal, including a fixed commit ID.
     pub source_at: Option<String>,
-    pub old_goal: String,
+    /// A preview must not invent a commit ID for a not-yet-imported goal.
+    pub old_goal: Option<String>,
 }
 
 impl SourceSelection {
@@ -58,10 +61,23 @@ impl SourceSelection {
             .collect::<Vec<_>>();
 
         let (kind, selected, old_goal) = if let Some(expression) = source_at {
-            let goal = client
-                .resolve_one_at(operation, expression)
-                .context("cannot resolve --source-at before fetch")?
-                .commit_id;
+            // Only absence is deferred. Syntax errors, ambiguous/conflicted
+            // revsets, and other query failures must not become fake branch names.
+            let resolved = client
+                .resolve_all_at(operation, format!("present({expression})"))
+                .context("cannot resolve --source-at before fetch")?;
+            let goal = match resolved.as_slice() {
+                [goal] => goal.commit_id.clone(),
+                [] => {
+                    return Self::missing(
+                        client, operation, source, base, &refs, expression, remote,
+                    );
+                }
+                _ => bail!(
+                    "explicit --source-at resolved to {} revisions; expected exactly one",
+                    resolved.len()
+                ),
+            };
             // Preserve the name in an explicit remote/local symbol even if
             // several refs share its tip. Arbitrary revsets can identify a
             // unique remote tip, but equal tips alone do not disambiguate names.
@@ -192,11 +208,59 @@ impl SourceSelection {
             base,
             name: selected.name.clone(),
             remote: selected.remote.clone().expect("remote ref"),
-            old_remote,
+            old_remote: Some(old_remote),
             old_local,
-            tracked: selected.tracked,
+            tracked: Some(selected.tracked),
             source_at: source_at.map(str::to_owned),
-            old_goal,
+            old_goal: Some(old_goal),
+        })
+    }
+
+    fn missing(
+        client: &JjClient,
+        operation: &str,
+        source: CommitFacts,
+        base: String,
+        refs: &[BookmarkRef],
+        expression: &str,
+        remote_constraint: Option<&str>,
+    ) -> Result<Self> {
+        let (name, remote) = missing_remote_symbol(expression).with_context(|| format!(
+            "source goal {expression:?} is absent; missing refs require a simple unquoted --source-at <branch>@<configured-remote>, not a local name or complex revset"
+        ))?;
+        if remote_constraint.is_some_and(|constraint| constraint != remote) {
+            bail!("explicit --source-at selects a different remote than freshen.remote");
+        }
+        // A deleted/conflicted recorded ref is NOT a new line. Keep all existing
+        // reference guards rather than treating deletion as permission to reset.
+        if refs
+            .iter()
+            .any(|r| r.name == name && r.remote.as_deref() == Some(remote))
+        {
+            bail!(
+                "requested remote bookmark is already recorded but unresolved or deleted; resolve it explicitly before freshening"
+            );
+        }
+        if !client.has_git_remote_at(operation, remote)? {
+            bail!(
+                "missing source goal names unconfigured remote {remote:?}; configure that native JJ Git remote or use --source-at <branch>@<configured-remote>"
+            );
+        }
+        // Publication on an absent upstream may only become knowable after
+        // fetching. Preserve the full snapshotted source; no advance/commands are
+        // authorized until resolve_fetched proves B <= the exact fetched goal.
+        Ok(Self {
+            kind: SelectionKind::Explicit,
+            operation: operation.to_owned(),
+            source,
+            base,
+            name: name.to_owned(),
+            remote: remote.to_owned(),
+            old_remote: None,
+            old_local: None,
+            tracked: None,
+            source_at: Some(expression.to_owned()),
+            old_goal: None,
         })
     }
 
@@ -209,19 +273,28 @@ impl SourceSelection {
         let selected = refs
             .iter()
             .find(|r| r.name == self.name && r.remote.as_deref() == Some(&self.remote))
-            .context("selected remote bookmark disappeared during fetch")?;
-        if selected.tracked != self.tracked {
+            .with_context(|| if self.old_remote.is_some() {
+                "selected remote bookmark disappeared during fetch"
+            } else {
+                "requested remote bookmark is still absent after fetch; source advancement refused"
+            })?;
+        if self
+            .tracked
+            .is_some_and(|tracked| selected.tracked != tracked)
+        {
             bail!("selected remote tracking relationship changed during fetch");
         }
         let fetched = normal(selected, "fetched remote bookmark")?;
         // Checking B/L alone would allow a rewind when old R was ahead of both.
-        require_ancestor(
-            client,
-            operation,
-            &self.old_remote,
-            fetched,
-            "selected remote did not fast-forward (rewind or sideways move)",
-        )?;
+        if let Some(old_remote) = &self.old_remote {
+            require_ancestor(
+                client,
+                operation,
+                old_remote,
+                fetched,
+                "selected remote did not fast-forward (rewind or sideways move)",
+            )?;
+        }
         require_ancestor(
             client,
             operation,
@@ -229,19 +302,21 @@ impl SourceSelection {
             fetched,
             "source base is not published on the fetched remote",
         )?;
-        if let Some(old_local) = &self.old_local {
+        if selected.tracked {
             let local = normal(
                 local_ref(&refs, &self.name)
                     .context("tracked local bookmark disappeared during fetch")?,
                 "fetched tracked local bookmark",
             )?;
-            require_ancestor(
-                client,
-                operation,
-                old_local,
-                local,
-                "tracked local bookmark moved backwards or sideways during fetch",
-            )?;
+            if let Some(old_local) = &self.old_local {
+                require_ancestor(
+                    client,
+                    operation,
+                    old_local,
+                    local,
+                    "tracked local bookmark moved backwards or sideways during fetch",
+                )?;
+            }
             require_ancestor(
                 client,
                 operation,
@@ -250,17 +325,19 @@ impl SourceSelection {
                 "tracked local bookmark contains unpublished work after fetch",
             )?;
         }
-        let goal = match &self.source_at {
-            Some(expression) => client.resolve_one_at(operation, expression)?.commit_id,
-            None => fetched.to_owned(),
+        let goal = match (&self.source_at, &self.old_goal) {
+            (Some(expression), Some(_)) => client.resolve_one_at(operation, expression)?.commit_id,
+            _ => fetched.to_owned(),
         };
-        require_ancestor(
-            client,
-            operation,
-            &self.old_goal,
-            &goal,
-            "explicit source goal moved backwards or sideways during fetch",
-        )?;
+        if let Some(old_goal) = &self.old_goal {
+            require_ancestor(
+                client,
+                operation,
+                old_goal,
+                &goal,
+                "explicit source goal moved backwards or sideways during fetch",
+            )?;
+        }
         require_ancestor(
             client,
             operation,
@@ -296,6 +373,28 @@ impl SourceSelection {
         }
         Ok(current)
     }
+}
+
+/// A deliberately narrow missing-ref interface, NOT a revset parser. Known refs
+/// retain native revset/quoting support. Reject syntax that could be an operator,
+/// pattern, quoted expression, or shorthand remote/workspace/default selection.
+fn missing_remote_symbol(expression: &str) -> Option<(&str, &str)> {
+    let (name, remote) = expression.split_once('@')?;
+    let simple = |value: &str| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'))
+            && value.split('/').all(|part| {
+                !part.is_empty()
+                    && !part.starts_with(['.', '-'])
+                    && !part.ends_with(['.', '-'])
+                    && !part.ends_with(".lock")
+                    && !part.contains("..")
+            })
+    };
+    (simple(name) && simple(remote) && !remote.contains('/') && remote != "git")
+        .then_some((name, remote))
 }
 
 fn require_sound(facts: &CommitFacts, role: &str) -> Result<()> {

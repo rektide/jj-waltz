@@ -627,6 +627,32 @@ impl JjClient {
             .collect()
     }
 
+    /// Check a simple, unquoted remote name against native Git configuration.
+    /// Git configuration is live, not revisioned with the frozen JJ operation.
+    pub fn has_git_remote_at(&self, operation: &str, remote: &str) -> Result<bool> {
+        let output = self.run_at(operation, ["git", "remote", "list"])?;
+        // JJ renders simple remote symbols followed by one space and the URL.
+        // Callers supporting quoted/complex names must not use this probe.
+        let prefix = format!("{remote} ");
+        Ok(output
+            .stdout()?
+            .lines()
+            .any(|line| line.starts_with(&prefix)))
+    }
+
+    /// Fetch only a pinned bookmark from a pinned remote, never JJ's defaults.
+    pub fn fetch_bookmark(&self, remote: &str, name: &str) -> Result<JjOutput> {
+        self.run([
+            "--config=fsmonitor.backend=none",
+            "git",
+            "fetch",
+            "--remote",
+            remote,
+            "--branch",
+            &format!("exact:{name}"),
+        ])
+    }
+
     /// Test ancestry using exact IDs, immune to same-spelled bookmarks/tags.
     pub fn is_ancestor_at(
         &self,

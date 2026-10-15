@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Added the native source foundation implementation pointer and distinguished current commission from superseded freshening/default alternatives
+    title: Linked native source foundation and its explicit missing-ref extension, and distinguished current commission from superseded freshening/default alternatives
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
     title: Commissioned up and shared copying implementation after repeat-reseed design and independent JJ preservation/tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
@@ -31,8 +31,9 @@ sources:
   Replaces the proposal to keep adding freshening flags to reseed/creation.
 - [Native source foundation](../../docs/architecture.md#native-freshening-source-foundation) —
   implemented operation-bound upstream identity and post-fetch graph proofs, with
-  disposable native JJ verification. Not yet connected to the existing CLI;
-  the pointer records the explicit not-yet-imported-ref integration edge.
+  disposable native JJ verification. Includes frozen explicit not-yet-imported
+  `branch@remote` intent with unknown IDs and deferred publication checks.
+  Not yet connected to the existing CLI.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;
