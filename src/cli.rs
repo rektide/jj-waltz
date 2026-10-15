@@ -361,6 +361,9 @@ struct ReseedCommand {
     /// Select a named group from .jwreseed.local.toml (repeatable).
     #[arg(long = "group", value_name = "GROUP")]
     groups: Vec<String>,
+    /// Override group selection misses: error (default) or warn and skip; names stay strict.
+    #[arg(long, value_enum, conflicts_with = "resume")]
+    on_unmatched: Option<crate::reseed::UnmatchedPolicy>,
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
@@ -533,18 +536,32 @@ fn run_context(cmd: ContextCommand) -> Result<()> {
 fn run_reseed(cmd: ReseedCommand) -> Result<()> {
     use crate::reseed::{ReseedRequest, ReseedStatus};
 
-    let report = crate::reseed::run(ReseedRequest {
-        names: cmd.names,
-        groups: cmd.groups,
-        source: cmd.source,
-        source_at: cmd.source_at,
-        at: cmd.at,
-        copy_ignored: cmd.copy_ignored,
-        no_copy_ignored: cmd.no_copy_ignored,
-        replace_content: cmd.replace_content,
-        dry_run: cmd.dry_run,
-        resume: cmd.resume,
-    })?;
+    let report = crate::reseed::run_with_diagnostics(
+        ReseedRequest {
+            names: cmd.names,
+            groups: cmd.groups,
+            on_unmatched: cmd.on_unmatched,
+            source: cmd.source,
+            source_at: cmd.source_at,
+            at: cmd.at,
+            copy_ignored: cmd.copy_ignored,
+            no_copy_ignored: cmd.no_copy_ignored,
+            replace_content: cmd.replace_content,
+            dry_run: cmd.dry_run,
+            resume: cmd.resume,
+        },
+        |diagnostic| eprintln!("{diagnostic}"),
+    )?;
+    if report.dry_run {
+        for selected in &report.selections {
+            println!(
+                "SELECT {:?} {:?} via {}",
+                selected.name,
+                selected.root,
+                selected.origins.join(", ")
+            );
+        }
+    }
     println!(
         "{}source: {} ({})",
         if report.dry_run { "Dry-run " } else { "" },
@@ -1266,13 +1283,42 @@ mod reseed_cli_tests {
         for option in ["--replace-content", "--no-copy-ignored"] {
             assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option]).is_err());
         }
-        for option in ["--at", "--from", "--source-at", "--group", "--copy-ignored"] {
+        for option in [
+            "--at",
+            "--from",
+            "--source-at",
+            "--group",
+            "--copy-ignored",
+            "--on-unmatched",
+        ] {
             assert!(
                 Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option, "value"])
                     .is_err()
             );
         }
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", "--dry-run"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "jw",
+                "reseed",
+                "--group",
+                "workers",
+                "--on-unmatched",
+                "warn"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "jw",
+                "reseed",
+                "--group",
+                "workers",
+                "--on-unmatched",
+                "ignore"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

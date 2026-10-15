@@ -124,6 +124,11 @@ impl Repo {
 
     fn workspace(&self, name: &str) -> PathBuf {
         let path = self.temp.path().join(format!("workspace-{name}"));
+        self.workspace_at(name, &path);
+        path
+    }
+
+    fn workspace_at(&self, name: &str, path: &Path) {
         self.jj_at(
             &self.root,
             &[
@@ -136,7 +141,6 @@ impl Repo {
                 path.to_str().unwrap(),
             ],
         );
-        path
     }
 
     fn cow(&self, source: &Path, target: &Path) -> bool {
@@ -308,6 +312,320 @@ exec "$JW_REAL_JJ" "$@"
 fn identity(path: &Path) -> (u64, u64) {
     let m = fs::symlink_metadata(path).unwrap();
     (m.dev(), m.ino())
+}
+
+fn frozen_id(repo: &Repo, root: &Path) -> String {
+    repo.jj_at(
+        root,
+        &[
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            "commit_id",
+        ],
+    )
+}
+
+fn operation(repo: &Repo, root: &Path) -> String {
+    repo.jj_at(
+        root,
+        &[
+            "--ignore-working-copy",
+            "operation",
+            "log",
+            "--limit=1",
+            "--no-graph",
+            "-T",
+            "id",
+        ],
+    )
+}
+
+fn group_config(repo: &Repo, body: &str) {
+    fs::write(
+        repo.root.join(".jwreseed.local.toml"),
+        format!("source_at={:?}\n{body}\n", repo.baseline),
+    )
+    .unwrap();
+}
+
+fn skip_warning(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines = stderr
+        .lines()
+        .filter(|line| line.starts_with("warning: skipped "))
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 1, "expected one aggregate warning: {stderr}");
+    lines[0].to_owned()
+}
+
+#[test]
+fn wildcard_group_skips_mixed_checkouts_in_one_line_and_uses_registered_names() {
+    let Some(repo) = Repo::new() else { return };
+    let a = repo.temp.path().join("opencode-a");
+    let b = repo.temp.path().join("opencode-b");
+    repo.workspace_at("worker-z", &a);
+    repo.workspace_at("worker-a", &b);
+    if !repo.cow(&repo.root, &a) {
+        return;
+    }
+    let plain = repo.temp.path().join("opencode-notes");
+    let git = repo.temp.path().join("opencode-git");
+    let independent = repo.temp.path().join("opencode-independent");
+    fs::create_dir(&plain).unwrap();
+    success(
+        repo.command("git", repo.temp.path())
+            .args(["init", git.to_str().unwrap()])
+            .output()
+            .unwrap(),
+    );
+    repo.jj_at(
+        repo.temp.path(),
+        &[
+            "git",
+            "init",
+            "--no-colocate",
+            independent.to_str().unwrap(),
+        ],
+    );
+    for root in [&plain, &git, &independent] {
+        fs::write(root.join("sentinel"), "do not touch\n").unwrap();
+    }
+    let independent_op = operation(&repo, &independent);
+    let git_head = fs::read(git.join(".git/HEAD")).unwrap();
+    let identities = [&a, &b, &plain, &git, &independent].map(|p| identity(p));
+    let subdir = a.join("cache/subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(a.join("modified"), "feature\n").unwrap();
+    let before = repo.id(&a, "@");
+    group_config(
+        &repo,
+        "[groups.opencode]\npath_globs=['~/opencode-*']\non_unmatched='warn'",
+    );
+    for dry_run in [true, false] {
+        let mut cmd = repo.jw(&subdir);
+        cmd.args(["reseed", "--group", "opencode"])
+            .env("HOME", repo.temp.path());
+        if dry_run {
+            cmd.arg("--dry-run");
+        }
+        let output = cmd.output().unwrap();
+        let warning = skip_warning(&output);
+        for name in ["opencode-notes", "opencode-git", "opencode-independent"] {
+            assert!(warning.contains(name), "{warning}");
+        }
+        assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
+        let stdout = success(output);
+        let label = if dry_run { "PLAN" } else { "OK" };
+        assert!(stdout.contains(&format!("{label} worker-z:")), "{stdout}");
+        assert!(stdout.contains(&format!("{label} worker-a:")), "{stdout}");
+        if dry_run {
+            assert!(stdout.contains("SELECT \"worker-z\""));
+            assert!(stdout.contains("path_globs"));
+        }
+        assert_eq!(repo.id(&a, "@"), before);
+        assert_eq!(fs::read_to_string(a.join("modified")).unwrap(), "feature\n");
+        assert_eq!(operation(&repo, &independent), independent_op);
+        assert_eq!(fs::read(git.join(".git/HEAD")).unwrap(), git_head);
+        for root in [&plain, &git, &independent] {
+            assert_eq!(
+                fs::read_to_string(root.join("sentinel")).unwrap(),
+                "do not touch\n"
+            );
+        }
+        assert_eq!(
+            [&a, &b, &plain, &git, &independent].map(|p| identity(p)),
+            identities
+        );
+    }
+    assert_shared_extents(&repo.root.join("shared"), &a.join("shared"));
+    assert_shared_extents(&repo.root.join("shared"), &b.join("shared"));
+}
+
+#[test]
+fn wildcard_group_defaults_and_override_fail_before_any_snapshot() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    fs::create_dir(repo.temp.path().join("workspace-unrelated")).unwrap();
+    for policy in ["", "on_unmatched='warn'"] {
+        group_config(
+            &repo,
+            &format!("[groups.w]\npath_globs=['~/workspace-*']\n{policy}"),
+        );
+        let before = frozen_id(&repo, &target);
+        let op = operation(&repo, &repo.root);
+        fs::write(target.join("modified"), "unsnapshotted target\n").unwrap();
+        fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
+        let mut cmd = repo.jw(&target);
+        cmd.args(["reseed", "--group", "w"])
+            .env("HOME", repo.temp.path());
+        if !policy.is_empty() {
+            cmd.args(["--on-unmatched", "error"]);
+        }
+        let output = cmd.output().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("workspace-unrelated"), "{stderr}");
+        assert!(!stderr.contains("warning: skipped"));
+        assert_eq!(operation(&repo, &repo.root), op);
+        assert_eq!(frozen_id(&repo, &target), before);
+    }
+}
+
+#[test]
+fn wildcard_group_warning_survives_later_source_failure() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    // Keep the donor's dirty snapshot from rewriting the target's ancestor.
+    repo.jj_at(&repo.root, &["new"]);
+    fs::create_dir(repo.temp.path().join("workspace-unrelated")).unwrap();
+    group_config(
+        &repo,
+        "[groups.w]\npath_globs=['~/workspace-*']\non_unmatched='warn'",
+    );
+    let before = frozen_id(&repo, &target);
+    fs::write(target.join("modified"), "unsnapshotted feature\n").unwrap();
+    fs::write(repo.root.join("modified"), "unprepared donor\n").unwrap();
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "--group", "w"])
+        .env("HOME", repo.temp.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(skip_warning(&output).contains("workspace-unrelated"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source tracked tree does not match"));
+    assert_eq!(frozen_id(&repo, &target), before);
+}
+
+#[test]
+fn wildcard_group_all_skipped_is_a_failure_and_positional_names_stay_strict() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    fs::create_dir(repo.temp.path().join("opencode-notes")).unwrap();
+    group_config(
+        &repo,
+        "[groups.w]\npath_globs=['~/opencode-*']\non_unmatched='warn'\n[groups.names]\nname_globs=['feat*']",
+    );
+    let before = operation(&repo, &repo.root);
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "--group", "w"])
+        .env("HOME", repo.temp.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(skip_warning(&output).contains("opencode-notes"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no workspaces selected"));
+    let output = repo
+        .jw(&target)
+        .args([
+            "reseed",
+            "typo",
+            "--group",
+            "names",
+            "--group",
+            "w",
+            "--on-unmatched",
+            "warn",
+        ])
+        .env("HOME", repo.temp.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(skip_warning(&output).contains("opencode-notes"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("typo\" (unknown workspace)"));
+    assert_eq!(operation(&repo, &repo.root), before);
+}
+
+#[test]
+fn wildcard_group_name_and_path_selectors_deduplicate_across_legacy_groups() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    if !repo.cow(&repo.root, &target) {
+        return;
+    }
+    group_config(
+        &repo,
+        "[groups]\nlegacy=['feature','missing']\n[groups.w]\nnames=['feature']\nname_globs=['feat*']\npath_globs=['~/workspace-feature']",
+    );
+    let output = repo
+        .jw(&target)
+        .args([
+            "reseed",
+            "feature",
+            "--group",
+            "w",
+            "--group",
+            "legacy",
+            "--on-unmatched",
+            "warn",
+            "--dry-run",
+        ])
+        .env("HOME", repo.temp.path())
+        .output()
+        .unwrap();
+    assert!(skip_warning(&output).contains("missing"));
+    let stdout = success(output);
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|l| l.starts_with("PLAN feature:"))
+            .count(),
+        1
+    );
+    for origin in ["positional", "name_globs", "path_globs", "legacy"] {
+        assert!(stdout.contains(origin), "{stdout}");
+    }
+}
+
+#[test]
+fn wildcard_group_warn_does_not_skip_registered_target_safety_failures() {
+    for scenario in ["primary", "sparse", "missing", "identity", "colocated"] {
+        let Some(repo) = Repo::new() else { return };
+        let target = repo.workspace("feature");
+        let pattern = if scenario == "primary" {
+            "default"
+        } else {
+            "feat*"
+        };
+        match scenario {
+            "sparse" => {
+                repo.jj_at(&target, &["sparse", "set", "--clear", "--add", "shared"]);
+            }
+            "missing" => {
+                fs::rename(&target, repo.temp.path().join("moved-target")).unwrap();
+            }
+            "identity" => {
+                fs::write(
+                    target.join(".jj/repo"),
+                    repo.temp.path().join("not-repository").to_str().unwrap(),
+                )
+                .unwrap();
+            }
+            "colocated" => {
+                fs::create_dir(target.join(".git")).unwrap();
+            }
+            _ => {}
+        }
+        group_config(
+            &repo,
+            &format!("[groups.w]\nname_globs=[{pattern:?}]\non_unmatched='warn'"),
+        );
+        let op = operation(&repo, &repo.root);
+        let output = repo
+            .jw(&repo.root)
+            .args(["reseed", "--group", "w", "--dry-run"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{scenario}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains("warning: skipped"), "{scenario}: {stderr}");
+        assert_eq!(operation(&repo, &repo.root), op, "{scenario}: {stderr}");
+    }
 }
 
 #[test]

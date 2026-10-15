@@ -1,3 +1,4 @@
+use super::selection::{self, Group, Registrations, component_glob};
 use super::{ReseedOutcome, ReseedReport, ReseedRequest, ReseedStatus};
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
@@ -19,7 +20,7 @@ struct LocalConfig {
     #[serde(default)]
     copy_ignored: Vec<String>,
     #[serde(default)]
-    groups: BTreeMap<String, Vec<String>>,
+    groups: BTreeMap<String, Group>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,7 +194,15 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
+pub(super) fn run(
+    request: ReseedRequest,
+    diagnostic: &mut dyn FnMut(&str),
+) -> Result<ReseedReport> {
+    if request.resume && (!request.groups.is_empty() || request.on_unmatched.is_some()) {
+        bail!(
+            "--resume requires literal names and does not accept group selection or --on-unmatched"
+        );
+    }
     if std::env::var_os("GIT_CONFIG_PARAMETERS").is_some_and(|value| !value.is_empty())
         || std::env::var_os("GIT_CONFIG_COUNT")
             .is_some_and(|value| !value.is_empty() && value != "0")
@@ -222,7 +231,23 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
     } else {
         load_config(&default)?
     };
-    let names = selections(&request, &config)?;
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let selection = selection::resolve(
+        &request,
+        &config.groups,
+        &inventory.registered,
+        &default,
+        home.as_deref(),
+    )?;
+    if let Some(warning) = selection.warning() {
+        diagnostic(&warning);
+    }
+    selection.validate()?;
+    let names = selection
+        .selections
+        .iter()
+        .map(|s| s.name.clone())
+        .collect::<Vec<_>>();
     let store = Store::lock(&client)?;
     let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
     let repository_path = repository(&client)?;
@@ -514,6 +539,8 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
         source: first.source.clone(),
         source_commit_id: first.source_commit.clone(),
         targets: Vec::new(),
+        selections: selection.selections,
+        skipped: selection.skipped,
     };
     for mut plan in plans {
         if request.dry_run {
@@ -556,18 +583,22 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
 struct Inventory {
     default: PathBuf,
     roots: BTreeMap<String, PathBuf>,
+    registered: Registrations,
 }
 impl Inventory {
     fn load(client: &JjClient) -> Result<Self> {
         let operation = client.operation_id()?;
         let mut roots = BTreeMap::new();
-        for name in client.workspace_names()? {
+        let mut registered = Registrations::new();
+        for name in client.workspace_target_facts_at(&operation)?.keys() {
             let output =
-                client.run_at_unchecked(&operation, ["workspace", "root", "--name", &name])?;
+                client.run_at_unchecked(&operation, ["workspace", "root", "--name", name])?;
+            registered.insert(name.clone(), None);
             if output.success() {
                 let path = PathBuf::from(output.trimmed_stdout()?);
+                registered.insert(name.clone(), Some(path.clone()));
                 if let Ok(path) = path.canonicalize() {
-                    roots.insert(name, path);
+                    roots.insert(name.clone(), path);
                 }
             }
         }
@@ -621,6 +652,7 @@ impl Inventory {
         Ok(Self {
             default: default.clone(),
             roots,
+            registered,
         })
     }
     fn root(&self, name: &str) -> Result<&Path> {
@@ -677,31 +709,6 @@ fn load_config(default: &Path) -> Result<LocalConfig> {
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }
-}
-
-fn selections(request: &ReseedRequest, config: &LocalConfig) -> Result<Vec<String>> {
-    let mut names = request.names.clone();
-    for group in &request.groups {
-        names.extend(
-            config
-                .groups
-                .get(group)
-                .with_context(|| format!("unknown reseed group {group}"))?
-                .iter()
-                .cloned(),
-        );
-    }
-    let mut seen = BTreeSet::new();
-    names.retain(|name| seen.insert(name.clone()));
-    if names.is_empty() {
-        bail!("reseed requires literal workspace names or --group; never selects all implicitly");
-    }
-    for name in &names {
-        if name.is_empty() || name.contains('\0') {
-            bail!("reseed requires a nonempty literal workspace name without NUL");
-        }
-    }
-    Ok(names)
 }
 
 fn validate_target(
@@ -1760,28 +1767,6 @@ fn expand_ignored(root: &Path, patterns: &[String]) -> Result<(Vec<PathBuf>, Vec
     Ok((roots, skipped))
 }
 
-fn component_glob(pattern: &str, text: &str) -> bool {
-    let p = pattern.chars().collect::<Vec<_>>();
-    let t = text.chars().collect::<Vec<_>>();
-    let mut matches = vec![false; t.len() + 1];
-    matches[0] = true;
-    for c in p {
-        let mut next = vec![false; t.len() + 1];
-        if c == '*' {
-            next[0] = matches[0];
-        }
-        for i in 1..=t.len() {
-            next[i] = if c == '*' {
-                matches[i] || next[i - 1]
-            } else {
-                matches[i - 1] && (c == '?' || c == t[i - 1])
-            };
-        }
-        matches = next;
-    }
-    matches[t.len()]
-}
-
 fn absolute_links(source: &Path, roots: &[PathBuf]) -> Result<Vec<String>> {
     fn visit(source: &Path, path: &Path, warnings: &mut Vec<String>) -> Result<()> {
         for entry in fs::read_dir(path)? {
@@ -2371,32 +2356,6 @@ fn fault_during_repair(index: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn literal_selection_deduplicates_groups_without_selectors() {
-        let config: LocalConfig = toml::from_str("[groups]\nworkers=['a','b','a']\n").unwrap();
-        let request = ReseedRequest {
-            names: vec!["b".into(), "one-off".into()],
-            groups: vec!["workers".into()],
-            ..Default::default()
-        };
-        assert_eq!(
-            selections(&request, &config).unwrap(),
-            ["b", "one-off", "a"]
-        );
-        assert!(selections(&ReseedRequest::default(), &config).is_err());
-        assert_eq!(
-            selections(
-                &ReseedRequest {
-                    names: vec!["@".into(), "^".into(), "-".into()],
-                    ..Default::default()
-                },
-                &config
-            )
-            .unwrap(),
-            ["@", "^", "-"]
-        );
-    }
 
     #[test]
     fn escaped_diff_excludes_both_rename_endpoints() {

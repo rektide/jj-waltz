@@ -8,12 +8,24 @@
 //! `snapshot.auto-track=none()`, and reset expands only from sparse-empty.
 
 use anyhow::Result;
+use clap::ValueEnum;
+use serde::Deserialize;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum UnmatchedPolicy {
+    #[default]
+    Error,
+    Warn,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ReseedRequest {
     pub names: Vec<String>,
     pub groups: Vec<String>,
+    /// Override group selection-miss policy; positional names are always strict.
+    pub on_unmatched: Option<UnmatchedPolicy>,
     /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
     pub source_at: Option<String>,
@@ -31,6 +43,22 @@ pub struct ReseedReport {
     pub source: PathBuf,
     pub source_commit_id: String,
     pub targets: Vec<ReseedOutcome>,
+    pub selections: Vec<ReseedSelection>,
+    pub skipped: Vec<ReseedSelectionMiss>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReseedSelection {
+    pub name: String,
+    pub root: PathBuf,
+    pub origins: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReseedSelectionMiss {
+    /// Losslessly escaped, quoted candidate name, pattern, or pathname.
+    pub candidate: String,
+    pub reason: String,
 }
 
 impl ReseedReport {
@@ -57,13 +85,23 @@ pub enum ReseedStatus {
 }
 
 pub fn run(request: ReseedRequest) -> Result<ReseedReport> {
+    run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))
+}
+
+/// Emit selection diagnostics before planning, including when planning later fails.
+pub fn run_with_diagnostics(
+    request: ReseedRequest,
+    diagnostic: impl FnMut(&str),
+) -> Result<ReseedReport> {
     #[cfg(unix)]
     {
-        engine::run(request)
+        let mut diagnostic = diagnostic;
+        engine::run(request, &mut diagnostic)
     }
     #[cfg(not(unix))]
     {
         let _ = request;
+        let _ = diagnostic;
         anyhow::bail!("reseed requires Unix filesystem identity and CoW support")
     }
 }
@@ -71,3 +109,7 @@ pub fn run(request: ReseedRequest) -> Result<ReseedReport> {
 #[cfg(unix)]
 #[path = "reseed/engine.rs"]
 mod engine;
+
+#[cfg(unix)]
+#[path = "reseed/selection.rs"]
+mod selection;
