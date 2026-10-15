@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
-    title: Designed current-target/current-donor reseeding and integrated independent JJ checkout preservation research
+    title: Designed repeat-reseed ergonomics and integrated independent JJ checkout preservation and native bookmark-tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
     title: User commissioning and verified no-adoption reseeding design
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -31,6 +31,10 @@ sources:
 - [JJ new preserves unchanged files](jj-new-preservation0.gpt61sol.md) — inspected
   checkout algorithm and native Btrfs evidence: ordinary advancement preserves
   equal-file inodes and sharing, but does not renew sharing for rewritten files.
+- [Native tracked bookmarks for donor updates](bookmark-tracking0.gpt61sol.md) —
+  existing local/remote tracking and graph relationships for proposed `up`,
+  including already-fetched movement, unpublished work, and ambiguous source
+  lines. No new persistent following state or operation-log inference.
 - [Repeatable in-place reflink reseeding](reseed0.gpt6a.md) — recommended
   `jw reseed` interface, prepared-source workflow, ignored dependencies, stock-JJ
   sparse-prefill mechanism, local verification, and implementation acceptance checks.
