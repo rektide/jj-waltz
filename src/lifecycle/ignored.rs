@@ -1,4 +1,5 @@
 //! New-target ignored payload phase. Existing switches never construct this plan.
+use super::PlannedWorkspace;
 use crate::cow::ignored::{Patterns, Policy};
 use crate::jj::ResolvedRevision;
 use crate::workspace::WorkspaceInventory;
@@ -24,6 +25,7 @@ impl IgnoredPlan {
         inventory: &WorkspaceInventory,
         base: &ResolvedRevision,
         policy: &Policy,
+        plans: &[PlannedWorkspace],
     ) -> Result<Self> {
         let patterns = Patterns::compile(&policy.patterns)?;
         if policy.patterns.is_empty() {
@@ -31,11 +33,11 @@ impl IgnoredPlan {
         }
         #[cfg(unix)]
         {
-            unix::prepare(inventory, base, patterns)
+            unix::prepare(inventory, base, patterns, plans)
         }
         #[cfg(not(unix))]
         {
-            let _ = base;
+            let _ = (base, plans);
             let selection = patterns.select(inventory.current_root(), [], |_| {
                 anyhow::bail!(
                     "ignored payload copying requires Unix filesystem identity and real CoW support"
@@ -90,6 +92,7 @@ mod unix {
         inventory: &WorkspaceInventory,
         base: &ResolvedRevision,
         patterns: Patterns,
+        plans: &[PlannedWorkspace],
     ) -> Result<IgnoredPlan> {
         let source = inventory.current_root();
         let source_identity = payload::directory_identity(source)?;
@@ -116,6 +119,22 @@ mod unix {
         // Missing matches are success, without requiring a clone-capable filesystem.
         if selected.roots.is_empty() {
             return Ok(plan);
+        }
+        // Creation inside the donor changes its whole-checkout stamp even when
+        // the destination is ignored. Do not exempt ancestors from that proof or
+        // risk recursively copying a destination inside a selected payload root.
+        // Check the whole batch before creating any workspace, including siblings.
+        for target in plans {
+            let destination = match &target.destination {
+                Some(path) => path.clone(),
+                None => crate::workspace::workspace_dir_for_name(&target.name, inventory)?,
+            };
+            if crate::workspace::normalize_destination(&destination)?.starts_with(source) {
+                bail!(
+                    "cannot copy ignored payload into a workspace nested within its source: {}; choose an external --path or use --no-copy-ignored",
+                    destination.display()
+                );
+            }
         }
         let target_entries = payload::entries(&client, &operation, &base.commit_id)?;
         let target_rules =

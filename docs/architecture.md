@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Reproduced operation-owned nested destination stamp invalidation and added payload-only batch preflight without weakening donor proofs
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Extracted shared frozen ignore/payload proof primitives and implemented add/s private payload planning, policy ownership, and read-only rollback
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -366,6 +368,13 @@ selection returns before clone capability is required. Nonempty plans recheck
 source identity/content around copying, compare the new target revision with its
 frozen base, and reject target obstructions and parent symlinks.
 
+Nonempty payload plans preflight every prospective destination against the
+canonical donor root, resolving existing parent aliases. A nested destination is
+rejected before any workspace/bookmark is created: creation itself would change
+the whole-donor stamp, and a destination inside a selected root risks recursive
+copying. The proof does not exempt destination subtrees or ancestor metadata.
+Disabled copying and no-match selections retain ordinary nested placement.
+
 Tracked creation remains free to use ordinary checkout or its established warned
 fallback. The separate ignored phase requires actual reflinks and has no fallback.
 It runs after tracked materialization and metadata insertion, before links.
@@ -381,6 +390,8 @@ existing explicit link behavior remains unchanged. Native creation tests exercis
 policy ownership/layers, exact base rules, nested matches and nonignored skips,
 required real Btrfs sharing/private inodes, independent writes, tmpfs no-match and
 strict-CoW failure, private-link conflicts, and post-payload read-only rollback.
+Nested-destination checks cover direct paths, symlinked-parent aliases, payload
+overlap, unchanged JJ operation IDs on rejection, and no-copy/no-match success.
 
 ### Local freshening commands and recovery
 

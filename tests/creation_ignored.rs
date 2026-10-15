@@ -118,6 +118,23 @@ impl Repo {
         self.jj_at(cwd, &["log", "--no-graph", "-r", "@", "-T", "commit_id"])
     }
 
+    fn operation_id(&self) -> String {
+        self.jj_at(
+            &self.root,
+            &[
+                "--at-operation",
+                "@",
+                "--ignore-working-copy",
+                "operation",
+                "log",
+                "--limit=1",
+                "--no-graph",
+                "-T",
+                "id",
+            ],
+        )
+    }
+
     fn global(&self, text: &str) {
         fs::write(self.config.join("jj-waltz/config.toml"), text).unwrap();
     }
@@ -169,6 +186,75 @@ impl Repo {
                 assert_ne!(value["metadata"]["workspace_name"].as_str(), Some(name));
             }
         }
+    }
+}
+
+#[test]
+fn nested_payload_destination_is_rejected_before_creating_any_workspace() {
+    let Some(repo) = Repo::new() else { return };
+    repo.payload(&repo.root, "cache");
+    repo.global("copy_ignored=['cache/']\n");
+    fs::create_dir(repo.root.join("slots")).unwrap();
+    let alias = repo.temp.path().join("source-alias");
+    symlink(&repo.root, &alias).unwrap();
+    let operation = repo.operation_id();
+    for (command, name, destination) in [
+        ("add", "nested", repo.root.join("nested")),
+        ("s", "aliased", alias.join("slots/aliased")),
+        ("add", "recursive", repo.root.join("cache/recursive")),
+    ] {
+        let args = [
+            command,
+            name,
+            "--path",
+            destination.to_str().unwrap(),
+            "--from",
+            repo.root.to_str().unwrap(),
+            "--no-cow",
+            "--bookmark",
+            name,
+        ];
+        failure(
+            repo.jw(repo.temp.path(), &args),
+            "cannot copy ignored payload into a workspace nested within its source",
+        );
+        assert_eq!(repo.operation_id(), operation);
+        repo.absent(name, &destination);
+    }
+    assert_eq!(
+        fs::read(repo.root.join("cache/data")).unwrap(),
+        vec![b'p'; 128 * 1024]
+    );
+}
+
+#[test]
+fn nested_creation_still_works_when_payload_copying_is_disabled_or_matches_nothing() {
+    for disabled in [true, false] {
+        let Some(repo) = Repo::new() else { return };
+        repo.payload(&repo.root, "cache");
+        repo.global(if disabled {
+            "copy_ignored=['cache/']\n"
+        } else {
+            "copy_ignored=['missing/']\n"
+        });
+        let destination = repo.root.join("nested");
+        let mut args = vec![
+            if disabled { "add" } else { "s" },
+            "nested",
+            "--path",
+            destination.to_str().unwrap(),
+            "--no-cow",
+        ];
+        if disabled {
+            args.push("--no-copy-ignored");
+        }
+        success(repo.jw(&repo.root, &args));
+        assert_eq!(
+            fs::read(destination.join("tracked")).unwrap(),
+            vec![b't'; 128 * 1024]
+        );
+        assert!(!destination.join("cache").exists());
+        assert!(repo.root.join("cache/data").is_file());
     }
 }
 

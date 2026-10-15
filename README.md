@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
+    title: Reproduced nested creation invalidating its own donor proof and added selected-payload destination preflight with native regression checks
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Implemented and verified add/s private ignored payloads, primary-owned copy policy, strict CoW and scoped failure cleanup
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -314,6 +316,12 @@ target base, with no tracked overlap. Nonignored source matches are reported and
 skipped; nested selections copy once, and missing matches succeed. Payload copies
 require real private CoW even with `--no-cow` or `--colocate`: those flags control
 the tracked checkout only. There is no payload byte-copy or shared-link fallback.
+
+When an actual payload is selected, destinations nested inside the donor are
+rejected before creation, including aliases through symlinked parents. Choose an
+external `--path` or use `--no-copy-ignored`; selections with no matches retain
+normal nested placement. This keeps the frozen donor proof intact and prevents
+recursive payload overlap.
 
 Payloads are installed before links. A configured link overlapping a selected
 private root is an error; use a source-equals-target `.jwlinks.local.toml` override

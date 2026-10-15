@@ -281,8 +281,12 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
     let mut checkout = plan_checkout(mode, &inventory, &plans)?;
-    checkout.ignored =
-        IgnoredPlan::prepare(&inventory, &base, &policy.ignored_policy(&inventory)?)?;
+    checkout.ignored = IgnoredPlan::prepare(
+        &inventory,
+        &base,
+        &policy.ignored_policy(&inventory)?,
+        &plans,
+    )?;
 
     let mut pending = Vec::new();
     for plan in plans {
@@ -409,8 +413,12 @@ fn switch_workspaces_with_creation(
         .transpose()?;
     let mut checkout = plan_checkout(mode, &inventory, &all_plans)?;
     if let Some(base) = &base {
-        checkout.ignored =
-            IgnoredPlan::prepare(&inventory, base, &policy.ignored_policy(&inventory)?)?;
+        checkout.ignored = IgnoredPlan::prepare(
+            &inventory,
+            base,
+            &policy.ignored_policy(&inventory)?,
+            &all_plans,
+        )?;
     }
 
     let mut intermediate = Vec::new();
