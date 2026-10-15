@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Implemented optional donor assertions, current-variant target selection, and snapshot-free frozen recovery with strict preparation batch selection
+    title: Implemented optional donor assertions, current-variant targeting, and phase-specific recovery with full preparation selection and independent frozen targets
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Connected ignored-copy policy documentation to delivered add/s payload integration and primary policy ownership
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -250,13 +250,14 @@ is not automatically rolled back.
 
 For interrupted source preparation, use `--resume` with all original literal target
 names in their recorded order. Do not add `--freshen`, new source/goal overrides,
-or replacement flags. The complete ordered selection remains required after
-target plans are frozen; bare current-target resume never infers the rest of a
-multi-target batch. Completed target receipts prevent repeating successful refills,
-fetches, or installation.
+or replacement flags. Once preparation has frozen its target plans, individual
+recorded targets or subsets can resume independently using their exact frozen
+intent and completion receipts, without fetching or installing again. Bare resume
+inside a variant selects only its current target, never the rest of the batch.
 
 ```sh
-jw reseed worker-a worker-b --resume
+jw reseed worker-a worker-b --resume  # required while source preparation is unfinished
+jw reseed worker-a --resume           # one target after plans have frozen
 ```
 
 ### Command progress and older preparation journals
@@ -431,7 +432,7 @@ half-filled target.** Resume the recorded plan instead:
 
 ```sh
 jw reseed my-feature --resume
-# From the same pending variant, for a single-target operation:
+# From the same pending variant, including one member of a frozen batch:
 jw reseed --resume
 ```
 

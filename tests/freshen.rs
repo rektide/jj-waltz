@@ -452,17 +452,50 @@ fn freshen_dry_run_unknown_remote_goal_performs_no_preparation_actions() {
 }
 
 #[test]
-fn failed_installer_blocks_borrowing_and_resume_pins_goal_without_fetch() {
+fn failed_installer_requires_full_selection_until_plans_freeze_and_resume_pins_goal() {
     let Some(f) = Fixture::new() else {
         return;
     };
     let gate = f.temp.path().join("allow success");
+    let second = f.temp.path().join("second");
+    f.jj(
+        &f.source,
+        &[
+            "workspace",
+            "add",
+            "--name",
+            "second",
+            "-r",
+            &f.baseline,
+            second.to_str().unwrap(),
+        ],
+    );
     f.script(&format!("mkdir -p node_modules\nprintf partial > node_modules/package\n[ -f {:?} ] || exit 17\nprintf complete > node_modules/package\n", gate));
     let goal = f.advance();
     let before = f.id(&f.target, "@");
-    fails(f.freshen(&[]), "ignored installation may be incomplete");
+    fails(
+        f.freshen(&["second"]),
+        "ignored installation may be incomplete",
+    );
     assert_eq!(f.id(&f.target, "@"), before);
     assert_eq!(f.active().len(), 1);
+    let active = fs::read(&f.active()[0]).unwrap();
+    let batch: serde_json::Value = serde_json::from_slice(&active).unwrap();
+    assert!(batch["plans"].is_null());
+    let source = f.id(&f.source, "@");
+    for args in [
+        vec!["reseed", "--resume"],
+        vec!["reseed", "second", "worker", "--resume"],
+    ] {
+        fails(
+            f.jw().args(args).output().unwrap(),
+            "all recorded literal target names in original order",
+        );
+        assert_eq!(f.id(&f.source, "@"), source);
+        assert_eq!(f.id(&f.target, "@"), before);
+        assert_eq!(fs::read(&f.active()[0]).unwrap(), active);
+        assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    }
     fails(
         f.jw()
             .args(["reseed", "worker", "--source-at", "dev@origin"])
@@ -473,7 +506,10 @@ fn failed_installer_blocks_borrowing_and_resume_pins_goal_without_fetch() {
     fs::write(&gate, "ok").unwrap();
     fs::write(f.remote.join("version"), "even newer\n").unwrap();
     f.git_commit();
-    ok(f.resume());
+    ok(f.jw()
+        .args(["reseed", "worker", "second", "--resume"])
+        .output()
+        .unwrap());
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert_eq!(
         fs::read_to_string(f.target.join("node_modules/package")).unwrap(),
@@ -949,7 +985,7 @@ fn frozen_batch_recovery_uses_receipts_and_never_reprepares_or_snapshots_partial
             second.to_str().unwrap(),
         ],
     );
-    f.advance();
+    let goal = f.advance();
     let bin = f.wrapper(&format!(
         "[ \"$clear\" = true ] && [ \"$PWD\" = {:?} ]",
         f.target
@@ -982,25 +1018,32 @@ fn frozen_batch_recovery_uses_receipts_and_never_reprepares_or_snapshots_partial
     fs::write(f.remote.join("version"), "newer remote\n").unwrap();
     f.git_commit();
     let partial = f.id(&f.target, "@");
+    let completed = f.id(&second, "@");
+    let source = f.id(&f.source, "@");
     let pending = fs::read(&f.pending()[0]).unwrap();
     let recorded = fs::read(&f.active()[0]).unwrap();
-    for args in [
-        vec!["reseed", "--resume"],
-        vec!["reseed", "second", "worker", "--resume"],
-    ] {
-        fails(
-            f.jw().args(args).output().unwrap(),
-            "all recorded literal target names in original order",
-        );
-        assert_eq!(f.id(&f.target, "@"), partial);
-        assert!(!f.target.join("shared").exists());
-        assert_eq!(fs::read(&f.pending()[0]).unwrap(), pending);
-        assert_eq!(fs::read(&f.active()[0]).unwrap(), recorded);
-    }
-    ok(f.jw()
-        .args(["reseed", "worker", "second", "--resume"])
+    // A frozen subset may use its completion receipt without touching the
+    // unselected, half-filled worker or replaying shared source preparation.
+    let output = ok(f
+        .jw()
+        .args(["reseed", "second", "--resume"])
         .output()
         .unwrap());
+    assert!(output.contains("OK second"));
+    assert!(!output.contains("OK worker"));
+    assert_eq!(f.id(&f.target, "@"), partial);
+    assert!(!f.target.join("shared").exists());
+    assert_eq!(fs::read(&f.pending()[0]).unwrap(), pending);
+    assert_eq!(fs::read(&f.active()[0]).unwrap(), recorded);
+
+    // Bare resume means this current frozen target only, not the whole batch.
+    let output = ok(f.jw().args(["reseed", "--resume"]).output().unwrap());
+    assert!(output.contains("OK worker"));
+    assert!(!output.contains("OK second"));
+    assert_eq!(f.id(&second, "@"), completed);
+    assert_eq!(f.id(&f.source, "@"), source);
+    assert_eq!(f.id(&f.source, "dev@origin"), goal, "must not refetch");
+    assert_eq!(f.id(&f.target, "@-"), goal, "use the frozen target base");
     assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
     assert!(f.active().is_empty());
     assert!(f.pending().is_empty());

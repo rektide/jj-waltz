@@ -267,18 +267,18 @@ pub(super) fn run(
     } else {
         None
     };
-    if let Some(record) = &batch
-        && names != record.request.names
-    {
-        bail!(
-            "preparation resume requires all recorded literal target names in original order: {:?}",
-            record.request.names
-        );
-    }
     let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
     if recovering_preparation {
         let record = batch.as_ref().unwrap();
         prepare::validate_resume_request(&request)?;
+        // Source preparation is still shared batch work. Once target plans
+        // freeze, each recorded target/receipt can instead resume independently.
+        if names != record.request.names {
+            bail!(
+                "preparation resume requires all recorded literal target names in original order: {:?}",
+                record.request.names
+            );
+        }
         let dry_run = request.dry_run;
         request = record.request.clone();
         request.dry_run = dry_run;

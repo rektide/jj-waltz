@@ -6,7 +6,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Aligned creation assertions/private payloads, ordinary current-donor/current-target reseed, and frozen batch recovery with delivered behavior
+    title: Aligned donor assertions/current-target reseed and phase-specific full-preparation versus individual frozen-target recovery with delivered behavior
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Updated freshen sequence/recovery and ignored-copy policy, eligible matching, frozen empty selection, and current command exposure
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -153,10 +153,12 @@ remote, requires a CLI/configured source goal (never implicit `@`), and runs loc
 when empty. There are no global/guessed build commands. With no commands, selected
 existing ignored payload can still be borrowed but is not freshly built.
 Preview with `--dry-run`; source freshening does not imply target
-`--at`. Preparation settings alone do not activate it. For interrupted preparation,
-resume all original literal targets in their recorded order, even after plans
-freeze, without adding freshening/selection overrides; do not
-borrow partially installed ignored dependencies. Completed command steps are skipped;
+`--at`. Preparation settings alone do not activate it. While source preparation has
+no frozen target plans, resume all original literal targets in their recorded order.
+Once plans freeze, individual targets/subsets can resume without refetching or
+rebuilding; bare `--resume` selects only the current recorded target. Do not add
+freshening/selection overrides or borrow partially installed ignored dependencies.
+Completed command steps are skipped;
 an in-flight step may retry, not exactly-once. `[prepare]` is a deprecated alias:
 rename it only after recovery finishes, since frozen policy bytes must match.
 V1 preparation journals remain resumable. Public up integration is still pending.

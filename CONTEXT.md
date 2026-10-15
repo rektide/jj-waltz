@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Defined delivered creation donor assertions, optional reseed assertions, current-variant targeting, and recorded recovery intent
+    title: Defined delivered donor assertions/current-variant targeting and corrected phase-specific preparation versus frozen-target recovery intent
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Defined freshening sequence/retry and shared ignored-copy precedence, eligible payload selection, and frozen empty-policy meanings
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -202,8 +202,9 @@ by itself a claim that a command exposing that concept already exists.
   snapshotted donor `@`; tree assertions do not require equal commit identities.
   Legacy `--freshen` still needs a CLI/configured goal. Differences from a target
   are handled per path, not treated as a reason to discard feature changes.
-  Resume uses recorded IDs, not reevaluated defaults; preparation batches require
-  the full recorded target order, never an inferred batch from one current target.
+  Resume uses recorded IDs, not reevaluated defaults. Source preparation requires
+  the full recorded target order until target plans freeze; frozen targets/subsets
+  can then resume independently. Current selection never infers an entire batch.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work during resume.

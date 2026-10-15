@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Fixed nested payload preflight and implemented frozen creation assertions, default reseed borrowing, current-target resolution, and strict preparation recovery selection
+    title: Fixed nested payload preflight and implemented source assertions/current-target borrowing with phase-specific preparation and frozen-target recovery
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
     title: Extracted shared frozen ignore/payload proof primitives and implemented add/s private payload planning, policy ownership, and read-only rollback
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -272,8 +272,10 @@ lookup or source/target snapshots and reports origin `current`. At the primary i
 requires explicit selection. Explicit names/groups suppress this default even for
 an empty group result. No navigation-token semantics or implicit-all selection is
 introduced. Resume uses recorded source IDs and ignores newly configured defaults.
-Preparation recovery requires the complete recorded target order, even after plans
-freeze; bare single-current selection cannot expand to a whole batch.
+While source preparation has no frozen target plans, recovery requires the complete
+recorded target order. After plans freeze, each selected target/receipt is recovered
+independently against its frozen identity, without refetching or rebuilding. Bare
+current selection never expands to the rest of the batch in either phase.
 
 With explicit `--freshen`, `reseed::prepare` first snapshots real source/target
 work, fetches the declared remote through `JjClient`, pins the source goal, selects

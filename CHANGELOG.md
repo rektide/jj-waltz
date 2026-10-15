@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
-    title: Delivered creation tree assertions, optional ordinary reseed assertions, implicit current-variant selection, and safe ordered batch recovery; corrected nested payload preflight
+    title: Delivered donor assertions/current-variant selection, corrected phase-specific preparation and subset frozen-target recovery, and fixed nested payload preflight
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Added local command/recovery and shared ignored-copy policy/selection foundations with explicit legacy and current-exposure boundaries
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -35,7 +35,9 @@ sources:
   invocation requires names/groups. Explicit selection suppresses implicit current,
   even when a group matches nothing. Keep target work by default. Legacy `--freshen`
   still requires a goal. Resolve current/pending identity without snapshots; resume
-  uses recorded IDs and requires complete original preparation target order.
+  uses recorded IDs. Complete original target order is required only while source
+  preparation has no frozen target plans; frozen targets/subsets resume independently
+  without refetch/build, and bare resume selects only the current target.
 - Add/s now copy selected ignored payloads privately with real CoW independently
   of tracked checkout mode, reject private-link overlap, and clean up owned read-only
   copies on failure. Actual payload selection rejects nested donor destinations
