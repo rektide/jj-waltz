@@ -12,6 +12,9 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "prepare.rs"]
+mod prepare;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LocalConfig {
@@ -21,6 +24,7 @@ struct LocalConfig {
     copy_ignored: Vec<String>,
     #[serde(default)]
     groups: BTreeMap<String, Group>,
+    prepare: Option<prepare::Settings>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +107,8 @@ struct Pending {
     target_stamp: Vec<Stamp>,
     config_root: PathBuf,
     link_config: Vec<(String, Option<Vec<u8>>)>,
+    #[serde(default)]
+    preparation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,9 +201,12 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 pub(super) fn run(
-    request: ReseedRequest,
+    mut request: ReseedRequest,
     diagnostic: &mut dyn FnMut(&str),
 ) -> Result<ReseedReport> {
+    if request.freshen && request.resume {
+        bail!("--freshen and --resume conflict; resume uses recorded preparation only");
+    }
     if request.resume && (!request.groups.is_empty() || request.on_unmatched.is_some()) {
         bail!(
             "--resume requires literal names and does not accept group selection or --on-unmatched"
@@ -226,8 +235,8 @@ pub(super) fn run(
     // here: merely discovering a pending current workspace must not snapshot it.
     let inventory = Inventory::load(&client)?;
     let default = inventory.default.clone();
-    let config = if request.resume && request.groups.is_empty() {
-        LocalConfig::default()
+    let (mut config, mut preparation_config) = if request.resume && request.groups.is_empty() {
+        (LocalConfig::default(), None)
     } else {
         load_config(&default)?
     };
@@ -252,7 +261,63 @@ pub(super) fn run(
     let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
     let repository_path = repository(&client)?;
     let mut plans = Vec::new();
-    if request.resume {
+    let mut completed = Vec::new();
+    let mut batch = if request.resume {
+        prepare::find_resume(&store, &names)?
+    } else {
+        None
+    };
+    let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
+    if recovering_preparation {
+        let record = batch.as_ref().unwrap();
+        prepare::validate_resume_request(&request)?;
+        if names != record.request.names {
+            bail!(
+                "preparation resume requires all recorded literal target names: {:?}",
+                record.request.names
+            );
+        }
+        let dry_run = request.dry_run;
+        request = record.request.clone();
+        request.dry_run = dry_run;
+        (config, preparation_config) = load_config(&default)?;
+    }
+    if let Some(frozen) = batch.as_ref().and_then(|b| b.plans.as_ref()) {
+        prepare::validate_resume_request(&request)?;
+        for name in &names {
+            let original = frozen
+                .iter()
+                .find(|p| &p.name == name)
+                .context("target not in frozen preparation batch")?;
+            match prepare::handoff(&store, original, request.dry_run)? {
+                Some(plan) => plans.push(plan),
+                None => completed.push(ReseedOutcome {
+                    name: name.clone(),
+                    status: ReseedStatus::Succeeded,
+                    message: "already completed recorded preparation batch".into(),
+                }),
+            }
+        }
+        for plan in &plans {
+            if inventory.root(&plan.name)?.canonicalize()? != plan.root
+                || plan.repository != repository_path
+            {
+                bail!(
+                    "pending workspace/repository identity changed for {}",
+                    plan.name
+                );
+            }
+            validate_target(
+                &client,
+                &metadata,
+                &default,
+                &plan.source,
+                &plan.name,
+                &plan.root,
+            )?;
+            validate_identities(plan)?;
+        }
+    } else if request.resume {
         if request.source.is_some()
             || request.source_at.is_some()
             || request.at.is_some()
@@ -312,6 +377,7 @@ pub(super) fn run(
         }
         .canonicalize()?;
         let source_client = JjClient::new(&source);
+        prepare::ensure_available(&store, &source, batch.as_ref())?;
         let root = source_client.run(["--ignore-working-copy", "workspace", "root"])?;
         if PathBuf::from(root.trimmed_stdout()?).canonicalize()? != source {
             bail!("source must name a JJ workspace root");
@@ -343,6 +409,86 @@ pub(super) fn run(
             ensure_quiescence(&JjClient::new(&root))?;
             require_full(&JjClient::new(&root))?;
             validate_contents(&root, false)?;
+            if request.freshen {
+                cow::probe_between(&source, &root)?;
+            }
+        }
+        if request.freshen {
+            let ignored_patterns = if request.no_copy_ignored {
+                &[][..]
+            } else if request.copy_ignored.is_empty() {
+                config.copy_ignored.as_slice()
+            } else {
+                request.copy_ignored.as_slice()
+            };
+            prepare::verify_policy(&default, &preparation_config)?;
+            prepare::preflight(
+                &store,
+                &metadata,
+                &inventory,
+                &source,
+                ignored_patterns,
+                config.prepare.as_ref(),
+            )?;
+            if batch.is_none() {
+                snapshot(&source_client)?;
+                for root in &roots {
+                    snapshot(&JjClient::new(root))?;
+                }
+                if request.dry_run {
+                    let summary = prepare::describe(
+                        &source,
+                        source_rev,
+                        config.prepare.as_ref(),
+                        ignored_patterns,
+                    )?;
+                    diagnostic(&summary);
+                    return Ok(ReseedReport {
+                        dry_run: true, source, source_commit_id: None, preparation_summary: Some(summary),
+                        targets: names.iter().map(|name| ReseedOutcome { name: name.clone(), status: ReseedStatus::Planned, message: format!("{}; ignored selection {:?}; no fetch/new/preparation/refill performed; real work snapshotted", request.at.as_ref().map(|at| format!("reset at prospective {at}")).unwrap_or_else(|| "keep snapshotted target revision".into()), ignored_patterns) }).collect(),
+                        selections: selection.selections, skipped: selection.skipped,
+                    });
+                }
+                batch = Some(prepare::begin(
+                    &store,
+                    &client,
+                    &source,
+                    &default,
+                    &inventory,
+                    &names,
+                    &request,
+                    source_rev,
+                    config.prepare.as_ref(),
+                    ignored_patterns,
+                    preparation_config.clone(),
+                )?);
+            }
+            if request.dry_run {
+                diagnostic(
+                    "Preparation resume dry-run: stored goal/policy; no fetch/new/preparation/refill performed",
+                );
+                let b = batch.as_ref().unwrap();
+                return Ok(ReseedReport {
+                    dry_run: true,
+                    source,
+                    source_commit_id: b.goal.clone(),
+                    preparation_summary: Some(format!(
+                        "Resume recorded preparation phase {:?}, source goal {:?}, exact goal {:?}; no preparation actions performed",
+                        b.phase, b.source_rev, b.goal
+                    )),
+                    targets: names
+                        .iter()
+                        .map(|name| ReseedOutcome {
+                            name: name.clone(),
+                            status: ReseedStatus::Planned,
+                            message: format!("resume recorded source phase {:?}", b.phase),
+                        })
+                        .collect(),
+                    selections: selection.selections,
+                    skipped: selection.skipped,
+                });
+            }
+            prepare::execute(&store, batch.as_mut().unwrap(), diagnostic)?;
         }
         // Assert the donor's prepared tree before snapshotting any target.
         snapshot(&source_client)?;
@@ -350,9 +496,17 @@ pub(super) fn run(
         let source_wc = source_client
             .resolve_one_at(&source_operation, "@")?
             .commit_id;
-        let source_commit = source_client
-            .resolve_one_at(&source_operation, source_rev)?
-            .commit_id;
+        let source_commit = match batch.as_ref() {
+            Some(b) => b
+                .goal
+                .clone()
+                .context("prepared source lacks frozen goal")?,
+            None => {
+                source_client
+                    .resolve_one_at(&source_operation, source_rev)?
+                    .commit_id
+            }
+        };
         require_unconflicted(&source_client, &source_operation, &source_commit)?;
         if !changed_paths(
             &source_client,
@@ -376,8 +530,12 @@ pub(super) fn run(
             &source_entries,
         )?;
         // Full scans freeze dirty target work only after donor validation.
-        for root in &roots {
-            snapshot(&JjClient::new(root))?;
+        if let Some(b) = batch.as_ref() {
+            prepare::verify_targets(b)?;
+        } else {
+            for root in &roots {
+                snapshot(&JjClient::new(root))?;
+            }
         }
         let operation = client.operation_id()?;
         if source_client.resolve_one_at(&operation, "@")?.commit_id != source_wc
@@ -530,15 +688,34 @@ pub(super) fn run(
                 target_stamp: stamp(&root)?,
                 config_root: default.clone(),
                 link_config: link_config_bytes(&default)?,
+                preparation_id: batch.as_ref().map(|b| b.id.clone()),
             });
         }
     }
-    let first = plans.first().context("select at least one workspace")?;
+    if let Some(b) = batch.as_mut() {
+        if b.plans.is_none() {
+            b.plans = Some(plans.clone());
+            prepare::save(&store, b)?;
+            for plan in &plans {
+                prepare::handoff(&store, plan, request.dry_run)?;
+            }
+        }
+    }
+    let first = plans
+        .first()
+        .or_else(|| {
+            batch
+                .as_ref()
+                .and_then(|b| b.plans.as_ref())
+                .and_then(|p| p.first())
+        })
+        .context("select at least one workspace")?;
     let mut report = ReseedReport {
         dry_run: request.dry_run,
         source: first.source.clone(),
-        source_commit_id: first.source_commit.clone(),
-        targets: Vec::new(),
+        source_commit_id: Some(first.source_commit.clone()),
+        preparation_summary: batch.as_ref().map(prepare::summary),
+        targets: completed,
         selections: selection.selections,
         skipped: selection.skipped,
     };
@@ -552,7 +729,8 @@ pub(super) fn run(
             continue;
         }
         let started = std::time::Instant::now();
-        let outcome = execute(&store, &default, &mut plan, request.resume);
+        let recovering_target = request.resume || plan.preparation_id.is_some();
+        let outcome = execute(&store, &default, &mut plan, recovering_target);
         let (status, message) = match outcome {
             Ok(()) => (
                 ReseedStatus::Succeeded,
@@ -576,6 +754,11 @@ pub(super) fn run(
             status,
             message,
         });
+    }
+    if let Some(b) = batch.as_ref() {
+        if !request.dry_run {
+            prepare::finish_if_complete(&store, b)?;
+        }
     }
     Ok(report)
 }
@@ -702,11 +885,15 @@ fn link_config_bytes(root: &Path) -> Result<Vec<(String, Option<Vec<u8>>)>> {
         .collect()
 }
 
-fn load_config(default: &Path) -> Result<LocalConfig> {
+fn load_config(default: &Path) -> Result<(LocalConfig, Option<Vec<u8>>)> {
     let path = default.join(".jwreseed.local.toml");
-    match fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).with_context(|| format!("invalid {}", path.display())),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(LocalConfig::default()),
+    match fs::read(&path) {
+        Ok(bytes) => Ok((
+            toml::from_str(std::str::from_utf8(&bytes)?)
+                .with_context(|| format!("invalid {}", path.display()))?,
+            Some(bytes),
+        )),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok((LocalConfig::default(), None)),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }
 }
@@ -2639,6 +2826,7 @@ mod tests {
             target_stamp: stamp(&target).unwrap(),
             config_root: source.clone(),
             link_config: link_config_bytes(&source).unwrap(),
+            preparation_id: None,
         };
         let store = Store::lock(&client).unwrap();
         Some((temporary, store, pending))

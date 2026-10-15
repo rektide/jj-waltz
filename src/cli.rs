@@ -367,9 +367,12 @@ struct ReseedCommand {
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
-    /// Require the prepared source's tracked tree to match this exact revision.
+    /// Prepared source assertion, or post-fetch source goal with --freshen.
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
+    /// Fetch the donor remote and run its configured preparation argv before reseeding.
+    #[arg(long, conflicts_with = "resume")]
+    freshen: bool,
     /// Start a fresh empty change at this base instead of keeping target revisions.
     #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
     at: Option<String>,
@@ -549,6 +552,7 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
             replace_content: cmd.replace_content,
             dry_run: cmd.dry_run,
             resume: cmd.resume,
+            freshen: cmd.freshen,
         },
         |diagnostic| eprintln!("{diagnostic}"),
     )?;
@@ -566,8 +570,14 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         "{}source: {} ({})",
         if report.dry_run { "Dry-run " } else { "" },
         report.source.display(),
-        report.source_commit_id
+        report
+            .source_commit_id
+            .as_deref()
+            .unwrap_or("post-fetch exact commit unknown")
     );
+    if let Some(summary) = &report.preparation_summary {
+        println!("{summary}");
+    }
     for target in &report.targets {
         let label = match target.status {
             ReseedStatus::Planned => "PLAN",
@@ -1257,6 +1267,25 @@ fn complete_workspaces(current: &OsStr) -> Vec<CompletionCandidate> {
 #[cfg(test)]
 mod reseed_cli_tests {
     use super::*;
+
+    #[test]
+    fn freshen_is_explicit_and_conflicts_with_resume() {
+        let cli = Cli::try_parse_from([
+            "jw",
+            "reseed",
+            "feature",
+            "--freshen",
+            "--source-at",
+            "new@origin",
+        ])
+        .unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed")
+        };
+        assert!(cmd.freshen);
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen", "--resume"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--no-freshen"]).is_err());
+    }
 
     #[test]
     fn one_off_reseed_needs_no_group() {

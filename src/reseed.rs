@@ -9,10 +9,10 @@
 
 use anyhow::Result;
 use clap::ValueEnum;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum UnmatchedPolicy {
     #[default]
@@ -20,7 +20,7 @@ pub enum UnmatchedPolicy {
     Warn,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
     pub names: Vec<String>,
     pub groups: Vec<String>,
@@ -35,13 +35,17 @@ pub struct ReseedRequest {
     pub replace_content: bool,
     pub dry_run: bool,
     pub resume: bool,
+    /// Fetch and prepare the chosen donor before freezing target plans.
+    pub freshen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReseedReport {
     pub dry_run: bool,
     pub source: PathBuf,
-    pub source_commit_id: String,
+    /// None when a freshen preview cannot know the post-fetch exact goal.
+    pub source_commit_id: Option<String>,
+    pub preparation_summary: Option<String>,
     pub targets: Vec<ReseedOutcome>,
     pub selections: Vec<ReseedSelection>,
     pub skipped: Vec<ReseedSelectionMiss>,
