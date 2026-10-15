@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
-    title: Designed ordinary current-donor reseeding alongside CoW-first variant creation
+    title: Designed current-target/current-donor reseeding and integrated independent JJ checkout preservation research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
     title: User commissioning and verified no-adoption reseeding design
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -24,9 +24,13 @@ sources:
 # In-place workspace reseeding
 
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
-  for borrowing the current donor, retaining target work, existing repeat-policy
+  and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;
-  not implemented by the concurrent variants work.
+  not implemented by the concurrent variants work. Its keep-target versus
+  reset-to-donor default is now an explicit human-review junction.
+- [JJ new preserves unchanged files](jj-new-preservation0.gpt61sol.md) — inspected
+  checkout algorithm and native Btrfs evidence: ordinary advancement preserves
+  equal-file inodes and sharing, but does not renew sharing for rewritten files.
 - [Repeatable in-place reflink reseeding](reseed0.gpt6a.md) — recommended
   `jw reseed` interface, prepared-source workflow, ignored dependencies, stock-JJ
   sparse-prefill mechanism, local verification, and implementation acceptance checks.

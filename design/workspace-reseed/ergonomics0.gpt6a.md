@@ -16,7 +16,9 @@ verification:
   limits: Explicit --source-at @ exercised; omitted-baseline proposal and freshening changes were not implemented or tested; installed binary version is not a source-revision attestation
 sources:
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
-    title: Human commission for CoW-first variants and parallel reseed design; inspection of current donor, baseline, payload, and recovery behavior
+    title: Human commission and refinement of repeat reseeding, including implicit current target; source inspection, native refill evidence, and integration of JJ checkout research
+  - resource: /design/workspace-reseed/jj-new-preservation0.gpt61sol.md
+    title: Independent source and physical-file evidence that ordinary JJ new preserves equal-file sharing but does not renew it
   - resource: /docs/reseed.md
     title: Existing one-off, repeat-use, ignored payload, and freshening contracts
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
@@ -37,17 +39,37 @@ sources:
 
 # Ordinary repeated reseeding
 
+## Review junction: what should reseed accomplish?
+
+The human challenged the retained keep-target default during review: changing
+physical files without advancing the workspace may not be the intended meaning
+of reseeding. The parent asked whether reseed should instead default to a new
+change based on the donor's current revision, keeping workspace identity and
+earlier work in JJ history. That choice is not yet confirmed. The keep-target
+recommendation below is preserved as the proposal being reviewed, not accepted
+direction for implementation.
+
+Independent JJ research now establishes that ordinary `jj new REV` already
+preserves equal-file inodes and existing CoW sharing. Thus moving to a revision
+and renewing sharing are distinguishable operations; deciding the default
+outcome should precede deciding whether to combine them under reseed. Current
+shipped reseed still preserves the target unless `--at` is explicit.
+
 ## Recommendation
 
-Make **`jw reseed fix` borrow the verified primary donor's current tracked
-state, preserving `fix`'s current work**, without demanding a source-baseline
-argument. Keep the existing source override, configuration, dependency selections,
-batch selection, reset option, and recovery machinery.
+Make **`jw reseed` inside a variant borrow the verified primary donor's current
+tracked state, preserving that variant's current work**, without demanding its
+name again or a source-baseline argument. From the primary checkout or another
+variant, `jw reseed fix` explicitly selects `fix`. Keep the existing source
+override, configuration, dependency selections, batch selection, reset option,
+and recovery machinery.
 
-The implementation delta is optional baseline selection before the existing
-frozen plan. It is not a new refill engine or a unification of creation and
-reseed transactions. This document proposes that delta; the command still
-requires a baseline today. Implementation has not been commissioned here.
+The implementation deltas are current-target selection when no targets/groups
+are supplied and optional baseline selection before the existing frozen plan.
+They are not a new refill engine or a unification of creation and reseed
+transactions. This document proposes those deltas; the command still requires
+an explicit selection and baseline today. Implementation has not been
+commissioned here.
 
 ## Where we start
 
@@ -88,7 +110,8 @@ proposed default makes that intention available without a mandatory argument.
 ## Ordinary interface and precedence
 
 ```sh
-jw reseed fix                        # primary donor as-is; preserve fix
+jw reseed                            # inside fix: primary donor as-is; preserve fix
+jw reseed fix                        # from primary/another variant: select fix
 jw reseed fix other                  # same donor, separate preserved targets
 jw reseed fix --from /path/to/donor  # explicit same-repository donor
 jw reseed fix --source-at dev@origin # assert a prepared baseline
@@ -96,13 +119,13 @@ jw reseed fix --source-at @          # override a configured baseline for one ru
 jw reseed --group workers            # existing repeatable batch selection
 ```
 
-These are examples of the proposed ordinary contract; only omission of the
-otherwise-required baseline is new. Explicitly selected source/target restrictions
-continue to apply.
+These are examples of the proposed ordinary contract. Omission of the otherwise
+required target selection and baseline is new. Explicitly selected source/target
+restrictions continue to apply.
 
 | Choice | Ordinary reseed rule |
 |---|---|
-| Target selection | Existing literal registered names and configured groups; no implicit all-workspaces selection |
+| Target selection | Explicit literal registered names/groups; otherwise current registered workspace; never implicitly all workspaces |
 | Donor root | `--from` > configured `source` > verified primary checkout |
 | Donor baseline | `--source-at` > configured `source_at` > donor's freshly snapshotted `@` |
 | Desired target tree | Preserve target's freshly snapshotted tree; `--at` explicitly selects a new base |
@@ -114,16 +137,31 @@ primary-relative. Existing baseline configurations keep their assertion semantic
 they are not silently ignored after the change. Remove `source_at` to adopt the
 new ordinary default, or override it with `--source-at @` for one invocation.
 
+Inside the primary checkout, bare `jw reseed` reports that a target must be
+named; it cannot refill the primary repository store. If the chosen donor is
+the current target, the existing same-root/overlap rejection still applies.
+An explicit group suppresses implicit current-target selection, even when that
+group resolves to no targets. Do not append the current workspace to explicit
+names/groups.
+
 No new navigation aliases or destination flag are needed for this slice. `fix`
 is the same registered workspace identity that creation recorded and other
-commands use. Reseed's existing literal selection contract stays explicit,
-including in recovery.
+commands use. Resolve implicit current selection to that literal identity before
+pending lookup, without snapshotting. For `--resume`, the same current selection
+can name one pending target; an unfinished multi-target preparation batch still
+requires its original complete selection and ordering. Never infer an entire
+recovery batch merely from the current directory.
 
 ## The useful differences from creation
 
 Creation starts a new workspace from the chosen source state; reseed preserves
 an existing target state and borrows only content equal to it. Making both
 default to the donor's revision would turn a refill into a reset.
+
+In branch terms, ordinary reseed does not switch a target to the donor's branch
+or rebase its changes. `--at REV` explicitly starts a new empty change based on
+REV and refills that tree. Configured ignored dependencies are donor payloads,
+not tracked files reconciled against the target tree.
 
 Creation's default source is where the operator stands. Reseed's default donor
 is the primary checkout, so invoking `jw reseed fix` while working inside `fix`
@@ -164,21 +202,25 @@ adds source symlinks nor labels linked dependencies as private CoW data.
 
 ## Minimal implementation boundary
 
-1. Keep effective `source_at` optional during ordinary selection. In freshening,
+1. When neither names nor groups were supplied, resolve the caller's registered
+   workspace before ordinary snapshots. Reject the primary as a target with a
+   useful name-a-target message. Reuse the existing literal selection validation
+   and pending/batch recovery checks; no new target identity is persisted.
+2. Keep effective `source_at` optional during ordinary selection. In freshening,
    continue to require an explicit/configured source goal. Do not give freshening
    a hidden `@` fallback or change its source-advancement semantics.
-2. After the existing pending checks, donor/root checks and donor snapshot, freeze
+3. After the existing pending checks, donor/root checks and donor snapshot, freeze
    `source_wc` at the recorded source operation. With no baseline, set
    `source_commit = source_wc`. Otherwise resolve the effective assertion in the
    donor and retain the current tracked-tree equality check.
-3. Run the existing conflict, disk-content, source-stamp, ignored-payload and
+4. Run the existing conflict, disk-content, source-stamp, ignored-payload and
    target validations. Freeze target snapshots at the final shared operation and
    retain the existing source-unchanged check across that capture.
-4. Feed the same exact source/target IDs into the existing `Pending` plan. Resume
+5. Feed the same exact source/target IDs into the existing `Pending` plan. Resume
    must read those frozen IDs; it must not reevaluate the new default `@` or a
    changed configuration. No journal-schema change is needed merely to represent
    `source_commit == source_wc_commit`.
-5. Update help and operator examples to distinguish optional ordinary assertions
+6. Update help and operator examples to distinguish optional ordinary assertions
    from required freshening goals. Existing reports already expose the source ID,
    number of clone paths, JJ-materialized paths, and ignored selections; reuse
    them rather than invent a reporting subsystem.
@@ -202,16 +244,16 @@ preserve that boundary and actually simplify the implementing change.
 
 ## Delivery and remaining choices
 
-Recommended delivery is one bounded implementation of ordinary current-donor
-selection, followed by its operator documentation. Exercise the actual behavioral
+Recommended delivery is bounded current-target selection, then optional
+current-donor baseline selection, with operator documentation. Exercise the actual behavioral
 difference: a dirty donor and dirty target, two repeated runs, explicit baseline
 mismatch, and frozen resume. Establish that the target work stays intact and
 equal regular files really share extents with independent inodes. Freshening's
 missing-goal error and existing goal behavior must remain intact.
 
 The recommendation leaves no new user-facing mode to select. Decisions for human
-review are whether to accept this optional-baseline default and whether any
-particular project should retain a configured upstream-baseline assertion.
+review are whether to accept the current-target and optional-baseline defaults
+and whether any particular project should retain a configured upstream-baseline assertion.
 Freshening implementation and persistent freshen activation stay with their
 existing/future tickets.
 
@@ -233,6 +275,11 @@ unimplemented optional-baseline default or general release compatibility.
 
 ## Cross-references
 
+- [JJ new preservation research](jj-new-preservation0.gpt61sol.md) establishes
+  that ordinary advancement leaves equal tracked entries and their sharing alone.
+  Reseed need not wrap every revision change: it renews lost sharing and can
+  distribute declared ignored payloads. Tree equality includes type and mode,
+  not merely bytes, so advancement can still replace otherwise similar files.
 - [Original reseed design](reseed0.gpt6a.md#content-contract) supplies the retained
   keep-target and private-payload contract; this proposal relaxes mandatory
   operator baseline declaration, not physical source verification.
