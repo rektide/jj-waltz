@@ -11,6 +11,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
+    title: Connected delivered target-history preservation and exact bookmark replay foundation to its remaining up integration boundary
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Connected delivered source-assertion/current-target semantics and creation payload integration to maintained guides
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
@@ -40,6 +42,11 @@ sources:
   implemented `[freshen]` single/ordered argv policy in the existing preparation
   engine, durable per-step progress, deprecated `[prepare]` alias, and v1 journal
   compatibility. Still activated through `reseed --freshen` pending up integration.
+- [Target history preservation](../../docs/architecture.md#target-history-preservation-foundation) —
+  implemented effective work-tip/selected-fetched-goal ancestry, shared UTC
+  timestamp-name allocation, and create-only exact-pair replay in existing target
+  and preparation intent. Public up and opt-out activation remain integration work;
+  existing feature bookmarks and opt-out JJ history are left intact.
 - [Shared ignored-copy policy and selection](../../docs/architecture.md#shared-ignored-copy-policy-and-selection) —
   root global/local/CLI precedence with explicit empty lists, one compiled
   selection traversal, skipped nonignored source matches, and hard selected-root

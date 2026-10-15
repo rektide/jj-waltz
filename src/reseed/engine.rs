@@ -7,6 +7,7 @@ use crate::cow::payload::{
     Entry, IgnoreRules, Stamp, confined_parents, directory_identity, entries, file_bytes,
     payload_digest, relative, stamp,
 };
+use crate::freshen::history::TargetHistory;
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
@@ -105,6 +106,10 @@ struct Pending {
     link_config: Vec<(String, Option<Vec<u8>>)>,
     #[serde(default)]
     preparation_id: Option<String>,
+    /// Optional up foundation: immutable name/exact-tip intent, never recomputed
+    /// during recovery. Absent in legacy and ordinary reseed plans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history: Option<TargetHistory>,
     /// Runtime observations are not part of immutable target intent.
     #[serde(default)]
     execution_diagnostics: Vec<String>,
@@ -720,6 +725,7 @@ pub(super) fn run(
                 config_root: default.clone(),
                 link_config: link_config_bytes(&default)?,
                 preparation_id: batch.as_ref().map(|b| b.id.clone()),
+                history: None,
                 execution_diagnostics: Vec::new(),
             });
         }
@@ -1540,7 +1546,7 @@ fn describe(plan: &Pending, planned: bool) -> String {
         })
         .collect::<Vec<_>>();
     let ignored_bytes: u64 = payload.iter().map(|s| s.size).sum();
-    format!(
+    let mut description = format!(
         "root {}; {mode}; {} {} tracked paths ({clone_bytes} bytes), {} {} paths; {} ignored roots [{}] ({} files, {ignored_bytes} bytes); {}{}",
         plan.root.display(),
         if planned {
@@ -1580,7 +1586,11 @@ fn describe(plan: &Pending, planned: bool) -> String {
                     .join("; ")
             )
         }
-    )
+    );
+    if let Some(history) = &plan.history {
+        description.push_str(&format!("; {}", history.describe(planned)));
+    }
+    description
 }
 
 fn select_ignored(
@@ -1964,6 +1974,19 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             );
         }
     }
+    if let Some(history) = &plan.history {
+        if history.target.commit_id != plan.old_commit
+            || plan.base_commit.as_deref() != Some(history.upstream_goal.as_str())
+            || history.upstream_goal != plan.source_commit
+        {
+            bail!("target history does not match frozen advancement intent");
+        }
+        // Also covers a preparation handoff or interruption before bookmark
+        // creation. Later phases verify the SAME pair before any tree repair.
+        store.save(plan)?;
+        history.ensure_bookmark(&client)?;
+        fault_after_bookmark()?;
+    }
     // Stock sparse mutations reject --ignore-working-copy. Recovery therefore
     // reconstructs the entire CURRENT commit before a normal sparse command may
     // snapshot it. The write-ahead Clearing phase covers interruptions during
@@ -2163,6 +2186,7 @@ thread_local! {
     static FAIL_AT: std::cell::Cell<Option<Phase>> = const { std::cell::Cell::new(None) };
     static FAIL_AFTER_EXPANSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_NEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_BOOKMARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_DURING_REPAIR: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static SOURCE_LOGICAL_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -2185,6 +2209,13 @@ fn fault_after_new() -> Result<()> {
     #[cfg(test)]
     if FAIL_AFTER_NEW.with(std::cell::Cell::get) {
         bail!("injected interruption after jj new");
+    }
+    Ok(())
+}
+fn fault_after_bookmark() -> Result<()> {
+    #[cfg(test)]
+    if FAIL_AFTER_BOOKMARK.with(std::cell::Cell::get) {
+        bail!("injected interruption after freshen bookmark");
     }
     Ok(())
 }
@@ -2456,6 +2487,7 @@ mod tests {
             config_root: source.clone(),
             link_config: link_config_bytes(&source).unwrap(),
             preparation_id: None,
+            history: None,
             execution_diagnostics: Vec::new(),
         };
         let store = Store::lock(&client).unwrap();
@@ -2508,6 +2540,196 @@ mod tests {
         execute(&store, &default, &mut pending, true).unwrap();
         assert_eq!(pending.desired_commit, child);
         assert_eq!(current_commit(&JjClient::new(&plan.root)).unwrap().1, child);
+    }
+
+    fn history_plan(plan: &Pending, disabled: bool) -> TargetHistory {
+        let client = JjClient::new(&plan.root);
+        let mut names = crate::freshen::history::BookmarkNames::at(
+            &client,
+            &plan.target_operation,
+            jiff::Timestamp::now(),
+        )
+        .unwrap();
+        TargetHistory::plan(
+            &client,
+            &plan.target_operation,
+            &plan.old_commit,
+            &plan.source_commit,
+            disabled,
+            &mut names,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn frozen_history_handoff_survives_lost_bookmark_success_and_advances_without_rebase() {
+        let Some((_temporary, store, mut plan)) = fixture(true) else {
+            return;
+        };
+        let default = plan.source.clone();
+        let target = JjClient::new(&plan.root);
+        plan.history = Some(history_plan(&plan, false));
+        plan.preparation_id = Some("history-batch".into());
+        target.create_bookmark("feature", &plan.old_commit).unwrap();
+        let original = plan.clone();
+        // The existing atomic batch handoff carries the immutable name+tip.
+        prepare::handoff(&store, &original, false).unwrap();
+        FAIL_AFTER_BOOKMARK.with(|f| f.set(true));
+        let error = execute(&store, &default, &mut plan, true).unwrap_err();
+        FAIL_AFTER_BOOKMARK.with(|f| f.set(false));
+        assert!(error.to_string().contains("after freshen bookmark"));
+        let mut pending = store.pending("worker").unwrap().unwrap();
+        assert_eq!(pending.phase, Phase::Prepared);
+        assert_eq!(pending.history, original.history);
+        assert_eq!(current_commit(&target).unwrap().1, plan.old_commit);
+        assert_eq!(
+            fs::read(plan.root.join("different")).unwrap(),
+            b"feature change\n"
+        );
+        // Handoff comparison must include the preservation pair, not only batch ID.
+        let mut changed = pending.clone();
+        changed
+            .history
+            .as_mut()
+            .unwrap()
+            .bookmark
+            .as_mut()
+            .unwrap()
+            .name
+            .push_str("-foreign");
+        store.save(&changed).unwrap();
+        assert!(prepare::handoff(&store, &original, false).is_err());
+        store.save(&pending).unwrap();
+        execute(&store, &default, &mut pending, true).unwrap();
+        let operation = target.operation_id().unwrap();
+        let refs = target.bookmark_refs_at(&operation).unwrap();
+        let preservation = pending.history.as_ref().unwrap().bookmark.as_ref().unwrap();
+        assert_eq!(
+            refs.iter()
+                .filter(|r| r.remote.is_none() && r.name.starts_with("freshen-"))
+                .count(),
+            1
+        );
+        for name in [preservation.name.as_str(), "feature"] {
+            assert_eq!(
+                refs.iter()
+                    .find(|r| r.remote.is_none() && r.name == name)
+                    .unwrap()
+                    .normal_target(),
+                Some(plan.old_commit.as_str())
+            );
+        }
+        assert!(
+            exact_empty_child(
+                &target,
+                &operation,
+                &pending.desired_commit,
+                &plan.source_commit
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            fs::read(plan.root.join("different")).unwrap(),
+            b"source baseline\n"
+        );
+        assert_eq!(
+            file_bytes(
+                &target,
+                &operation,
+                &preservation.tip,
+                Path::new("different")
+            )
+            .unwrap(),
+            b"feature change\n"
+        );
+    }
+
+    #[test]
+    fn changed_preservation_bookmark_blocks_later_phase_repair_without_snapshot() {
+        let Some((_temporary, store, mut plan)) = fixture(true) else {
+            return;
+        };
+        let default = plan.source.clone();
+        let target = JjClient::new(&plan.root);
+        plan.history = Some(history_plan(&plan, false));
+        FAIL_AT.with(|f| f.set(Some(Phase::Filling)));
+        assert!(execute(&store, &default, &mut plan, false).is_err());
+        FAIL_AT.with(|f| f.set(None));
+        let mut pending = store.pending("worker").unwrap().unwrap();
+        assert_eq!(pending.phase, Phase::Filling);
+        let bookmark = pending
+            .history
+            .as_ref()
+            .unwrap()
+            .bookmark
+            .as_ref()
+            .unwrap()
+            .clone();
+        // External, deliberate movement during interruption. Resume may not undo
+        // it, allocate a second name, repair files, or snapshot partial contents.
+        target
+            .run([
+                "--ignore-working-copy",
+                "bookmark",
+                "set",
+                &bookmark.name,
+                "-r",
+                &plan.source_commit,
+                "--allow-backwards",
+            ])
+            .unwrap();
+        fs::write(plan.root.join("different"), b"partial bytes\n").unwrap();
+        let before = current_commit(&target).unwrap();
+        let error = execute(&store, &default, &mut pending, true).unwrap_err();
+        assert!(error.to_string().contains("another target"), "{error:#}");
+        assert_eq!(current_commit(&target).unwrap(), before);
+        assert_eq!(
+            fs::read(plan.root.join("different")).unwrap(),
+            b"partial bytes\n"
+        );
+        assert_eq!(
+            store.pending("worker").unwrap().unwrap().history,
+            plan.history
+        );
+    }
+
+    #[test]
+    fn history_opt_out_still_leaves_exact_prior_commit_recoverable() {
+        let Some((_temporary, store, mut plan)) = fixture(true) else {
+            return;
+        };
+        let default = plan.source.clone();
+        let target = JjClient::new(&plan.root);
+        plan.history = Some(history_plan(&plan, true));
+        assert!(!plan.history.as_ref().unwrap().published);
+        execute(&store, &default, &mut plan, false).unwrap();
+        let operation = target.operation_id().unwrap();
+        assert!(
+            !target
+                .bookmark_refs_at(&operation)
+                .unwrap()
+                .iter()
+                .any(|r| r.name.starts_with("freshen-"))
+        );
+        assert!(
+            exact_empty_child(
+                &target,
+                &operation,
+                &plan.desired_commit,
+                &plan.source_commit
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            file_bytes(
+                &target,
+                &operation,
+                &plan.old_commit,
+                Path::new("different")
+            )
+            .unwrap(),
+            b"feature change\n"
+        );
     }
 
     #[test]

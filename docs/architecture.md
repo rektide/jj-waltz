@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
+    title: Implemented target-history planning, collision-safe timestamp allocation, and exact create-only bookmark recovery through existing pending and preparation intent
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
     title: Fixed nested payload preflight and implemented source assertions/current-target borrowing with phase-specific preparation and frozen-target recovery
   - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
@@ -84,6 +86,10 @@ offline.
 - `freshen::source` owns operation-bound upstream selection and post-fetch graph
   proofs. This foundation does not fetch, advance, or refill workspaces itself;
   preparation/reseed coordination owns those mutations and their journals.
+- `freshen::history` owns target work-tip/publication planning, timestamp bookmark
+  allocation, and create-only verification of a previously journaled name/tip.
+  The reseed executor checks this optional frozen intent before clearing or
+  advancing; the public up/opt-out connection remains an integration task.
 - `links` owns config merging, path confinement, link classification, preflight,
   and filesystem changes.
 - `shell` owns shared shell behavior. Each shell adapter varies syntax, not policy.
@@ -455,6 +461,68 @@ freshly built. There is no automatic payload pruning. The command engine remains
 reachable through legacy `reseed --freshen` until the commissioned up integration;
 this stage introduces no partial public up command. See
 [operator configuration and retry guidance](reseed.md#freshen-the-source).
+
+### Target history preservation foundation
+
+[`TargetHistory`](../src/freshen/history.rs) implements the target-preservation
+foundation of [commissioned up](../design/workspace-reseed/up0.gpt6a.md#unpublished-target-preservation).
+It is **not yet activated by a public command**. Ordinary reseed and legacy
+`reseed --freshen` keep their existing behavior; up and `--no-freshen-bookmark`
+remain in `jjwaltz-variants-up-flow`.
+
+After snapshotting target work and proving its disk bytes, the coordinator calls
+`TargetHistory::plan(client, operation, target_commit, fetched_goal,
+no_freshen_bookmark, names)`. IDs are queried with explicit `commit_id(...)`
+revsets, not symbols which could be shadowed by bookmarks. The effective work
+tip is the sole parent of an ordinary undescribed, unconflicted, nondivergent
+empty change; otherwise it is literal target `@`. Described empty changes and
+empty merges remain work. Publication is ancestry/equality against the **selected
+fetched goal**, not source `@`, the old remote tip, or equal file trees. Opt-out
+still records this history assessment; it only suppresses the bookmark.
+
+`BookmarkNames::at(client, operation, jiff::Timestamp::now())` supplies one shared
+allocator per batch. Names use UTC `freshen-YYYYMMDDTHHMMSS.nnnnnnnnnZ`, with
+`-2`, `-3`, ... on collision, including identical timestamps/clock repeats.
+Existing local/remote names and deleted tracked relationships are reserved.
+Before planning a new batch, integration must also call `reserve(name)` for names
+in other active pending/preparation intents: those bookmarks may not exist yet.
+Do not rebuild an allocator or replan when recovering frozen targets.
+
+The existing target pending/receipt schema has an optional `history` field;
+legacy absence stays absent on serialization. It holds target facts/operation,
+work tip, exact upstream goal, publication assessment, and the chosen bookmark
+name/exact tip. Preparation's atomic `plans` and immutable handoff comparison
+carry the same field without adding permanent workspace tracking. The eventual
+up planner must populate it **before** the batch plans are saved/handed off.
+The executor verifies it matches the frozen old commit and new source/base goal,
+durably saves intent, then ensures the pair before sparse clearing or advancement.
+This also applies on later-phase recovery, before partial-tree reconstruction.
+Source preparation can retry target planning before plans freeze, but cannot
+create preservation bookmarks during that unfrozen stage.
+
+Creation uses snapshot-disabled native **`bookmark create`**, never set/move.
+Absent name creates at the exact stored tip; an already identical pair is a no-op
+(including lost command success); another target, conflict, or remote collision
+stops without reallocation or overwrite. Native create checks its live view too,
+so a collision inserted between precheck and create is refused. A postcheck
+requires the exact pair before allowing target mutation. JW's existing repository
+operation lock serializes JW operations, **not arbitrary concurrent JJ writers**:
+native concurrent operations can still create conflicts/multiple operation heads,
+which stop the operation rather than being repaired. Pause writers; this is not
+a cross-process compare-and-swap or a guarantee against later external movement.
+
+No existing feature bookmark is moved. Advancement remains a new empty change on
+the prepared baseline, not a rebase; opting out leaves the old JJ history intact.
+Focused native tests cover scratch/meaningful empty/merge publication, exact-ID
+shadowing, deterministic collisions and reserved uncreated intents, a precheck/
+create collision, serialization/replay, lost success, immutable handoff identity,
+later-phase mismatch before repair, and opt-out history. The real-CoW executor
+checks use disposable Btrfs repositories; the selected-fetched-goal case uses
+only a disposable local Git remote in [`tests/freshen_source.rs`](../tests/freshen_source.rs).
+Ten new focused cases and six relevant existing recovery regressions passed on
+installed JJ `0.45.1-33d3a595`, with real CoW required for executor/preparation
+checks; root format and all-target/all-feature Clippy checks passed. This is not
+a rerun of the full JJ release matrix or unrelated suites.
 
 ### Native freshening source foundation
 

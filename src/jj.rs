@@ -668,6 +668,21 @@ impl JjClient {
         Ok(!self.resolve_all_at(operation, revset)?.is_empty())
     }
 
+    /// Create, never set/move, a bookmark at an exact commit without snapshotting.
+    /// Native JJ refuses an existing local bookmark, including conflicted refs.
+    pub fn create_bookmark(&self, name: &str, commit: &str) -> Result<JjOutput> {
+        let revision = commit_id_revset(commit)?;
+        self.run([
+            "--ignore-working-copy",
+            "bookmark",
+            "create",
+            "-r",
+            &revision,
+            "--",
+            name,
+        ])
+    }
+
     /// Read local bookmark names at one frozen repository operation.
     pub fn local_bookmark_names_at(
         &self,
