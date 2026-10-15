@@ -21,6 +21,8 @@ const REVISION_TEMPLATE: &str =
 const LOCAL_BOOKMARK_NAMES_TEMPLATE: &str = r#"if(remote, "", json(name) ++ "\n")"#;
 const BOOKMARK_NAMES_TEMPLATE: &str = r#"json(name) ++ "\n""#;
 const TRACKED_FILES_TEMPLATE: &str = r#"json(path) ++ "\n""#;
+const COMMIT_FACTS_TEMPLATE: &str = r#"json(commit_id) ++ "\t" ++ json(change_id) ++ "\t" ++ json(parents.map(|c| c.commit_id())) ++ "\t" ++ json(description) ++ "\t" ++ json(empty) ++ "\t" ++ json(conflict) ++ "\t" ++ json(divergent) ++ "\n""#;
+const BOOKMARK_REFS_TEMPLATE: &str = r#"json(name) ++ "\t" ++ json(remote) ++ "\t" ++ json(tracked) ++ "\t" ++ json(present) ++ "\t" ++ json(conflict) ++ "\t" ++ json(added_targets.map(|c| c.commit_id())) ++ "\t" ++ json(removed_targets.map(|c| c.commit_id())) ++ "\n""#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JjVersion {
@@ -243,6 +245,50 @@ pub struct ResolvedRevision {
     pub change_id: String,
     pub commit_id: String,
     pub description: String,
+}
+
+/// Full commit facts, including intentional empty changes and merge parents.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommitFacts {
+    pub commit_id: String,
+    pub change_id: String,
+    pub parents: Vec<String>,
+    pub description: String,
+    pub empty: bool,
+    pub conflicted: bool,
+    pub divergent: bool,
+}
+
+impl CommitFacts {
+    /// Only an undescribed, empty single-parent change is disposable scratch.
+    pub fn ordinary_empty_child(&self) -> bool {
+        self.empty
+            && self.description.is_empty()
+            && self.parents.len() == 1
+            && !self.conflicted
+            && !self.divergent
+    }
+}
+
+/// Native bookmark identity and target alternatives; no human display parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookmarkRef {
+    pub name: String,
+    pub remote: Option<String>,
+    pub tracked: bool,
+    pub present: bool,
+    pub conflicted: bool,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl BookmarkRef {
+    pub fn normal_target(&self) -> Option<&str> {
+        match self.added.as_slice() {
+            [target] if self.present && !self.conflicted && self.removed.is_empty() => Some(target),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +544,104 @@ impl JjClient {
         parse_resolved_revisions(output.stdout()?)
     }
 
+    /// Read exactly one commit, without snapshotting, at a frozen operation.
+    pub fn commit_facts_at(&self, operation: &str, revset: &str) -> Result<CommitFacts> {
+        let output = self.run_at(
+            operation,
+            [
+                "log",
+                "--no-graph",
+                "-r",
+                revset,
+                "-T",
+                COMMIT_FACTS_TEMPLATE,
+            ],
+        )?;
+        let records = output.stdout()?.lines().collect::<Vec<_>>();
+        let [record] = records.as_slice() else {
+            bail!(
+                "JJ commit facts query returned {} records; expected one",
+                records.len()
+            );
+        };
+        let fields = record.split('\t').collect::<Vec<_>>();
+        let [
+            commit,
+            change,
+            parents,
+            description,
+            empty,
+            conflicted,
+            divergent,
+        ] = fields.as_slice()
+        else {
+            bail!("JJ commit facts query returned malformed output");
+        };
+        Ok(CommitFacts {
+            commit_id: parse_json_field(commit, 0, "commit ID")?,
+            change_id: parse_json_field(change, 0, "change ID")?,
+            parents: parse_json_field(parents, 0, "parents")?,
+            description: parse_json_field(description, 0, "description")?,
+            empty: parse_json_field(empty, 0, "empty")?,
+            conflicted: parse_json_field(conflicted, 0, "conflicted")?,
+            divergent: parse_json_field(divergent, 0, "divergent")?,
+        })
+    }
+
+    /// Include untracked remote refs and deleted tracked local relationships.
+    pub fn bookmark_refs_at(&self, operation: &str) -> Result<Vec<BookmarkRef>> {
+        let output = self.run_at(
+            operation,
+            [
+                "bookmark",
+                "list",
+                "--all-remotes",
+                "-T",
+                BOOKMARK_REFS_TEMPLATE,
+            ],
+        )?;
+        output
+            .stdout()?
+            .lines()
+            .enumerate()
+            .map(|(index, record)| {
+                let fields = record.split('\t').collect::<Vec<_>>();
+                let [name, remote, tracked, present, conflicted, added, removed] =
+                    fields.as_slice()
+                else {
+                    bail!(
+                        "JJ bookmark refs query returned malformed record {}",
+                        index + 1
+                    );
+                };
+                Ok(BookmarkRef {
+                    name: parse_json_field(name, index, "name")?,
+                    remote: parse_json_field(remote, index, "remote")?,
+                    tracked: parse_json_field(tracked, index, "tracked")?,
+                    present: parse_json_field(present, index, "present")?,
+                    conflicted: parse_json_field(conflicted, index, "conflicted")?,
+                    added: parse_json_field(added, index, "added targets")?,
+                    removed: parse_json_field(removed, index, "removed targets")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Test ancestry using exact IDs, immune to same-spelled bookmarks/tags.
+    pub fn is_ancestor_at(
+        &self,
+        operation: &str,
+        ancestor: &str,
+        descendant: &str,
+    ) -> Result<bool> {
+        let revset = format!(
+            "{} & ::{}",
+            commit_id_revset(ancestor)?,
+            commit_id_revset(descendant)?
+        );
+        Ok(!self.resolve_all_at(operation, revset)?.is_empty())
+    }
+
     /// Read local bookmark names at one frozen repository operation.
     pub fn local_bookmark_names_at(
         &self,
@@ -631,6 +775,14 @@ impl JjClient {
             })?;
         Ok(JjOutput { output })
     }
+}
+
+/// Quote IDs explicitly instead of trusting symbol-resolution priority.
+pub(crate) fn commit_id_revset(id: &str) -> Result<String> {
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("invalid commit ID {id:?}");
+    }
+    Ok(format!("commit_id({})", serde_json::to_string(id)?))
 }
 
 /// Replace a workspace's local working-copy state with a copy of another workspace's,

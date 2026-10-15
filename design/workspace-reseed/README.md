@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6-astra
   at: 2026-10-14
 updated:
-  by: model:openai/gpt-6-astra
+  by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Added the native source foundation implementation pointer and distinguished current commission from superseded freshening/default alternatives
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
     title: Commissioned up and shared copying implementation after repeat-reseed design and independent JJ preservation/tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
@@ -27,16 +29,20 @@ sources:
   native upstream selection, sequential local freshening commands, unpublished
   target bookmarks, global ignored-copy policy, and symmetric command controls.
   Replaces the proposal to keep adding freshening flags to reseed/creation.
+- [Native source foundation](../../docs/architecture.md#native-freshening-source-foundation) —
+  implemented operation-bound upstream identity and post-fetch graph proofs, with
+  disposable native JJ verification. Not yet connected to the existing CLI;
+  the pointer records the explicit not-yet-imported-ref integration edge.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;
-  not implemented by the concurrent variants work. Its keep-target versus
-  reset-to-donor default is now an explicit human-review junction.
+  not yet implemented. The later up commission settles the earlier review
+  junction: ordinary reseed keeps target work; up advances to the prepared goal.
 - [JJ new preserves unchanged files](jj-new-preservation0.gpt61sol.md) — inspected
   checkout algorithm and native Btrfs evidence: ordinary advancement preserves
   equal-file inodes and sharing, but does not renew sharing for rewritten files.
 - [Native tracked bookmarks for donor updates](bookmark-tracking0.gpt61sol.md) —
-  existing local/remote tracking and graph relationships for proposed `up`,
+  existing local/remote tracking and graph relationships preceding commissioned `up`,
   including already-fetched movement, unpublished work, and ambiguous source
   lines. No new persistent following state or operation-log inference.
 - [Repeatable in-place reflink reseeding](reseed0.gpt6a.md) — recommended
@@ -48,8 +54,9 @@ sources:
   [wildcard groups](../../docs/reseed.md#wildcard-groups).
 - [Freshen the donor before reseeding](source-freshen0.gpt61sol.md) — rationale and
   local delivery checkpoint for explicit fetch, source advancement, configured
-  dependency preparation, and recoverable handoff. Default-on activation remains
-  a separate, unimplemented dependent ticket; use the operator guide for syntax.
+  dependency preparation, and recoverable handoff. Its deferred default-on
+  alternative is superseded by the up commission; use the operator guide for
+  the still-current CLI syntax until that migration lands.
 
 Existing behavior: [CoW creation](../../README.md#copy-on-write-workspaces).
 Integration boundary: [architecture](../../docs/architecture.md#module-map).

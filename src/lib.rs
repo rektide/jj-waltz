@@ -3,6 +3,7 @@ pub(crate) mod config;
 pub mod context;
 pub(crate) mod cow;
 pub mod doctor;
+pub mod freshen;
 pub mod jj;
 pub(crate) mod lifecycle;
 pub mod links;

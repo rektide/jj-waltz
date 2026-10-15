@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Implemented native freshening source selection and frozen post-fetch validation, verified against disposable native Git/JJ sources
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified shared add/s placement, snapshotted-current creation bases, explicit mode resolution, and visible fallback reporting
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -70,6 +72,9 @@ offline.
   public commands through `JjClient`, not creation's private `tree_state` copying.
   Filesystem cloning and validation remain in `cow`; configured links remain in
   `links`. Historical lifecycle metadata is not rewritten by reseeding.
+- `freshen::source` owns operation-bound upstream selection and post-fetch graph
+  proofs. This foundation does not fetch, advance, or refill workspaces itself;
+  preparation/reseed coordination owns those mutations and their journals.
 - `links` owns config merging, path confinement, link classification, preflight,
   and filesystem changes.
 - `shell` owns shared shell behavior. Each shell adapter varies syntax, not policy.
@@ -260,7 +265,8 @@ associate pending records/receipts, while mutable runtime link diagnostics are
 separate from planned warnings. Lost handoff recreates only missing recorded
 intent; completed receipts prevent rerunning finished targets or preparation.
 Target checks refuse changed/stale work rather than snapshotting installer changes
-into it. Default-on configuration remains a separate, unimplemented follow-up.
+into it. The commissioned replacement is explicit `up`, not default-on reseed
+freshening; orchestration has not yet been connected to the new source foundation.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
 prefills tree-identical paths, expands sparsity, and verifies the exact target
@@ -280,6 +286,67 @@ import of JJ's private working-copy state.
 
 See the [operator guide](reseed.md) and
 [design](../design/workspace-reseed/reseed0.gpt6a.md) for policy and limitations.
+
+### Native freshening source foundation
+
+[`SourceSelection`](../src/freshen/source.rs) implements the first foundation of
+the [commissioned up workflow](../design/workspace-reseed/up0.gpt6a.md), not a new
+CLI command yet. Existing `reseed --freshen` still uses its earlier preparation
+path until that integration lands.
+
+The caller snapshots real source work, verifies filesystem bytes, and supplies one
+captured operation. Selection and validation use only frozen read-only JJ queries:
+
+1. Derive source base `B` from the sole parent of ordinary undescribed empty `@`;
+   otherwise use `@` itself. Described empty changes and merges are not disposable
+   scratch. A directly published nonempty source is valid; an unpublished source
+   or empty child above unpublished history is not.
+2. An explicit source revset wins. Named remote symbols retain their identity even
+   when other refs share the same tip. A tracked local symbol can identify its
+   remote; other expressions must resolve to a unique recorded remote tip. The
+   expression currently must resolve before fetch. Legacy freshening also permits
+   an explicit not-yet-imported branch; retaining that behavior is an open resolver
+   extension before up integration, not a change to the existing CLI path.
+   A configured remote constrains selection;
+   it never silently redirects an explicitly named remote.
+3. Otherwise collect all applicable tracked pairs. Both the remote and some local
+   target alternative must contain `B`. A deleted local relationship or relevant
+   remote conflict is retained as a blocker, not silently discarded. Exact and
+   descendant local targets compete in the same tier; any ambiguity stops.
+   Only when this tier is empty may a unique exact remote target at `B` win,
+   including **untracked** refs. Synthetic `@git` refs never identify an upstream.
+4. Before fetch, require the base, explicit goal, and selected tracked local target
+   to be published on the chosen remote. An unrelated tracked branch whose local
+   target descends from `B`, but whose remote does not contain `B`, is inapplicable.
+   An applicable tracked pair with unpublished local work blocks rather than
+   falling through. An untracked remote does not give its unrelated same-named
+   local bookmark any authority, and that local bookmark remains untouched.
+
+The serializable selection freezes names, tracking state, old target IDs, source
+facts, and operation for the eventual preparation journal. After the coordinator
+fetches, validation rereads **the same ref**, requires old remote ancestry in the
+fetched remote (not merely source-base ancestry), and rejects deletion, conflicts,
+tracking changes, local unpublished work, or sideways/rewound goals. A tracked
+local may lag the remote if it remains published; no repair is performed.
+Explicit revsets are reevaluated as goals on that pinned line; a fixed ID can
+deliberately stay fixed rather than implicitly becoming a bookmark-following rule.
+
+The source must remain the same revision. One safe normalization is allowed:
+native JJ can create an ordinary empty child above a directly published source
+when that checkout becomes immutable during fetch. The original tree and history
+are unchanged. Filesystem proof, ownership checks, and the exact accepted source
+revision still belong to the coordinator; graph queries do not prove disk bytes.
+Once the fetched goal is frozen, recovery must use it rather than selecting or
+fetching again. There is no permanent following state, operation-log inference,
+default-branch heuristic, or automatic bookmark movement.
+
+[`tests/freshen_source.rs`](../tests/freshen_source.rs) exercises these boundaries
+using disposable local Git remotes, including the exact-main/advanced-dev
+ambiguity, untracked remote with unrelated local dev, unpublished empty-parent
+history, conflicts, old-remote rewind, and native immutable-checkout normalization.
+All 14 cases passed on pinned JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0. No live source was mutated.
+These are graph/reference checks; this foundation changes no CoW copying path and
+does not claim a new end-to-end up or reflink verification.
 
 ### Metadata repair
 
