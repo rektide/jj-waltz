@@ -9,6 +9,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "lifecycle/ignored.rs"]
+mod ignored;
+use ignored::IgnoredPlan;
+
 #[derive(Debug, Clone)]
 pub struct CreationPolicy {
     at_revset: Option<String>,
@@ -19,6 +23,8 @@ pub struct CreationPolicy {
     config: Config,
     colocate_override: Option<bool>,
     destination: Option<PathBuf>,
+    copy_ignored: Option<Vec<String>>,
+    no_copy_ignored: bool,
 }
 
 impl CreationPolicy {
@@ -47,6 +53,8 @@ impl CreationPolicy {
             config,
             colocate_override: None,
             destination: None,
+            copy_ignored: None,
+            no_copy_ignored: false,
         })
     }
 
@@ -58,6 +66,29 @@ impl CreationPolicy {
     pub fn with_destination(mut self, destination: Option<PathBuf>) -> Self {
         self.destination = destination;
         self
+    }
+
+    pub fn with_ignored_copy(mut self, patterns: Vec<String>, disabled: bool) -> Self {
+        self.copy_ignored = (!patterns.is_empty()).then_some(patterns);
+        self.no_copy_ignored = disabled;
+        self
+    }
+
+    fn ignored_policy(
+        &self,
+        inventory: &workspace::WorkspaceInventory,
+    ) -> Result<cow::ignored::Policy> {
+        let local = if self.no_copy_ignored || self.copy_ignored.is_some() {
+            None
+        } else {
+            cow::ignored::Policy::local_patterns(inventory.primary_policy_root()?)?
+        };
+        Ok(cow::ignored::Policy::resolve(
+            self.copy_ignored.as_deref(),
+            local.as_deref(),
+            self.config.copy_ignored.as_deref(),
+            self.no_copy_ignored,
+        ))
     }
 
     fn preflight_creation_mode(&self, client: &JjClient) -> Result<CreationMode> {
@@ -189,6 +220,7 @@ pub struct RepairResult {
 struct CheckoutPlan {
     clone_from: Option<PathBuf>,
     warning: Option<String>,
+    ignored: IgnoredPlan,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +236,7 @@ struct PendingWorkspace {
     result: AddResult,
     metadata: ManagedWorkspaceMetadata,
     links: Option<LinkApplication>,
+    private_payload: Vec<PathBuf>,
 }
 
 impl PendingWorkspace {
@@ -247,7 +280,9 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         .apply_links
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
-    let checkout = plan_checkout(mode, &inventory, &plans)?;
+    let mut checkout = plan_checkout(mode, &inventory, &plans)?;
+    checkout.ignored =
+        IgnoredPlan::prepare(&inventory, &base, &policy.ignored_policy(&inventory)?)?;
 
     let mut pending = Vec::new();
     for plan in plans {
@@ -270,6 +305,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
     let warnings = checkout
         .warning
         .into_iter()
+        .chain(checkout.ignored.diagnostics)
         .chain(
             pending
                 .iter()
@@ -371,7 +407,11 @@ fn switch_workspaces_with_creation(
         .apply_links
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
-    let checkout = plan_checkout(mode, &inventory, &all_plans)?;
+    let mut checkout = plan_checkout(mode, &inventory, &all_plans)?;
+    if let Some(base) = &base {
+        checkout.ignored =
+            IgnoredPlan::prepare(&inventory, base, &policy.ignored_policy(&inventory)?)?;
+    }
 
     let mut intermediate = Vec::new();
     for plan in intermediate_plans {
@@ -463,6 +503,7 @@ fn switch_workspaces_with_creation(
     let warnings = checkout
         .warning
         .into_iter()
+        .chain(checkout.ignored.diagnostics)
         .chain(
             intermediate
                 .iter()
@@ -723,10 +764,12 @@ fn plan_checkout(
                 warning: Some(format!(
                     "copy-on-write is unavailable, using ordinary JJ workspace creation: {reason}"
                 )),
+                ..CheckoutPlan::default()
             },
             None => CheckoutPlan {
                 clone_from: Some(source_root.to_path_buf()),
                 warning: None,
+                ..CheckoutPlan::default()
             },
         },
     )
@@ -769,17 +812,25 @@ fn create_workspace(
         return Err(with_cleanup_error(error, cleanup));
     }
 
-    match apply_links(config_root, &result.path) {
+    // Payload precedes links, and overlap is rejected even when the link source
+    // would otherwise be absent. Private dependencies can never become donor links.
+    let application = (|| {
+        checkout.ignored.copy_to(&result.path, config_root)?;
+        apply_links(config_root, &result.path)
+    })();
+    match application {
         Ok(links) => Ok(PendingWorkspace {
             result,
             metadata,
             links,
+            private_payload: checkout.ignored.roots().to_vec(),
         }),
         Err(error) => {
             let pending = PendingWorkspace {
                 result,
                 metadata,
                 links: None,
+                private_payload: checkout.ignored.roots().to_vec(),
             };
             Err(with_cleanup_error(
                 error,
@@ -831,7 +882,10 @@ fn rollback_pending(store: &WorkspaceMetadataStore, pending: PendingWorkspace) -
         errors.push(format!("remove workspace links: {error:#}"));
     }
 
-    match workspace::rollback_added_workspace(&pending.result) {
+    match workspace::rollback_added_workspace_with_payload(
+        &pending.result,
+        &pending.private_payload,
+    ) {
         Ok(()) => match store.remove_if_matches(&pending.metadata) {
             Ok(true) => {}
             Ok(false) => errors.push(format!(

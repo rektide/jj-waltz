@@ -119,6 +119,12 @@ struct AddCommand {
     no_bookmark: bool,
     #[arg(long, action = ArgAction::SetTrue, help = "Skip applying workspace links")]
     no_links: bool,
+    /// Privately CoW-copy eligible ignored roots into new workspaces (repeatable; replaces local/global policy).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for new workspaces, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
     #[arg(
         long,
         action = ArgAction::SetTrue,
@@ -129,7 +135,7 @@ struct AddCommand {
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Use ordinary JJ checkout instead of copy-on-write"
+        help = "Use ordinary tracked JJ checkout (ignored payload still requires CoW)"
     )]
     no_cow: bool,
     #[arg(
@@ -187,6 +193,12 @@ struct SwitchCommand {
     print_path: bool,
     #[arg(long, action = ArgAction::SetTrue, help = "Skip applying workspace links")]
     no_links: bool,
+    /// Privately CoW-copy eligible ignored roots into new workspaces only (repeatable; replaces local/global policy).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for new workspaces, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
     #[arg(
         long,
         action = ArgAction::SetTrue,
@@ -197,7 +209,7 @@ struct SwitchCommand {
     #[arg(
         long,
         action = ArgAction::SetTrue,
-        help = "Use ordinary JJ checkout instead of copy-on-write"
+        help = "Use ordinary tracked JJ checkout (ignored payload still requires CoW)"
     )]
     no_cow: bool,
     #[arg(
@@ -745,7 +757,8 @@ fn run_add(cmd: AddCommand) -> Result<()> {
     } else {
         None
     })
-    .with_destination(destination);
+    .with_destination(destination)
+    .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
     let outcome = lifecycle::add_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);
     for created in &outcome.created {
@@ -775,7 +788,8 @@ fn run_switch(cmd: SwitchCommand) -> Result<()> {
     } else {
         None
     })
-    .with_destination(destination);
+    .with_destination(destination)
+    .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
     let outcome = lifecycle::switch_workspaces(&names, &policy)?;
     print_warnings(&outcome.warnings);
     for created in &outcome.intermediate {

@@ -182,6 +182,24 @@ impl WorkspaceInventory {
         &self.current_root
     }
 
+    /// The physical JJ store owner, never a workspace merely named `default`.
+    /// Recheck the real directory and repository pointer before trusting local policy.
+    pub(crate) fn primary_policy_root(&self) -> Result<&Path> {
+        let primary = self.primary_root.as_deref().context(
+            "cannot verify primary checkout for ignored-copy policy; use --copy-ignored or --no-copy-ignored",
+        )?;
+        let pointer = primary.join(".jj/repo");
+        let repository =
+            crate::context::repository_path(&self.current_root).map_err(anyhow::Error::msg)?;
+        if !fs::symlink_metadata(primary)?.is_dir()
+            || !fs::symlink_metadata(&pointer)?.is_dir()
+            || pointer.canonicalize()? != repository
+        {
+            bail!("primary policy owner no longer owns the JJ repository");
+        }
+        Ok(primary)
+    }
+
     pub fn previous_name(&self) -> Result<&str> {
         self.previous.as_deref().ok_or_else(|| {
             anyhow!(
@@ -806,16 +824,51 @@ pub fn rollback_added_workspace(result: &AddResult) -> Result<()> {
     )
 }
 
+pub(crate) fn rollback_added_workspace_with_payload(
+    result: &AddResult,
+    roots: &[PathBuf],
+) -> Result<()> {
+    rollback_workspace_parts_with_payload(
+        &result.workspace,
+        &result.path,
+        result.bookmark.as_deref(),
+        result.owned_git_worktree.as_ref(),
+        roots,
+    )
+}
+
 fn rollback_workspace_parts(
     name: &str,
     path: &Path,
     bookmark: Option<&str>,
     owner: Option<&crate::ownership::OwnedGitWorktree>,
 ) -> Result<()> {
+    rollback_workspace_parts_with_payload(name, path, bookmark, owner, &[])
+}
+
+fn rollback_workspace_parts_with_payload(
+    name: &str,
+    path: &Path,
+    bookmark: Option<&str>,
+    owner: Option<&crate::ownership::OwnedGitWorktree>,
+    private_payload: &[PathBuf],
+) -> Result<()> {
     let client = JjClient::current()?;
     // Do not delete the directory or bookmark if forgetting/registration cleanup fails.
     crate::ownership::forget_created(&client, name, path, owner)?;
     let mut errors = Vec::new();
+    // Only after creation ownership is verified may read-only cloned directories
+    // be made removable. Never relax source, sibling, or arbitrary target content.
+    for root in private_payload {
+        #[cfg(unix)]
+        crate::cow::payload::confined_parents(path, root)?;
+        if let Err(error) = cow::remove_path(&path.join(root)) {
+            errors.push(format!(
+                "remove private payload {}: {error:#}",
+                root.display()
+            ));
+        }
+    }
     if let Some(bookmark) = bookmark
         && let Err(error) = JjClient::current()?.run(["bookmark", "delete", bookmark])
     {

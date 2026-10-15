@@ -27,6 +27,21 @@ pub(crate) struct Policy {
 }
 
 impl Policy {
+    /// Creation shares only the copy list, not reseed's source/freshening settings.
+    pub fn local_patterns(primary: &Path) -> Result<Option<Vec<String>>> {
+        #[derive(serde::Deserialize)]
+        struct CopyPolicy {
+            copy_ignored: Option<Vec<String>>,
+        }
+        let path = primary.join(".jwreseed.local.toml");
+        match fs::read_to_string(&path) {
+            Ok(text) => Ok(toml::from_str::<CopyPolicy>(&text)
+                .with_context(|| format!("invalid {}", path.display()))?
+                .copy_ignored),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
+        }
+    }
     pub fn resolve(
         cli: Option<&[String]>,
         local: Option<&[String]>,
@@ -157,17 +172,14 @@ pub(crate) fn validate_selected<'a>(
     Ok(())
 }
 
-fn require_untracked(path: &Path, tracked: &BTreeSet<&Path>) -> Result<()> {
+pub(crate) fn require_untracked(path: &Path, tracked: &BTreeSet<&Path>) -> Result<()> {
     let descendant = tracked
         .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
         .next();
     if descendant.is_some_and(|tracked| tracked.starts_with(path))
         || path.ancestors().any(|ancestor| tracked.contains(ancestor))
     {
-        bail!(
-            "ignored source root overlaps tracked files: {}",
-            path.display()
-        );
+        bail!("ignored root overlaps tracked files: {}", path.display());
     }
     Ok(())
 }

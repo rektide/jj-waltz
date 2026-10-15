@@ -8,6 +8,8 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
+    title: Connected ignored-copy policy documentation to delivered add/s payload integration and primary policy ownership
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Implemented local command/recovery foundations, then shared ignored-copy precedence, single-walk eligible selection, and frozen empty-selection compatibility
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -130,10 +132,14 @@ freshening/build commands.
 | `["**/target"]` | `["cache"]` | `--copy-ignored node_modules` | `["node_modules"]` |
 | any | any | `--no-copy-ignored` | `[]` |
 
-Current exposure is `reseed`, including its legacy `--freshen` preparation path.
-The policy and selector are shared foundations; add/s payload integration is the
-next stage and is **not exposed yet**. Up remains unintegrated. No creation-mode
-behavior or new fallback flag is introduced by this stage.
+The same policy and selector apply to `add`/`s` **new workspaces**, `reseed`, and
+its legacy `--freshen` preparation path. Up remains unintegrated. Creation reads
+only the verified primary store owner's local copy list, without adopting local
+source or freshening settings. It creates selected payloads after the tracked
+checkout and before workspace links; an existing switch never refills payloads.
+`--no-cow` controls tracked creation, not the independently required real-CoW
+payload phase. See [creation's private dependencies](../README.md#private-dependencies-on-creation)
+for examples, link conflicts, and failure cleanup.
 
 All patterns are compiled together for each selection traversal.
 The traversal keeps possible prefixes, skips impossible subtrees, and stops at

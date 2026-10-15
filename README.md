@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
+    title: Implemented and verified add/s private ignored payloads, primary-owned copy policy, strict CoW and scoped failure cleanup
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Aligned local command/recovery and shared ignored-copy guidance with implemented policy, eligible selection, and current exposure boundaries
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -286,9 +288,10 @@ Normal JJ auto-tracking rules apply during this snapshot. The new workspace star
 as an empty child of that exact commit. `--at REVSET` instead selects one explicit
 base; it is not replaced by the current source revision.
 
-Only files JJ tracks are cloned. Ignored files such as `.env` or `node_modules`
-are not copied; use [workspace links](#workspace-links) only when deliberate sharing
-is wanted. Tracked directories are not replaced by whole-directory links.
+The tracked checkout clones only files JJ tracks. Ignored data is copied only
+when selected by [ignored-copy policy](#ignored-copy-defaults); use
+[workspace links](#workspace-links) only when deliberate sharing is wanted.
+Tracked directories are not replaced by whole-directory links.
 
 When the filesystem cannot clone, `jw` warns and uses ordinary JJ workspace
 creation. With Watchman configured, or if JJ rejects the copied working-copy
@@ -296,6 +299,27 @@ state, `jw` also warns and recreates through the ordinary path. These are ordina
 checkouts, not CoW successes. CLI warnings go to stderr, including when shell
 switching reserves stdout for a path; the interactive manager shows a warning report.
 Every fallback preserves the source checkout's sparse patterns.
+
+### Private dependencies on creation
+
+```sh
+jw add --path ../repo-fix --from /path/to/source \
+  --copy-ignored node_modules --copy-ignored '**/target/'
+jw s another --no-copy-ignored  # override local/global payload selection
+```
+
+`add` and `s` share repeatable `--copy-ignored` and `--no-copy-ignored` controls.
+Selected directories must be ignored in both the snapshotted donor and the exact
+target base, with no tracked overlap. Nonignored source matches are reported and
+skipped; nested selections copy once, and missing matches succeed. Payload copies
+require real private CoW even with `--no-cow` or `--colocate`: those flags control
+the tracked checkout only. There is no payload byte-copy or shared-link fallback.
+
+Payloads are installed before links. A configured link overlapping a selected
+private root is an error; use a source-equals-target `.jwlinks.local.toml` override
+to keep it private. A failed creation rolls back only its new workspaces, including
+read-only dependency copies. Pause donor writers while creating copies. Switching
+to an existing workspace never refills dependencies from policy or creation flags.
 
 ### Reseed an existing workspace
 
@@ -551,13 +575,18 @@ and the retained metadata before recovering the link or finishing cleanup.
 copy_ignored = ["**/target", "**/node_modules", "**/dist/", "**/build/"]
 ```
 
-This opt-in setting currently applies to reseed, including `reseed --freshen`.
-Add/s payload integration is pending; their tracked-checkout mode is unchanged.
+This opt-in setting applies to new workspaces from `add`/`s` and to reseed,
+including `reseed --freshen`. Up integration remains pending.
 CLI lists replace repository-local lists, which replace global lists. Missing
 local `copy_ignored` inherits; local `copy_ignored = []` or `--no-copy-ignored`
 disables inheritance/copying. Broad patterns select only ignored source roots:
 a normal tracked `build/` is skipped, but eligible ignored descendants remain
 discoverable. Selected payload stays private CoW, never a shared directory link.
+The repository-local list lives in the verified primary store owner's
+`.jwreseed.local.toml`, not an arbitrary workspace named `default` or the donor's
+local file. Creation shares only that list: its source remains the current
+checkout or `--from`; local `source`, `source_at`, and freshening settings do not
+override creation's donor or execute commands.
 See [policy examples and safety boundaries](docs/reseed.md#ignored-copy-policy-layers).
 
 ### Creation-mode precedence

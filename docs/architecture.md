@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec14d159effeiOep7U7f2iNQ7E"
+    title: Extracted shared frozen ignore/payload proof primitives and implemented add/s private payload planning, policy ownership, and read-only rollback
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
     title: Implemented native source, command/recovery, and shared ignored-copy policy/selection foundations with explicit frozen-policy compatibility
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
@@ -69,6 +71,8 @@ offline.
   Its `cow::ignored` submodule owns shared ignored-copy precedence and the compiled
   eligible-root selector; command adapters supply frozen source rules and tracked
   paths instead of implementing their own pattern traversal.
+  `cow::payload` owns the shared native frozen-ignore adapter, operation-bound
+  tree entries, filesystem stamps, confinement and logical payload digests.
 - `reseed` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and repository-scoped pending records and receipts. It uses
@@ -297,9 +301,9 @@ resolves optional CLI/local lists and root global `copy_ignored`, preserving
 missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
 replace in CLI > local > global order. Global config is read only when inherited,
 and never written. `Policy::recorded` represents frozen recovery selection instead
-of reading current defaults. The API is shared for creation/reseed/up; the current
-command exposure is reseed and legacy source preparation only. Creation payload
-orchestration and up integration remain separate commissioned stages.
+of reading current defaults. Current command exposure includes add/s creation,
+reseed and legacy source preparation. Up orchestration remains a separate
+commissioned stage.
 
 `Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
 unsupported syntax, deduplicates equivalent selectors, and compiles components.
@@ -311,7 +315,7 @@ walk and include nested matches once, so covered descendants are not separately
 enumerated or spuriously reported missing. Administrative directories, directory
 symlinks, and mounted-child boundaries are not traversed.
 
-The existing engine supplies `is_ignored` from its isolated native Git probe over
+Creation and reseed supply `is_ignored` from the shared isolated native Git probe over
 frozen desired `.gitignore` content and excludes. A nonignored source match is
 skipped/reported while viable descendant patterns continue. Native probe/I/O
 failures are errors, not silently converted to skips. An ignored candidate is
@@ -344,6 +348,39 @@ effective array in the frozen request. Existing v1/v2 arrays deserialize to
 `Some(array)` with the same wire representation, including frozen empty lists;
 missing frozen selection is rejected instead of inheriting new policy. Target
 pending roots and journal schema versions are unchanged by this stage.
+
+### Creation ignored payload
+
+[`lifecycle::ignored`](../src/lifecycle/ignored.rs) prepares a single frozen plan
+only when at least one workspace will be created. `WorkspaceInventory` identifies
+the policy owner by the real JJ repository directory, independently of a workspace
+named `default`. Creation reads only `copy_ignored` from that owner's existing
+`.jwreseed.local.toml`; local source/freshening settings are not implicit creation
+overrides. Explicit CLI selection/disable bypasses local-policy loading.
+
+The donor is snapshotted independently of the exact target base. Shared
+`cow::payload` primitives bind its current commit, filesystem stamp, frozen source
+ignore rules and selected payload digest. Selected roots also require the exact
+base's frozen ignore rules and no overlap with its tracked paths. An empty
+selection returns before clone capability is required. Nonempty plans recheck
+source identity/content around copying, compare the new target revision with its
+frozen base, and reject target obstructions and parent symlinks.
+
+Tracked creation remains free to use ordinary checkout or its established warned
+fallback. The separate ignored phase requires actual reflinks and has no fallback.
+It runs after tracked materialization and metadata insertion, before links.
+Non-self link sources overlapping private roots (including absent descendants)
+fail; a deliberate source-equals-target override is allowed. Lifecycle failure
+rollback verifies creation ownership before removing selected private roots with
+the strict CoW removal helper, which handles read-only directory modes without
+touching the donor or unrelated content. The ordinary owned-checkout rollback
+then removes the new directory, bookmark and metadata; it does not undo the repo.
+
+Existing-only switches never load, compile or execute ignored-copy policy. Their
+existing explicit link behavior remains unchanged. Native creation tests exercise
+policy ownership/layers, exact base rules, nested matches and nonignored skips,
+required real Btrfs sharing/private inodes, independent writes, tmpfs no-match and
+strict-CoW failure, private-link conflicts, and post-payload read-only rollback.
 
 ### Local freshening commands and recovery
 
