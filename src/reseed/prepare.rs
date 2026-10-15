@@ -30,6 +30,15 @@ struct Target {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct VerifiedSource {
+    wc_commit: String,
+    stamp: Vec<Stamp>,
+    ignored: Vec<PathBuf>,
+    payload_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Batch {
     schema_version: u32,
     pub id: String,
@@ -51,6 +60,7 @@ pub(super) struct Batch {
     pub phase: PreparationPhase,
     targets: Vec<Target>,
     pub plans: Option<Vec<Pending>>,
+    verified_source: Option<VerifiedSource>,
 }
 
 fn config_bytes(root: &Path) -> Result<Option<Vec<u8>>> {
@@ -108,10 +118,10 @@ pub(super) fn find_resume(store: &Store, names: &[String]) -> Result<Option<Batc
         bail!("resume targets belong to different preparation batches; resume them separately");
     }
     let batch = matching.into_iter().next();
-    if let Some(b) = &batch {
-        if names.iter().any(|n| !b.request.names.contains(n)) {
-            bail!("resume mixes recorded preparation targets with unrelated targets");
-        }
+    if let Some(b) = &batch
+        && names.iter().any(|n| !b.request.names.contains(n))
+    {
+        bail!("resume mixes recorded preparation targets with unrelated targets");
     }
     Ok(batch)
 }
@@ -204,6 +214,23 @@ pub(super) fn preflight(
     if inventory.root(name)? != source {
         bail!("source registration changed");
     }
+    validate_ownership(source, name, metadata)?;
+    remote(source, settings)?;
+    let command = settings.and_then(|s| s.command.as_ref());
+    if command.is_some_and(|argv| argv.is_empty() || argv[0].is_empty()) {
+        bail!("prepare.command must be a nonempty argv with a nonempty program");
+    }
+    if !ignored.is_empty() && command.is_none() {
+        bail!(
+            "freshening selected ignored dependency roots requires prepare.command; old installed data is not refreshed"
+        );
+    }
+    // Validate pattern grammar, topology and missing-root policy before mutation.
+    expand_ignored(source, ignored)?;
+    Ok(())
+}
+
+fn validate_ownership(source: &Path, name: &str, metadata: &WorkspaceMetadataStore) -> Result<()> {
     let record = metadata.get(name)?;
     if record
         .as_ref()
@@ -218,18 +245,6 @@ pub(super) fn preflight(
         Some(source),
         record.as_ref(),
     )?;
-    remote(source, settings)?;
-    let command = settings.and_then(|s| s.command.as_ref());
-    if command.is_some_and(|argv| argv.is_empty() || argv[0].is_empty()) {
-        bail!("prepare.command must be a nonempty argv with a nonempty program");
-    }
-    if !ignored.is_empty() && command.is_none() {
-        bail!(
-            "freshening selected ignored dependency roots requires prepare.command; old installed data is not refreshed"
-        );
-    }
-    // Validate pattern grammar, topology and missing-root policy before mutation.
-    expand_ignored(source, ignored)?;
     Ok(())
 }
 
@@ -359,6 +374,7 @@ pub(super) fn begin(
         phase: PreparationPhase::Fetching,
         targets,
         plans: None,
+        verified_source: None,
     };
     save(store, &batch)?;
     Ok(batch)
@@ -378,9 +394,68 @@ fn validate(batch: &Batch) -> Result<()> {
         bail!("preparation source/repository registration changed");
     }
     verify_policy(&batch.config_root, &batch.local_config)?;
+    let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
+    validate_ownership(&batch.source, &batch.source_name, &metadata)?;
     ensure_quiescence(&client)?;
     require_full(&client)?;
     validate_contents(&batch.source, true)?;
+    Ok(())
+}
+
+fn capture_verified(batch: &Batch) -> Result<VerifiedSource> {
+    let client = JjClient::new(&batch.source);
+    let (operation, wc_commit) = current_commit(&client)?;
+    let goal = batch.goal.as_ref().context("verified source lacks goal")?;
+    if !exact_empty_child(&client, &operation, &wc_commit, goal)? {
+        bail!("source changed before preparation proof capture");
+    }
+    let before = stamp(&batch.source)?;
+    let (ignored, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
+    let source_entries = entries(&client, &operation, goal)?;
+    let rules = IgnoreRules::new(&client, &operation, goal, &source_entries, true)?;
+    for root in &ignored {
+        rules.require_ignored(root)?;
+    }
+    let payload_digest = payload_digest(&batch.source, &ignored)?;
+    if stamp(&batch.source)? != before || current_commit(&client)?.1 != wc_commit {
+        bail!("source changed during preparation proof capture");
+    }
+    Ok(VerifiedSource {
+        wc_commit,
+        stamp: before,
+        ignored,
+        payload_digest,
+    })
+}
+
+pub(super) fn verify_verified(batch: &Batch) -> Result<()> {
+    validate(batch)?;
+    let proof = batch
+        .verified_source
+        .as_ref()
+        .context("verified preparation lacks frozen source proof")?;
+    let client = JjClient::new(&batch.source);
+    let (operation, current) = current_commit(&client)?;
+    let before = stamp(&batch.source)?;
+    let (ignored, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
+    if current != proof.wc_commit
+        || ignored != proof.ignored
+        || payload_digest(&batch.source, &ignored)? != proof.payload_digest
+    {
+        bail!(
+            "verified preparation source/payload changed before target freeze; pending retained; restore frozen verified donor rather than adopting changed dependencies"
+        );
+    }
+    if before != proof.stamp {
+        // Exact payload restoration may have new inode/ctime. Never adopt new
+        // bytes: reprove the tracked tree as well as the frozen logical payload.
+        let goal = batch.goal.as_ref().context("missing frozen goal")?;
+        let source_entries = entries(&client, &operation, goal)?;
+        verify_disk(&client, &operation, goal, &batch.source, &source_entries)?;
+    }
+    if stamp(&batch.source)? != before || current_commit(&client)?.1 != current {
+        bail!("verified donor changed during proof validation");
+    }
     Ok(())
 }
 
@@ -507,6 +582,7 @@ pub(super) fn execute(
                 )?;
                 batch.phase = PreparationPhase::Selecting;
                 save(store, batch)?;
+                validate(batch)?;
                 let output = client.run(["--config=fsmonitor.backend=none", "new", &goal])?;
                 diagnostics(output.stderr());
             }
@@ -517,6 +593,7 @@ pub(super) fn execute(
             batch.selected_commit = Some(current);
             batch.phase = PreparationPhase::Preparing;
             save(store, batch)?;
+            validate(batch)?;
         }
         // No snapshot until exact tracked disk bytes have been checked. A failed
         // installer that edited tracked files requires deliberate restoration.
@@ -549,6 +626,7 @@ pub(super) fn execute(
             ));
             batch.phase = PreparationPhase::Preparing;
             save(store, batch)?;
+            validate(batch)?;
             if let Some(argv) = &batch.command {
                 let status = Command::new(&argv[0])
                     .args(&argv[1..])
@@ -564,6 +642,7 @@ pub(super) fn execute(
                     );
                 }
             }
+            validate(batch)?;
             snapshot(&client)?;
             let (operation, current) = current_commit(&client)?;
             if !changed_paths(&client, &operation, &current, &goal)?.is_empty() {
@@ -575,9 +654,11 @@ pub(super) fn execute(
             batch.selected_commit = Some(current);
             validate(batch)?;
             verify_targets(batch)?;
+            batch.verified_source = Some(capture_verified(batch)?);
             batch.phase = PreparationPhase::Verified;
             save(store, batch)?;
         }
+        verify_verified(batch)?;
         Ok(())
     })();
     result.with_context(|| format!("source preparation stopped in phase {:?}, frozen goal {:?}; source progress was not rolled back; targets not refilled; resume recorded batch {:?}", batch.phase, batch.goal, batch.request.names))
@@ -591,6 +672,7 @@ fn same_plan(original: &Pending, actual: &Pending) -> Result<bool> {
     normalized.target_operation = original.target_operation.clone();
     normalized.source_stamp = original.source_stamp.clone();
     normalized.validated_source_wc_commit = original.validated_source_wc_commit.clone();
+    normalized.execution_diagnostics = original.execution_diagnostics.clone();
     Ok(serde_json::to_vec(&normalized)? == serde_json::to_vec(original)?)
 }
 

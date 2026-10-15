@@ -1,6 +1,7 @@
 //! Local Git remotes and fake argv installers only; real CoW is required when
 //! JW_TEST_REQUIRE_COW is set. Never accesses an operator checkout or network.
 #![cfg(unix)]
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -67,7 +68,7 @@ impl Fixture {
             .unwrap());
         fs::write(
             f.remote.join(".gitignore"),
-            "node_modules/\n.jwreseed.local.toml\n.env\n",
+            "node_modules/\n.jwreseed.local.toml\n.jwlinks.local.toml\nshared-link\n.env\n",
         )
         .unwrap();
         fs::write(f.remote.join("shared"), vec![b'x'; 128 * 1024]).unwrap();
@@ -732,4 +733,149 @@ fn frozen_handoff_recreates_only_missing_intent_and_rejects_foreign_pending() {
     // then simulate the crash between atomic intent and first target handoff.
     ok(f.resume());
     assert!(f.active().is_empty());
+}
+
+#[test]
+fn baseline_owned_links_change_normally_and_done_handoff_keeps_runtime_diagnostics_separate() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    fs::write(
+        f.remote.join(".jwlinks.toml"),
+        format!(
+            "[[link]]\nsource='shared-link'\ntarget={:?}\nrequired=true\n",
+            f.source.join("shared")
+        ),
+    )
+    .unwrap();
+    f.advance();
+    let output = ok(f.freshen(&[]));
+    assert!(output.contains("links: 1 created"), "{output}");
+    assert_eq!(
+        fs::read_link(f.target.join("shared-link")).unwrap(),
+        f.source.join("shared")
+    );
+    let records = fs::read_dir(f.journal())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".receipt.json")
+        })
+        .collect::<Vec<_>>();
+    let batch_path = records
+        .iter()
+        .find(|p| {
+            let value: serde_json::Value = serde_json::from_slice(&fs::read(p).unwrap()).unwrap();
+            value["plans"].is_array()
+        })
+        .unwrap();
+    let batch_bytes = fs::read(batch_path).unwrap();
+    let key = format!("source:{}", f.source.display());
+    let digest = Sha256::digest(key.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let active_path = f
+        .journal()
+        .join(format!("workspace-{digest}.preparation.json"));
+    fs::write(active_path, batch_bytes).unwrap();
+    let target_receipt = records
+        .iter()
+        .find(|p| {
+            let value: serde_json::Value = serde_json::from_slice(&fs::read(p).unwrap()).unwrap();
+            value["name"] == "worker"
+        })
+        .unwrap();
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(target_receipt).unwrap()).unwrap();
+    assert_eq!(receipt["phase"], "Done");
+    assert_eq!(
+        receipt["execution_diagnostics"].as_array().unwrap().len(),
+        1
+    );
+    // Simulate interruption after Done write-ahead, before receipt completion.
+    let pending = target_receipt.with_file_name(
+        target_receipt
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace(".receipt.json", ".pending.json"),
+    );
+    fs::write(&pending, fs::read(target_receipt).unwrap()).unwrap();
+    fs::remove_file(target_receipt).unwrap();
+    ok(f.resume());
+    assert!(f.pending().is_empty());
+    assert!(f.active().is_empty());
+    assert_eq!(fs::read_to_string(f.log).unwrap().lines().count(), 3);
+}
+
+#[test]
+fn resume_revalidates_donor_external_ownership_before_installer() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    f.script("exit 17\n");
+    f.advance();
+    fails(f.freshen(&[]), "command failed");
+    let batch_before = fs::read(&f.active()[0]).unwrap();
+    let repo_config = PathBuf::from(f.jj(&f.source, &["config", "path", "--repo"]));
+    // Owner metadata is private API; create the documented schema fixture in
+    // this disposable store, using its stable native workspace-key encoding.
+    let record = serde_json::json!({"schema_version": 3, "metadata": {
+        "workspace_name": "default", "created_at_unix_ms": 0,
+        "creation_operation_id": "", "creation_base_commit_id": "",
+        "associated_bookmark": null, "intended_remote": null,
+        "external_owner": { "checkout_root": f.source, "git_dir": f.source.join(".git/worktrees/external"), "common_dir": f.source.join(".git") }
+    }});
+    let mut hash: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    for byte in b"workspace\0default" {
+        hash = (hash ^ u128::from(*byte)).wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b);
+    }
+    let directory = repo_config.parent().unwrap().join("jj-waltz/workspaces");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join(format!("workspace-{hash:032x}.json")),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    fails(f.resume(), "external/app-owned");
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    assert_eq!(fs::read(&f.active()[0]).unwrap(), batch_before);
+}
+
+#[test]
+fn verified_unfrozen_preparation_refuses_changed_dependencies_and_allows_exact_restoration() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    // This target-planning failure occurs after verified preparation, before
+    // atomic target intent. Its local link policy is deliberately repairable.
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='temporarily-missing'\nrequired=true\n",
+    )
+    .unwrap();
+    f.advance();
+    fails(f.freshen(&[]), "required link target will be absent");
+    assert!(f.pending().is_empty());
+    let batch: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.active()[0]).unwrap()).unwrap();
+    assert_eq!(batch["phase"], "Verified");
+    assert!(batch["plans"].is_null());
+    assert!(batch["verified_source"]["payload_digest"].is_string());
+    fs::write(f.source.join("node_modules/package"), "corrupted payload").unwrap();
+    // Repair link planning without changing the frozen preparation argv policy.
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='shared'\nrequired=true\n",
+    )
+    .unwrap();
+    fails(f.resume(), "verified preparation source/payload changed");
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    fs::write(f.source.join("node_modules/package"), "installed\n").unwrap();
+    ok(f.resume());
+    assert_eq!(fs::read_to_string(f.log).unwrap().lines().count(), 3);
 }

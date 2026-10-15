@@ -109,6 +109,9 @@ struct Pending {
     link_config: Vec<(String, Option<Vec<u8>>)>,
     #[serde(default)]
     preparation_id: Option<String>,
+    /// Runtime observations are not part of immutable target intent.
+    #[serde(default)]
+    execution_diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -689,16 +692,18 @@ pub(super) fn run(
                 config_root: default.clone(),
                 link_config: link_config_bytes(&default)?,
                 preparation_id: batch.as_ref().map(|b| b.id.clone()),
+                execution_diagnostics: Vec::new(),
             });
         }
     }
-    if let Some(b) = batch.as_mut() {
-        if b.plans.is_none() {
-            b.plans = Some(plans.clone());
-            prepare::save(&store, b)?;
-            for plan in &plans {
-                prepare::handoff(&store, plan, request.dry_run)?;
-            }
+    if let Some(b) = batch.as_mut()
+        && b.plans.is_none()
+    {
+        prepare::verify_verified(b)?;
+        b.plans = Some(plans.clone());
+        prepare::save(&store, b)?;
+        for plan in &plans {
+            prepare::handoff(&store, plan, request.dry_run)?;
         }
     }
     let first = plans
@@ -755,10 +760,10 @@ pub(super) fn run(
             message,
         });
     }
-    if let Some(b) = batch.as_ref() {
-        if !request.dry_run {
-            prepare::finish_if_complete(&store, b)?;
-        }
+    if let Some(b) = batch.as_ref()
+        && !request.dry_run
+    {
+        prepare::finish_if_complete(&store, b)?;
     }
     Ok(report)
 }
@@ -1686,10 +1691,18 @@ fn describe(plan: &Pending, planned: bool) -> String {
         } else {
             "retain unrelated ignored/untracked content"
         },
-        if plan.skipped.is_empty() {
+        if plan.skipped.is_empty() && plan.execution_diagnostics.is_empty() {
             String::new()
         } else {
-            format!("; {}", plan.skipped.join("; "))
+            format!(
+                "; {}",
+                plan.skipped
+                    .iter()
+                    .chain(&plan.execution_diagnostics)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )
         }
     )
 }
@@ -2445,7 +2458,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     validate_source(plan, resume)?;
     let link_report = links::apply_workspace_links(default, &plan.root)?;
     if link_report.has_entries() {
-        plan.skipped.push(format!(
+        plan.execution_diagnostics.push(format!(
             "links: {} created, {} satisfied, {} skipped",
             link_report.linked, link_report.satisfied, link_report.skipped_missing_target
         ));
@@ -2827,6 +2840,7 @@ mod tests {
             config_root: source.clone(),
             link_config: link_config_bytes(&source).unwrap(),
             preparation_id: None,
+            execution_diagnostics: Vec::new(),
         };
         let store = Store::lock(&client).unwrap();
         Some((temporary, store, pending))
