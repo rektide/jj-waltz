@@ -14,7 +14,7 @@ sources:
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
     title: User commissioning and verified no-adoption reseeding design
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
-    title: Implementation delivery and one-off operator guidance
+    title: Implementation delivery, one-off guidance, and source-freshening design with separate default activation
   - resource: "opencode://ses_ec37a1a86ffeYXsS5j3A7Jng0t"
     title: Added wildcard-group design with configurable unmatched selection policy
 ---
@@ -27,6 +27,10 @@ sources:
 - [Wildcard reseed groups](groups0.gpt61sol.md) — proposed name/path patterns,
   optional warn-and-skip for unrelated sibling checkouts, and one aggregate
   warning line; preserves strict target safety and current literal array groups.
+- [Freshen the donor before reseeding](source-freshen0.gpt61sol.md) — design-only
+  fetch, source advancement, and configured dependency preparation under explicit
+  `--freshen`; default-on activation is a separate dependent delivery. No live
+  source preparation or feature implementation was commissioned here.
 
 Existing behavior: [CoW creation](../../README.md#copy-on-write-workspaces).
 Integration boundary: [architecture](../../docs/architecture.md#module-map).
