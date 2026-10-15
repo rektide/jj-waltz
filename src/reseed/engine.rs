@@ -355,6 +355,14 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             snapshot(&JjClient::new(root))?;
         }
         let operation = client.operation_id()?;
+        if source_client.resolve_one_at(&operation, "@")?.commit_id != source_wc
+            || stamp(&source)? != source_stamp
+        {
+            bail!("source changed during target refresh; pause writers before retrying");
+        }
+        // Keep the already asserted source commit pinned, but freeze all journal
+        // facts at the final operation shared with the refreshed target trees.
+        let source_operation = operation.clone();
         let base = request
             .at
             .as_ref()

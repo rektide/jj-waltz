@@ -341,6 +341,7 @@ fn primary_default_from_sibling_and_subdirectory_preserves_different_feature_tre
         );
         assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
         let receipt = reseed_receipt(&repo, &repo.root);
+        assert_eq!(receipt["source_operation"], receipt["target_operation"]);
         assert_eq!(receipt["source"], repo.root.to_str().unwrap());
         assert!(
             receipt["clones"]
@@ -566,6 +567,65 @@ fn unregistered_or_moved_primary_fails_without_snapshotting_target() {
             "."
         );
     }
+}
+
+#[test]
+fn source_advance_during_target_refresh_fails_before_sparse_mutation() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    let before = repo.id(&target, "@");
+    let proxy = repo.temp.path().join("refresh-proxy");
+    fs::create_dir(&proxy).unwrap();
+    let real_jj = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|directory| directory.join("jj"))
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .find(|path| path.is_file() && path.file_name().is_none_or(|name| name != "mise"))
+        .expect("native jj executable on PATH");
+    let marker = proxy.join("advanced");
+    fs::write(
+        proxy.join("jj"),
+        r#"#!/bin/sh
+case " $* " in
+  *' status '*)
+    if [ "$PWD" = "$JW_REFRESH_TARGET" ] && [ ! -e "$JW_REFRESH_MARKER" ]; then
+      "$JW_REAL_JJ" "$@" || exit $?
+      "$JW_REAL_JJ" -R "$JW_REFRESH_SOURCE" new --ignore-working-copy || exit $?
+      : > "$JW_REFRESH_MARKER"
+      exit 0
+    fi;;
+esac
+exec "$JW_REAL_JJ" "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(proxy.join("jj"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![proxy];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "feature", "--from"])
+        .arg(&source)
+        .args(["--source-at", &repo.baseline])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("JW_REAL_JJ", real_jj)
+        .env("JW_REFRESH_TARGET", &target)
+        .env("JW_REFRESH_SOURCE", &source)
+        .env("JW_REFRESH_MARKER", &marker)
+        .output()
+        .unwrap();
+    assert!(
+        marker.is_file(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("source changed during target refresh")
+    );
+    repo.unchanged_failure(&target, output, &before);
+    assert!(repo.pending_records().is_empty());
 }
 
 #[test]
