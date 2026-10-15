@@ -12,6 +12,8 @@ sources:
     title: Implemented and verified reseeding, clarified safe snapshots, and documented primary-source inference
   - resource: "opencode://ses_ec376c0e6ffewASuAvkLjXLTTU"
     title: Verified native sparse and symlink queries plus real-CoW integration across official JJ releases
+  - resource: "opencode://ses_ec31c20c0ffeQNfMhRNezv4uuM"
+    title: Implemented primary-source inference and verified 30 real-CoW integration cases on official JJ 0.46
   - resource: /design/workspace-reseed/reseed0.gpt6a.md
     title: Prepared-source contract and stock-JJ sparse-prefill design
   - resource: /CONTEXT.md
@@ -140,9 +142,10 @@ Resolve stale targets explicitly with JJ before retrying.
 `--from` names a workspace root. A relative CLI path is resolved from the calling
 directory; a relative configured `source` is resolved from the default workspace.
 Source selection is CLI `--from`, then configured `source`, then the verified
-primary checkout. If a primary checkout cannot be verified, supply an explicit
-source rather than relying on directory-name guesses. `source_at` must still be
-supplied on the command line or through local configuration.
+primary checkout. Missing or inconsistent primary registrations fail closed:
+repair the repository/workspace identity before retrying. An explicit source
+chooses another donor; it does not bypass those identity checks. `source_at` must
+still be supplied on the command line or through local configuration.
 
 The Git executable is used for isolated ignore-rule probes, including nested
 `.gitignore` files and backend/global excludes. These probes do not create Git
@@ -186,12 +189,14 @@ targets and exits nonzero for partial failure. Recovery never uses repository-wi
 
 ## Verification and limits
 
-The 22 [native integration cases](../tests/reseed.rs) were verified on Linux Btrfs
-with actual reflinks required, including FIEMAP shared-extents checks. The official
-JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0 release matrix covered one-off and batch use,
+The [native integration cases](../tests/reseed.rs) were verified on Linux Btrfs
+with actual reflinks required, including FIEMAP shared-extents checks. The original
+22-case official JJ 0.39.0, 0.44.0, 0.45.1, and 0.46.0 release matrix covered one-off and batch use,
 source restoration, ignored replacement, symlink bytes, and interruption recovery.
 The final optimized build passed all 22 cases on both 0.39.0 and 0.46.0;
 0.44.0 and 0.45.1 were fully verified before the source-proof reuse optimization.
+Primary-source inference and final-operation revalidation expanded the suite to
+30 cases, all passing on official JJ 0.46.0 with real CoW required.
 Focused engine tests cover every write-ahead boundary and safe tracked-only type
 transitions. Existing integration regressions, Clippy, and formatting also passed.
 
