@@ -193,7 +193,7 @@ impl Fixture {
         fs::write(
             self.source.join(".jwreseed.local.toml"),
             format!(
-                "source_at='dev@origin'\n{extra}\n[prepare]\nremote='origin'\n{}",
+                "source_at='dev@origin'\n{extra}\n[freshen]\nremote='origin'\n{}",
                 if command {
                     format!("command={argv}\n")
                 } else {
@@ -266,7 +266,7 @@ impl Fixture {
         );
         let delegate = format!("{:?} \"$@\"\n", real);
         let body = format!(
-            "#!/bin/sh\nset -eu\nnew=false; clear=false; fetch=false; sparse=false; listing=false\nfor arg do\n[ \"$arg\" != new ] || new=true\n[ \"$arg\" != --clear ] || clear=true\n[ \"$arg\" != fetch ] || fetch=true\n[ \"$arg\" != sparse ] || sparse=true\n[ \"$arg\" != list ] || listing=true\ndone\n{}{}",
+            "#!/bin/sh\nset -eu\nnew=false; clear=false; fetch=false; sparse=false; listing=false; status=false\nfor arg do\n[ \"$arg\" != new ] || new=true\n[ \"$arg\" != --clear ] || clear=true\n[ \"$arg\" != fetch ] || fetch=true\n[ \"$arg\" != sparse ] || sparse=true\n[ \"$arg\" != list ] || listing=true\n[ \"$arg\" != status ] || status=true\ndone\n{}{}",
             if before { &failure } else { &delegate },
             if before { &delegate } else { &failure }
         );
@@ -295,6 +295,22 @@ impl Fixture {
                     .ends_with(".pending.json")
             })
             .collect()
+    }
+    fn downgrade_single_command_journal_to_v1(&self) -> PathBuf {
+        let active = self.active();
+        assert_eq!(active.len(), 1);
+        let path = active[0].clone();
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            record["command_sequence"]["argv"].as_array().unwrap().len(),
+            1
+        );
+        record["command"] = record["command_sequence"]["argv"][0].clone();
+        record.as_object_mut().unwrap().remove("command_sequence");
+        record["schema_version"] = 1.into();
+        fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+        path
     }
 }
 
@@ -511,15 +527,28 @@ fn preparation_settings_do_not_activate_normal_offline_reseed() {
 }
 
 #[test]
-fn missing_command_and_remote_and_invalid_selection_fail_before_fetch() {
+fn invalid_command_policy_remote_and_selection_fail_before_fetch() {
     let Some(f) = Fixture::new() else {
         return;
     };
     let old = f.id(&f.source, "dev@origin");
     f.advance();
-    f.policy(false, "");
-    fails(f.freshen(&[]), "requires prepare.command");
-    assert_eq!(f.id(&f.source, "dev@origin"), old);
+    for (policy, expected) in [
+        ("[freshen]\ncommand=[]\n", "nonempty argv"),
+        (
+            "[freshen]\ncommand=[]\ncommands=[]\n",
+            "cannot both be present",
+        ),
+        ("[freshen]\n[prepare]\n", "cannot both be present"),
+    ] {
+        fs::write(
+            f.source.join(".jwreseed.local.toml"),
+            format!("source_at='dev@origin'\n{policy}"),
+        )
+        .unwrap();
+        fails(f.freshen(&[]), expected);
+        assert_eq!(f.id(&f.source, "dev@origin"), old);
+    }
     f.policy(true, "");
     fails(
         f.jw()
@@ -548,6 +577,247 @@ fn tracked_only_freshen_without_command_reports_honestly() {
     assert!(output.contains("tracked-source preparation only"));
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert!(!f.log.exists());
+}
+
+#[test]
+fn command_sequence_resumes_at_failed_step_without_replaying_completed_commands() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    let gate = f.temp.path().join("second step allowed");
+    f.script(&format!(
+        "mkdir -p node_modules\ncase \"$2\" in\nfirst) printf first > node_modules/first ;;\nsecond) printf partial > node_modules/package; [ -f {:?} ] || exit 17; printf complete > node_modules/package ;;\nthird) printf third > node_modules/third ;;\nesac\n", gate
+    ));
+    let commands = ["first", "second", "third"].map(|step| {
+        vec![
+            f.installer.to_str().unwrap().to_owned(),
+            f.log.to_str().unwrap().to_owned(),
+            step.to_owned(),
+            "$(touch SHOULD_NOT_EXIST); *".to_owned(),
+        ]
+    });
+    fs::write(
+        f.source.join(".jwreseed.local.toml"),
+        format!(
+            "source_at='dev@origin'\n[freshen]\nremote='origin'\ncommands={}\n",
+            serde_json::to_string(&commands).unwrap()
+        ),
+    )
+    .unwrap();
+    let goal = f.advance();
+    let target = f.id(&f.target, "@");
+    fails(f.freshen(&[]), "step 2");
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.active()[0]).unwrap()).unwrap();
+    assert_eq!(record["schema_version"], 2);
+    assert_eq!(record["command_sequence"]["completed"], 1);
+    assert_eq!(record["command_sequence"]["in_flight"], true);
+    assert_eq!(
+        record["command_sequence"]["argv"],
+        serde_json::to_value(&commands).unwrap()
+    );
+    assert_eq!(f.id(&f.target, "@"), target);
+    assert!(!f.target.join("node_modules").exists());
+    assert!(!f.source.join("node_modules/third").exists());
+    assert_eq!(
+        fs::read_to_string(f.source.join("node_modules/package")).unwrap(),
+        "partial"
+    );
+    let before_preview = fs::read(&f.active()[0]).unwrap();
+    let preview = ok(f
+        .jw()
+        .args(["reseed", "worker", "--resume", "--dry-run"])
+        .output()
+        .unwrap());
+    assert!(preview.contains("commands completed 1/3"), "{preview}");
+    assert_eq!(fs::read(&f.active()[0]).unwrap(), before_preview);
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 6);
+    fs::write(&gate, "ok").unwrap();
+    fs::write(f.remote.join("version"), "newer than frozen goal").unwrap();
+    f.git_commit();
+    let resumed = f.resume();
+    assert!(text(&resumed).contains("not exactly-once"));
+    ok(resumed);
+    assert_eq!(f.id(&f.source, "@-"), goal);
+    let log = fs::read_to_string(&f.log).unwrap();
+    assert_eq!(
+        log.lines().skip(1).step_by(3).collect::<Vec<_>>(),
+        ["first", "second", "second", "third"]
+    );
+    assert!(
+        log.lines()
+            .step_by(3)
+            .all(|cwd| cwd == f.source.to_str().unwrap())
+    );
+    assert!(!f.source.join("SHOULD_NOT_EXIST").exists());
+    assert_eq!(
+        fs::read_to_string(f.target.join("node_modules/package")).unwrap(),
+        "complete"
+    );
+    assert_eq!(
+        fs::read_to_string(f.target.join("node_modules/third")).unwrap(),
+        "third"
+    );
+    assert!(f.active().is_empty());
+}
+
+#[test]
+fn unacknowledged_successful_command_is_explicitly_retried_after_interruption() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    let marker = f.temp.path().join("command side effect happened");
+    f.script(&format!(
+        "mkdir -p node_modules\nprintf ready > node_modules/package\ntouch {:?}\n",
+        marker
+    ));
+    f.advance();
+    let bin = f.wrapper_at(&format!("[ -f {:?} ] && $status", marker), true);
+    let mut command = f.jw();
+    f.with_wrapper(&mut command, &bin);
+    fails(
+        command
+            .args([
+                "reseed",
+                "worker",
+                "--freshen",
+                "--copy-ignored",
+                "node_modules",
+            ])
+            .output()
+            .unwrap(),
+        "source preparation stopped",
+    );
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.active()[0]).unwrap()).unwrap();
+    assert_eq!(record["command_sequence"]["completed"], 0);
+    assert_eq!(record["command_sequence"]["in_flight"], true);
+    assert!(marker.exists());
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    let resumed = f.resume();
+    assert!(text(&resumed).contains("prior attempt may have performed external side effects"));
+    ok(resumed);
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 6);
+    assert!(f.active().is_empty());
+}
+
+#[test]
+fn no_command_freshen_borrows_existing_ignored_payload_without_claiming_a_build() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    f.policy(false, "");
+    fs::create_dir(f.source.join("node_modules")).unwrap();
+    let payload = vec![b'e'; 128 * 1024];
+    fs::write(f.source.join("node_modules/package"), &payload).unwrap();
+    let goal = f.advance();
+    let output = ok(f.freshen(&[]));
+    assert!(
+        output.contains("existing data, not freshly built"),
+        "{output}"
+    );
+    assert_eq!(f.id(&f.source, "@-"), goal);
+    assert!(!f.log.exists());
+    assert_eq!(
+        fs::read(f.target.join("node_modules/package")).unwrap(),
+        payload
+    );
+    assert_ne!(
+        f.inode(&f.source.join("node_modules/package")),
+        f.inode(&f.target.join("node_modules/package"))
+    );
+    assert_shared_extents(
+        &f.source.join("node_modules/package"),
+        &f.target.join("node_modules/package"),
+    );
+}
+
+#[test]
+fn legacy_prepare_v1_pending_command_migrates_only_on_real_resume() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    let policy = f.source.join(".jwreseed.local.toml");
+    fs::write(
+        &policy,
+        fs::read_to_string(&policy)
+            .unwrap()
+            .replace("[freshen]", "[prepare]"),
+    )
+    .unwrap();
+    let gate = f.temp.path().join("legacy command allowed");
+    f.script(&format!("mkdir -p node_modules\nprintf partial > node_modules/package\n[ -f {:?} ] || exit 17\nprintf legacy > node_modules/package\n", gate));
+    f.advance();
+    let failed = f.freshen(&[]);
+    assert!(text(&failed).contains("[prepare] is a deprecated local alias for [freshen]"));
+    fails(failed, "command failed");
+    let path = f.downgrade_single_command_journal_to_v1();
+    let frozen = fs::read(&path).unwrap();
+    let preview = ok(f
+        .jw()
+        .args(["reseed", "worker", "--resume", "--dry-run"])
+        .output()
+        .unwrap());
+    assert!(
+        preview.contains("v1 single-command journal loaded compatibly"),
+        "{preview}"
+    );
+    assert!(preview.contains("in-flight command may retry"), "{preview}");
+    assert_eq!(fs::read(&path).unwrap(), frozen);
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    fs::write(&gate, "ok").unwrap();
+    // Stop after the command result was acknowledged, before target plans freeze.
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='missing'\nrequired=true\n",
+    )
+    .unwrap();
+    fails(f.resume(), "required link target will be absent");
+    let upgraded: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(upgraded["schema_version"], 2);
+    assert!(upgraded.get("command").is_none());
+    assert_eq!(upgraded["command_sequence"]["completed"], 1);
+    assert_eq!(upgraded["command_sequence"]["in_flight"], false);
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='shared'\nrequired=true\n",
+    )
+    .unwrap();
+    ok(f.resume());
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 6);
+}
+
+#[test]
+fn legacy_prepare_v1_verified_command_is_not_replayed() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    let policy = f.source.join(".jwreseed.local.toml");
+    fs::write(
+        &policy,
+        fs::read_to_string(&policy)
+            .unwrap()
+            .replace("[freshen]", "[prepare]"),
+    )
+    .unwrap();
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='missing'\nrequired=true\n",
+    )
+    .unwrap();
+    f.advance();
+    fails(f.freshen(&[]), "required link target will be absent");
+    let path = f.downgrade_single_command_journal_to_v1();
+    let v1: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(v1["phase"], "Verified");
+    fs::write(
+        f.source.join(".jwlinks.local.toml"),
+        "[[link]]\nsource='shared-link'\ntarget='shared'\nrequired=true\n",
+    )
+    .unwrap();
+    ok(f.resume());
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    assert!(f.active().is_empty());
 }
 
 #[test]

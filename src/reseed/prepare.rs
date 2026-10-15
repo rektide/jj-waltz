@@ -7,6 +7,51 @@ use super::*;
 pub(super) struct Settings {
     pub remote: Option<String>,
     pub command: Option<Vec<String>>,
+    pub commands: Option<Vec<Vec<String>>>,
+}
+
+impl Settings {
+    pub(super) fn argv(&self) -> Result<Vec<Vec<String>>> {
+        if self.command.is_some() && self.commands.is_some() {
+            bail!("freshen.command and freshen.commands cannot both be present, even when empty");
+        }
+        let argv = match (&self.command, &self.commands) {
+            (Some(argv), None) => vec![argv.clone()],
+            (None, Some(argv)) => argv.clone(),
+            _ => Vec::new(),
+        };
+        validate_argv(&argv)?;
+        Ok(argv)
+    }
+}
+
+fn configured_argv(settings: Option<&Settings>) -> Result<Vec<Vec<String>>> {
+    settings
+        .map(Settings::argv)
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn validate_argv(commands: &[Vec<String>]) -> Result<()> {
+    for (index, argv) in commands.iter().enumerate() {
+        if argv.is_empty() || argv[0].is_empty() || argv.iter().any(|arg| arg.contains('\0')) {
+            bail!(
+                "freshen command {} must be a nonempty argv with a nonempty program and no NUL bytes",
+                index + 1
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Completion is recorded only after successful exit and source/target proofs.
+/// An in-flight step may have run arbitrary external side effects before a crash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommandSequence {
+    argv: Vec<Vec<String>>,
+    completed: usize,
+    in_flight: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,7 +98,13 @@ pub(super) struct Batch {
     config_root: PathBuf,
     local_config: Option<Vec<u8>>,
     remote: String,
+    /// V1 journal input only; new records freeze command_sequence instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     command: Option<Vec<String>>,
+    #[serde(default)]
+    command_sequence: Option<CommandSequence>,
+    #[serde(skip)]
+    legacy_v1: bool,
     pub source_rev: String,
     old_operation: String,
     old_commit: String,
@@ -86,6 +137,7 @@ fn path(store: &Store, source: &Path) -> PathBuf {
 }
 
 pub(super) fn save(store: &Store, batch: &Batch) -> Result<()> {
+    batch.validate_commands()?;
     atomic_json(&path(store, &batch.source), batch)
 }
 
@@ -103,13 +155,67 @@ fn batches(store: &Store) -> Result<Vec<Batch>> {
         if !entry.file_type()?.is_file() {
             bail!("preparation journal is not a regular file");
         }
-        let batch: Batch = serde_json::from_slice(&fs::read(entry.path())?)?;
-        if batch.schema_version != 1 || path(store, &batch.source) != entry.path() {
+        let mut batch: Batch = serde_json::from_slice(&fs::read(entry.path())?)?;
+        if path(store, &batch.source) != entry.path() {
             bail!("invalid source preparation journal identity/version");
         }
+        batch.load_commands()?;
         result.push(batch);
     }
     Ok(result)
+}
+
+impl Batch {
+    fn load_commands(&mut self) -> Result<()> {
+        match self.schema_version {
+            1 => {
+                if self.command_sequence.is_some() {
+                    bail!("v1 preparation journal unexpectedly contains command sequence progress");
+                }
+                let argv = self
+                    .command
+                    .take()
+                    .map(|argv| vec![argv])
+                    .unwrap_or_default();
+                let verified = self.phase == PreparationPhase::Verified;
+                self.command_sequence = Some(CommandSequence {
+                    completed: if verified { argv.len() } else { 0 },
+                    in_flight: !verified
+                        && self.phase == PreparationPhase::Preparing
+                        && !argv.is_empty(),
+                    argv,
+                });
+                self.schema_version = 2;
+                self.legacy_v1 = true;
+            }
+            2 if self.command.is_none() => {}
+            _ => bail!("invalid source preparation journal version or legacy command field"),
+        }
+        self.validate_commands()
+    }
+
+    fn sequence(&self) -> Result<&CommandSequence> {
+        self.command_sequence
+            .as_ref()
+            .context("preparation journal lacks frozen command sequence")
+    }
+
+    fn validate_commands(&self) -> Result<()> {
+        let sequence = self.sequence()?;
+        validate_argv(&sequence.argv)?;
+        if sequence.completed > sequence.argv.len()
+            || (sequence.in_flight && sequence.completed == sequence.argv.len())
+            || (matches!(
+                self.phase,
+                PreparationPhase::Fetching | PreparationPhase::Selecting
+            ) && (sequence.completed != 0 || sequence.in_flight))
+            || (self.phase == PreparationPhase::Verified
+                && (sequence.completed != sequence.argv.len() || sequence.in_flight))
+        {
+            bail!("invalid preparation command completion/in-flight progress");
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn find_resume(store: &Store, names: &[String]) -> Result<Option<Batch>> {
@@ -161,7 +267,7 @@ fn remote(source: &Path, settings: Option<&Settings>) -> Result<String> {
         .and_then(|s| s.remote.as_deref())
         .unwrap_or("origin");
     if chosen.is_empty() {
-        bail!("prepare.remote must not be empty");
+        bail!("freshen.remote must not be empty");
     }
     let output = JjClient::new(source).run(["--ignore-working-copy", "git", "remote", "list"])?;
     if !output
@@ -170,7 +276,7 @@ fn remote(source: &Path, settings: Option<&Settings>) -> Result<String> {
         .any(|line| line.split_whitespace().next() == Some(chosen))
     {
         bail!(
-            "freshen remote {chosen:?} is not configured in the source; set prepare.remote (origin fallback requires origin)"
+            "freshen remote {chosen:?} is not configured in the source; set freshen.remote (origin fallback requires origin)"
         );
     }
     Ok(chosen.to_owned())
@@ -219,15 +325,7 @@ pub(super) fn preflight(
     }
     validate_ownership(source, name, metadata)?;
     remote(source, settings)?;
-    let command = settings.and_then(|s| s.command.as_ref());
-    if command.is_some_and(|argv| argv.is_empty() || argv[0].is_empty()) {
-        bail!("prepare.command must be a nonempty argv with a nonempty program");
-    }
-    if !ignored.is_empty() && command.is_none() {
-        bail!(
-            "freshening selected ignored dependency roots requires prepare.command; old installed data is not refreshed"
-        );
-    }
+    configured_argv(settings)?;
     // Validate pattern grammar, topology and missing-root policy before mutation.
     expand_ignored(source, ignored)?;
     Ok(())
@@ -257,31 +355,50 @@ pub(super) fn describe(
     settings: Option<&Settings>,
     ignored: &[String],
 ) -> Result<String> {
+    let commands = configured_argv(settings)?;
     Ok(format!(
-        "Freshen donor {:?}; remote {:?}; prospective post-fetch goal {:?}; preparation argv {:?}, cwd {:?}; ignored selection {:?}; {}",
+        "Freshen donor {:?}; remote {:?}; prospective post-fetch goal {:?}; preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
         source,
         remote(source, settings)?,
         rev,
-        settings.and_then(|s| s.command.as_ref()),
+        commands,
         source,
         ignored,
-        if settings.and_then(|s| s.command.as_ref()).is_none() {
-            "tracked-source preparation only"
+        if commands.is_empty() {
+            "tracked-source preparation only; no configured commands; selected ignored payload is existing data, not freshly built"
         } else {
-            "trusted configured program (no implicit shell)"
+            "trusted configured programs, sequentially (no implicit shell)"
         }
     ))
 }
 
 pub(super) fn summary(batch: &Batch) -> String {
+    let sequence = batch
+        .command_sequence
+        .as_ref()
+        .expect("validated command sequence");
     format!(
-        "Recorded freshen: remote {:?}, exact source goal {:?}, preparation argv {:?}, cwd {:?}; {}",
+        "Recorded freshen: remote {:?}, exact source goal {:?}, preparation argv sequence {:?}, cwd {:?}; commands completed {}/{}{}, {}; {}",
         batch.remote,
         batch.goal,
-        batch.command,
+        sequence.argv,
         batch.source,
-        if batch.command.is_none() {
-            "tracked-source preparation only"
+        sequence.completed,
+        sequence.argv.len(),
+        if sequence.in_flight {
+            "; in-flight command may retry on resume"
+        } else {
+            ""
+        },
+        if batch.legacy_v1 {
+            "v1 single-command journal loaded compatibly; only Verified proves legacy completion"
+        } else {
+            "v2 sequence journal"
+        },
+        if sequence.argv.is_empty() {
+            "tracked-source preparation only; no configured commands; selected ignored payload is existing data, not freshly built"
+        } else if batch.phase != PreparationPhase::Verified {
+            "configured preparation incomplete; targets not refilled"
         } else {
             "verified configured preparation"
         }
@@ -352,7 +469,7 @@ pub(super) fn begin(
     .map(|b| format!("{b:02x}"))
     .collect();
     let batch = Batch {
-        schema_version: 1,
+        schema_version: 2,
         id,
         request: frozen_request,
         source: source.to_path_buf(),
@@ -366,7 +483,13 @@ pub(super) fn begin(
         config_root: default.to_path_buf(),
         local_config,
         remote: remote(source, settings)?,
-        command: settings.and_then(|s| s.command.clone()),
+        command: None,
+        command_sequence: Some(CommandSequence {
+            argv: configured_argv(settings)?,
+            completed: 0,
+            in_flight: false,
+        }),
+        legacy_v1: false,
         source_rev: rev.into(),
         old_operation: operation,
         old_commit,
@@ -383,6 +506,7 @@ pub(super) fn begin(
 }
 
 fn validate(batch: &Batch) -> Result<()> {
+    batch.validate_commands()?;
     batch.source_identity.verify(&batch.source)?;
     batch.source_jj_identity.verify(&batch.source.join(".jj"))?;
     let client = JjClient::new(&batch.source);
@@ -623,19 +747,32 @@ pub(super) fn execute(
         )?;
         if batch.phase != PreparationPhase::Verified {
             diagnostic(&format!(
-                "Freshen: exact post-fetch goal {goal}; preparation argv {:?}, cwd {:?}; {}",
-                batch.command,
-                batch.source,
-                if batch.command.is_none() {
-                    "tracked-source preparation only"
-                } else {
-                    "no implicit shell; command may be rerun on resume"
-                }
+                "Freshen: exact post-fetch goal {goal}; {}",
+                summary(batch),
             ));
             batch.phase = PreparationPhase::Preparing;
             save(store, batch)?;
             validate(batch)?;
-            if let Some(argv) = &batch.command {
+            let previously_completed = batch.sequence()?.completed;
+            while batch.sequence()?.completed < batch.sequence()?.argv.len() {
+                let sequence = batch.sequence()?;
+                let index = sequence.completed;
+                let argv = sequence.argv[index].clone();
+                diagnostic(&format!(
+                    "Freshen: command {}/{} argv {:?}, cwd {:?}; {}",
+                    index + 1,
+                    sequence.argv.len(),
+                    argv,
+                    batch.source,
+                    if sequence.in_flight {
+                        "retrying recorded in-flight command; prior attempt may have performed external side effects (not exactly-once)"
+                    } else {
+                        "sequential argv execution; no implicit shell"
+                    }
+                ));
+                batch.command_sequence.as_mut().unwrap().in_flight = true;
+                save(store, batch)?;
+                validate(batch)?;
                 let status = Command::new(&argv[0])
                     .args(&argv[1..])
                     .current_dir(&batch.source)
@@ -643,25 +780,28 @@ pub(super) fn execute(
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit())
                     .status()
-                    .context("could not run configured preparation argv")?;
+                    .with_context(|| format!("could not run configured preparation argv {}; in-flight command may retry on resume", index + 1))?;
                 if !status.success() {
                     bail!(
-                        "configured preparation command failed with {status}; ignored installation may be incomplete"
+                        "configured preparation command failed with {status} (step {}); ignored installation may be incomplete; completed earlier commands will not replay; this in-flight command may retry on resume",
+                        index + 1
                     );
                 }
+                batch.selected_commit =
+                    Some(verify_command_result(batch, &client, &goal, &goal_entries)?);
+                let sequence = batch.command_sequence.as_mut().unwrap();
+                sequence.completed += 1;
+                sequence.in_flight = false;
+                // A crash before this durable acknowledgement can replay this
+                // command even if its external side effects already succeeded.
+                save(store, batch)?;
             }
-            validate(batch)?;
-            snapshot(&client)?;
-            let (operation, current) = current_commit(&client)?;
-            if !changed_paths(&client, &operation, &current, &goal)?.is_empty() {
-                bail!(
-                    "preparer changed tracked tree (including lockfiles); restore frozen source child/tree before resume"
-                );
+            // Also applies to no-command preparation and to a resumed sequence
+            // whose final completion was durable before proof capture stopped.
+            if batch.sequence()?.completed == previously_completed {
+                batch.selected_commit =
+                    Some(verify_command_result(batch, &client, &goal, &goal_entries)?);
             }
-            verify_disk(&client, &operation, &goal, &batch.source, &goal_entries)?;
-            batch.selected_commit = Some(current);
-            validate(batch)?;
-            verify_targets(batch)?;
             batch.verified_source = Some(capture_verified(batch)?);
             batch.phase = PreparationPhase::Verified;
             save(store, batch)?;
@@ -675,6 +815,35 @@ pub(super) fn execute(
         Ok(())
     })();
     result.with_context(|| format!("source preparation stopped in phase {:?}, frozen goal {:?}; source progress was not rolled back; targets not refilled; resume recorded batch {:?}", batch.phase, batch.goal, batch.request.names))
+}
+
+fn verify_command_result(
+    batch: &Batch,
+    client: &JjClient,
+    goal: &str,
+    goal_entries: &[Entry],
+) -> Result<String> {
+    validate(batch)?;
+    snapshot(client)?;
+    let (operation, current) = current_commit(client)?;
+    if !changed_paths(client, &operation, &current, goal)?.is_empty() {
+        bail!(
+            "preparer changed tracked tree (including lockfiles); restore frozen source child/tree before resume"
+        );
+    }
+    let selected = batch
+        .selected_commit
+        .as_ref()
+        .context("missing selected source child")?;
+    if client.resolve_one_at(&operation, &current)?.change_id
+        != client.resolve_one_at(&operation, selected)?.change_id
+        || !exact_empty_child(client, &operation, &current, goal)?
+    {
+        bail!("source selected revision changed; restore the recorded source child before resume");
+    }
+    verify_disk(client, &operation, goal, &batch.source, goal_entries)?;
+    verify_targets(batch)?;
+    Ok(current)
 }
 
 /// Compare the immutable plan, not merely an ID field or a workspace name.
@@ -738,4 +907,43 @@ pub(super) fn finish_if_complete(store: &Store, batch: &Batch) -> Result<()> {
     fs::remove_file(active)?;
     File::open(&store.root)?.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_command_settings_preserve_presence_and_order() {
+        for text in [
+            "command = []\ncommands = []",
+            "command = ['cargo']\ncommands = []",
+            "command = []",
+            "commands = [[]]",
+            "commands = [['']]",
+        ] {
+            let settings: Settings = toml::from_str(text).unwrap();
+            assert!(settings.argv().is_err(), "{text}");
+        }
+        let settings: Settings =
+            toml::from_str("commands = [['bun', 'install'], ['bun', 'run', 'build']]").unwrap();
+        assert_eq!(
+            settings.argv().unwrap(),
+            [vec!["bun", "install"], vec!["bun", "run", "build"]]
+        );
+        assert!(
+            toml::from_str::<Settings>("commands = []")
+                .unwrap()
+                .argv()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            toml::from_str::<Settings>("command = ['cargo', 'build']")
+                .unwrap()
+                .argv()
+                .unwrap(),
+            [vec!["cargo", "build"]]
+        );
+    }
 }

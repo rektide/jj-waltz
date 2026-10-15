@@ -5,6 +5,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Updated local freshen sequence activation, retry boundaries, legacy policy compatibility, and no-command payload reporting
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Aligned creation guidance with shared add/s destinations, source selection, snapshotted-current base, and mode precedence
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -122,11 +124,17 @@ scope. `--replace-content` destroys unrecorded contents. If interrupted, use
 `jw reseed NAME --resume` before ordinary JJ commands that snapshot partial files.
 
 Use `--freshen` only when source mutation is requested: it fetches the declared
-remote, selects the post-fetch source goal, and runs configured `[prepare]` argv
-in the donor. Preview with `--dry-run`; source freshening does not imply target
+remote, selects the post-fetch source goal, and runs local `[freshen]` `command`
+or ordered `commands` argv in donor cwd; both fields together are an error even
+when empty. There are no global/guessed build commands. With no commands, selected
+existing ignored payload can still be borrowed but is not freshly built.
+Preview with `--dry-run`; source freshening does not imply target
 `--at`. Preparation settings alone do not activate it. For interrupted preparation,
 resume the recorded batch without adding freshening/selection overrides; do not
-borrow partially installed ignored dependencies. Default-on policy is not implemented.
+borrow partially installed ignored dependencies. Completed command steps are skipped;
+an in-flight step may retry, not exactly-once. `[prepare]` is a deprecated alias:
+rename it only after recovery finishes, since frozen policy bytes must match.
+V1 preparation journals remain resumable. Public up integration is still pending.
 
 #### Status, adoption, cleanup, or recovery
 

@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Aligned freshening guidance with local ordered commands, compatible legacy policy/recovery, and honest existing ignored payload copying
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified add/s destinations, source selection, CoW defaults, and explicit mode precedence; aligned operator guidance
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -312,13 +314,13 @@ This preserves the target's snapshotted working-copy revision and feature change
 root directory, `.jj`, registration, bookmarks, and lifecycle metadata. Add
 `--at 'dev@origin'` to start an empty child of that base instead. The source's
 tracked tree must match `--source-at`; prepare it with ordinary JJ commands first,
-or opt into source preparation with `--freshen` and a configured installer:
+or opt into source preparation with `--freshen` and optional local commands:
 
 ```toml
 # .jwreseed.local.toml in the primary checkout (keep it ignored)
-[prepare]
+[freshen]
 remote = "origin"
-command = ["bun", "install", "--frozen-lockfile"]
+commands = [["bun", "install", "--frozen-lockfile"], ["bun", "run", "build"]]
 ```
 
 ```sh
@@ -327,9 +329,13 @@ jw reseed my-feature --freshen --source-at 'dev@origin' \
 ```
 
 Freshening snapshots existing work, fetches, selects the post-fetch source goal,
-and prepares dependencies. It still keeps the feature revision unless `--at` is
-explicit. The preparation table alone does not run anything; default-on freshening
-is a separate, not-yet-implemented follow-up. See [source freshening](docs/reseed.md#freshen-the-source).
+and runs configured commands sequentially. It still keeps the feature revision
+unless `--at` is explicit. A single `command = [...]` is also supported; declaring
+both forms is an error. No commands means no guessed build: selected ignored
+payload is existing data, not freshly built. The table alone never activates
+freshening. `[prepare]` remains a warned alias; migrate it after pending recovery
+finishes. Completed steps are skipped on resume; an interrupted in-flight command
+may retry. See [source freshening](docs/reseed.md#freshen-the-source).
 
 Use `--copy-ignored node_modules` to replace an ignored dependency directory with
 a private CoW copy, or `--replace-content` to explicitly discard all other

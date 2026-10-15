@@ -24,7 +24,11 @@ struct LocalConfig {
     copy_ignored: Vec<String>,
     #[serde(default)]
     groups: BTreeMap<String, Group>,
+    freshen: Option<prepare::Settings>,
+    /// Deprecated alias retained so frozen v1 preparation policy can be resumed.
     prepare: Option<prepare::Settings>,
+    #[serde(skip)]
+    legacy_prepare: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +289,11 @@ pub(super) fn run(
         request.dry_run = dry_run;
         (config, preparation_config) = load_config(&default)?;
     }
+    if config.legacy_prepare {
+        diagnostic(
+            "warning: [prepare] is a deprecated local alias for [freshen]; rename it after any pending preparation finishes (frozen policy bytes must not change during recovery)",
+        );
+    }
     if let Some(frozen) = batch.as_ref().and_then(|b| b.plans.as_ref()) {
         prepare::validate_resume_request(&request)?;
         for name in &names {
@@ -431,7 +440,7 @@ pub(super) fn run(
                 &inventory,
                 &source,
                 ignored_patterns,
-                config.prepare.as_ref(),
+                config.freshen.as_ref(),
             )?;
             if batch.is_none() {
                 snapshot(&source_client)?;
@@ -442,7 +451,7 @@ pub(super) fn run(
                     let summary = prepare::describe(
                         &source,
                         source_rev,
-                        config.prepare.as_ref(),
+                        config.freshen.as_ref(),
                         ignored_patterns,
                     )?;
                     diagnostic(&summary);
@@ -461,7 +470,7 @@ pub(super) fn run(
                     &names,
                     &request,
                     source_rev,
-                    config.prepare.as_ref(),
+                    config.freshen.as_ref(),
                     ignored_patterns,
                     preparation_config.clone(),
                 )?);
@@ -476,8 +485,10 @@ pub(super) fn run(
                     source,
                     source_commit_id: b.goal.clone(),
                     preparation_summary: Some(format!(
-                        "Resume recorded preparation phase {:?}, source goal {:?}, exact goal {:?}; no preparation actions performed",
-                        b.phase, b.source_rev, b.goal
+                        "Resume recorded preparation phase {:?}, source goal {:?}; {}; no preparation actions performed",
+                        b.phase,
+                        b.source_rev,
+                        prepare::summary(b)
                     )),
                     targets: names
                         .iter()
@@ -893,11 +904,21 @@ fn link_config_bytes(root: &Path) -> Result<Vec<(String, Option<Vec<u8>>)>> {
 fn load_config(default: &Path) -> Result<(LocalConfig, Option<Vec<u8>>)> {
     let path = default.join(".jwreseed.local.toml");
     match fs::read(&path) {
-        Ok(bytes) => Ok((
-            toml::from_str(std::str::from_utf8(&bytes)?)
-                .with_context(|| format!("invalid {}", path.display()))?,
-            Some(bytes),
-        )),
+        Ok(bytes) => {
+            let mut config: LocalConfig = toml::from_str(std::str::from_utf8(&bytes)?)
+                .with_context(|| format!("invalid {}", path.display()))?;
+            if config.freshen.is_some() && config.prepare.is_some() {
+                bail!("[freshen] and legacy [prepare] cannot both be present; keep only [freshen]");
+            }
+            if let Some(legacy) = config.prepare.take() {
+                config.freshen = Some(legacy);
+                config.legacy_prepare = true;
+            }
+            if let Some(settings) = &config.freshen {
+                settings.argv()?;
+            }
+            Ok((config, Some(bytes)))
+        }
         Err(e) if e.kind() == ErrorKind::NotFound => Ok((LocalConfig::default(), None)),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }

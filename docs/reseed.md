@@ -8,6 +8,8 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Implemented local freshen command sequences, completed/in-flight recovery, v1 journal migration, deprecated prepare compatibility, and honest existing-payload borrowing
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
     title: Implemented and verified reseeding, source defaults, and explicit donor freshening with recoverable preparation
   - resource: "opencode://ses_ec2e49e63ffe72f71k65378obu"
@@ -108,8 +110,8 @@ arbitrary source dotfiles. There is no additional confirmation prompt.
 ## Freshen the source
 
 Freshening prepares the donor before distributing it: fetch one declared remote,
-select an empty JJ child of the requested source baseline, then run a dependency
-preparation command in that donor. It does not automatically reset feature targets.
+select an empty JJ child of the requested source baseline, then run any configured
+preparation commands in that donor. It does not automatically reset feature targets.
 
 Declare the project-specific preparation argv in the primary checkout's ignored
 `.jwreseed.local.toml`:
@@ -118,15 +120,30 @@ Declare the project-specific preparation argv in the primary checkout's ignored
 source_at = "dev@origin"
 copy_ignored = ["node_modules", "packages/*/node_modules"]
 
-[prepare]
+[freshen]
 remote = "origin"
-command = ["bun", "install", "--frozen-lockfile"]
+commands = [
+  ["bun", "install", "--frozen-lockfile"],
+  ["bun", "run", "build"],
+]
 ```
 
-The command is an argv array, not an implicitly shell-expanded string. It runs in
-the selected source root, including when `--from` overrides the primary donor.
-No package manager or install command is guessed. This is trusted execution policy;
-an installer may run project/package scripts, and `jw` is not a sandbox.
+For one command, `command = ["cargo", "build", "--locked"]` is also supported.
+`command` and `commands` cannot both be present, **even if either is empty**.
+Every command must be a nonempty argv with a nonempty program; `commands = []`
+means no commands. Arguments are not implicitly shell-expanded. Commands run
+sequentially in the selected donor root, including with `--from`, and stop on the
+first failure. Each successful step must leave the tracked baseline unchanged,
+including lockfiles, before it is recorded complete or a later command runs.
+
+Command policy is **repository-local only**. No package manager, installer, or
+builder is guessed, and no global command configuration is read. This is trusted
+execution policy: programs may run project/package scripts, and `jw` is not a sandbox.
+
+Legacy `[prepare]` remains a deprecated alias with a warning; `[prepare]` and
+`[freshen]` together are an error, including empty tables. Rename the table to
+`[freshen]` **after any pending preparation finishes**. Recovery still requires
+the exact frozen local policy bytes, so renaming the table mid-operation stops it.
 
 ```sh
 # Prepare the donor, but keep this feature's snapshotted revision.
@@ -146,8 +163,8 @@ the old donor is already prepared. Without the flag, the existing source-baselin
 assertion remains unchanged. Target `--at` and `--replace-content` stay separate.
 
 Preparation settings alone do not activate freshening: pass `--freshen` explicitly.
-Default-on `freshen = true` and a one-run opt-out belong to the separate
-`jjwaltz-reseed-freshen-default` ticket; they are not implemented in this delivery.
+The commissioned `up` replacement is not integrated yet; the current public
+interface remains `reseed --freshen`. Default-on freshening is not planned.
 
 Remove `--dry-run` only when the source, remote, argv/cwd, and target policy are
 right. A freshening dry-run does not fetch, select a new source change, install, or
@@ -158,10 +175,12 @@ stop the batch before target contents are cleared. Partial dependency installati
 requires recorded recovery before the donor can be borrowed again.
 
 Only the declared remote is fetched, with `origin` as the fallback when it exists.
-A preparation command is required when ignored dependency selections are enabled;
-without ignored copying, omitting it means tracked-source freshening only. A
-successful command that changes tracked files, including a lockfile, still fails
-the baseline check. Source progress is not automatically rolled back.
+With no commands, freshening performs fetch/source advancement only. Selected
+existing ignored payload may still be copied privately, but is reported as
+**existing data, not freshly built**. Its presence does not require a builder;
+its suitability for changed manifests remains your responsibility. A successful
+command that changes tracked files still fails the baseline check. Source progress
+is not automatically rolled back.
 
 For interrupted source preparation, use `--resume` with all original literal target
 names in their recorded order. Do not add `--freshen`, new source/goal overrides,
@@ -173,6 +192,28 @@ prevent repeating successful refills.
 jw reseed worker-a worker-b --resume
 ```
 
+### Command progress and older preparation journals
+
+New source preparation journals use version 2 and freeze the entire argv sequence,
+completed count, and whether the next command was in flight. A step is durably
+completed only after successful exit and baseline/source/target checks. Resume
+skips completed steps and does not refetch a frozen goal.
+
+**An interrupted or failed in-flight command may retry.** Its earlier attempt may
+already have performed side effects, including after a successful exit but before
+durable acknowledgement. Arbitrary external commands are not exactly-once.
+Programs must tolerate retry against partially produced outputs, or you must
+restore the required partial state deliberately. A later command may have changed
+earlier commands' ignored outputs; completed steps are still not replayed. Until
+all commands and the final source/payload proof succeed, borrowing is blocked.
+
+Existing v1 journals remain resumable. Their single command becomes a one-step
+sequence. A v1 `Verified` preparation is already completed and is not rerun;
+otherwise completion was not recorded, so an unfinished command may retry. The
+v2 representation is written on real resumed progress, not merely on lookup or
+`--resume --dry-run`. Frozen source/target proofs and policy bytes are retained.
+Target pending records and their receipts retain their existing schema.
+
 An unfinished batch blocks new borrowing or freshening from its donor. Restore
 installer-modified tracked bytes to the recorded goal before retrying; the same
 recorded change and frozen parent are required, not an unrelated tree-equivalent
@@ -182,7 +223,9 @@ recovery. Keep credentials out of the configured argv: policy and arguments are
 retained in the local preparation journal.
 
 See the [source freshening design](../design/workspace-reseed/source-freshen0.gpt61sol.md)
-for sequencing and recovery details.
+for the earlier single-command evidence; the
+[current engine contract](architecture.md#local-freshening-commands-and-recovery)
+explains the sequence and migration implementation.
 
 ## Optional shortcuts
 
@@ -362,6 +405,12 @@ regression run passed 350 tests; the four CLI cases passed separately.
 The freshening build has not yet been rerun on JJ 0.44.0/0.45.1 or non-Linux platforms.
 Focused engine tests cover every write-ahead boundary and safe tracked-only type
 transitions. Existing integration regressions, Clippy, and formatting also passed.
+
+Local command sequencing and v1 migration extend the preparation suite to 28 cases,
+all passing on official JJ 0.46.0 with real Btrfs CoW required. The no-command
+existing-payload case also verifies shared extents and private inodes. Focused
+configuration checks, Clippy, and formatting pass. This change did not repeat the
+earlier release matrix or unrelated suites.
 
 Wildcard groups at implementation checkpoint `9bd3a1c1` add six native cases
 (36 total) and nine selection unit cases. All 353 regression tests passed with

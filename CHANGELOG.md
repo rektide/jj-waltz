@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Added local sequential freshening commands, durable per-step recovery, compatible v1 journals, and no-command existing ignored payload borrowing
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified explicit add/s destinations and source selection, then CoW/JJ-only/current-source creation defaults
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -22,6 +24,13 @@ sources:
 
 ## Unreleased
 
+- Add repository-local `[freshen]` single `command` or sequential `commands`
+  argv, rejecting both forms even when empty. Retain `[prepare]` as a warned
+  alias and preserve v1 pending preparation recovery. New v2 journals freeze
+  sequence/progress, skip completed steps, and explicitly retry interrupted
+  in-flight commands when needed; arbitrary command execution is not exactly-once.
+  No commands means no guessed build, while existing selected ignored payload
+  may still be copied and is reported as existing data rather than freshly built.
 - Add shared `add`/`s` `--path DESTINATION` and optional `--from SOURCE`, defaulting
   to the current checkout. Honor registered names/paths; otherwise infer `fix` from
   `opencode-fix` under repository `opencode`, or keep a basename such as `myfix`.
@@ -35,12 +44,12 @@ sources:
   overridden. Ordinary-checkout fallbacks remain and now all report warnings,
   including rejected copied state and Watchman, in CLI and manager output.
 - Add explicit `jw reseed --freshen`: snapshot real work, fetch one declared remote,
-  select a post-fetch source baseline, and run trusted configured `[prepare]`
+  select a post-fetch source baseline, and run trusted configured `[freshen]`
   argv before distribution. Keep target reset independent. Add prospective/no-action
   previews, source ownership checks, verified dependency payload binding, and
   recoverable atomic batch handoff with completion receipts. Source preparation
   blocks unsafe borrowing after failure; settings alone never activate it.
-  Default-on freshening remains a separate follow-up.
+  Its commissioned explicit `up` replacement is not yet integrated.
 - Extend reseed groups with `names`, `name_globs`, and `path_globs`. Match exact
   registrations in the current repository, with optional `on_unmatched = "warn"`
   and `--on-unmatched error|warn` overrides. List all skipped unrelated candidates

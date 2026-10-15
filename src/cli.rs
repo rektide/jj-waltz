@@ -382,7 +382,7 @@ struct ReseedCommand {
     /// Prepared source assertion, or post-fetch source goal with --freshen.
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    /// Fetch the donor remote and run its configured preparation argv before reseeding.
+    /// Fetch the donor remote, then run configured local preparation commands in order.
     #[arg(long, conflicts_with = "resume")]
     freshen: bool,
     /// Start a fresh empty change at this base instead of keeping target revisions.

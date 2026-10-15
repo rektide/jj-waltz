@@ -12,7 +12,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Linked native source foundation and its explicit missing-ref extension, and distinguished current commission from superseded freshening/default alternatives
+    title: Linked native source/missing-ref and command-sequence foundations, and distinguished current commission from superseded freshening/default alternatives
   - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
     title: Commissioned up and shared copying implementation after repeat-reseed design and independent JJ preservation/tracking research
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
@@ -34,6 +34,10 @@ sources:
   disposable native JJ verification. Includes frozen explicit not-yet-imported
   `branch@remote` intent with unknown IDs and deferred publication checks.
   Not yet connected to the existing CLI.
+- [Local command sequences and recovery](../../docs/architecture.md#local-freshening-commands-and-recovery) —
+  implemented `[freshen]` single/ordered argv policy in the existing preparation
+  engine, durable per-step progress, deprecated `[prepare]` alias, and v1 journal
+  compatibility. Still activated through `reseed --freshen` pending up integration.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;

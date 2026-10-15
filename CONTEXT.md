@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
+    title: Defined ordered freshening command policy, durable completion versus in-flight retry, and existing-payload borrowing without guessed builders
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Aligned workspace/variant identity and creation contracts with verified placement, CoW defaults, and snapshotted source @
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -134,6 +136,13 @@ by itself a claim that a command exposing that concept already exists.
 - **Preparation batch** — source-keyed write-ahead intent retaining trusted policy,
   a frozen source goal, verified dependency payload, and all target plans until
   receipts account for completion. Partial installation is not a prepared donor.
+- **Freshening command sequence** — repository-local ordered argv, normalized from
+  one `command` or a `commands` list, never both. Absence means no builder is
+  guessed; selected ignored contents remain explicitly existing source data.
+- **Completed / in-flight command** — a step durably acknowledged after successful
+  exit and source/target checks / an attempted step without that acknowledgement.
+  Resume skips completed steps; an in-flight step may retry after partial side
+  effects. External command execution is not exactly-once.
 
 ## Invariants
 

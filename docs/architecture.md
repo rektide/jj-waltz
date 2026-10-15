@@ -9,7 +9,7 @@ updated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec1a8d43bffe02bXuEoA7hEW3l"
-    title: Implemented native source selection and frozen post-fetch validation, then extended explicit missing-ref intent with unknown IDs, exact fetch selection, and deferred publication checks
+    title: Implemented native source and missing-ref foundations, then local command sequences, durable completed/in-flight progress, and compatible v1 preparation recovery
   - resource: "opencode://ses_ec206881bffenBcwNsQxlvfx3J"
     title: Implemented and verified shared add/s placement, snapshotted-current creation bases, explicit mode resolution, and visible fallback reporting
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -286,6 +286,46 @@ import of JJ's private working-copy state.
 
 See the [operator guide](reseed.md) and
 [design](../design/workspace-reseed/reseed0.gpt6a.md) for policy and limitations.
+
+### Local freshening commands and recovery
+
+The existing [`reseed::prepare`](../src/reseed/prepare.rs) engine now accepts local
+`[freshen]` policy with either one `command` argv or ordered `commands` argv arrays.
+Presence of both is invalid even when empty; no global command policy exists.
+The local loader retains `[prepare]` as a deprecated, warned alias and rejects
+both table names together. This preserves frozen legacy policy bytes during
+recovery instead of silently ignoring old settings or forcing a mid-flight edit.
+
+Preparation journal v2 freezes a `command_sequence` containing `argv`, `completed`,
+and `in_flight`. Before spawning a command, the engine durably marks it in flight.
+After successful exit, it checks source ownership/policy, the same selected source
+change and exact goal parent, the unchanged tracked tree (including new tracked
+paths), disk materialization, and frozen targets before acknowledging completion.
+Commands execute sequentially in donor cwd without an implicit shell. Any failed
+command/proof stops before later commands or target refill. Final source/payload
+proof capture remains the prerequisite for target planning and handoff.
+
+Resume skips durable completed steps; an in-flight step may retry after failure
+or interruption, including a lost acknowledgement after successful side effects.
+There is no exactly-once claim. During preparation, ignored outputs can be partial
+and later steps may alter earlier outputs; the current step must tolerate that
+state or the operator must repair it. Borrowing stays blocked until final proof
+capture. Once verified, the existing frozen payload digest/restoration contract
+continues to apply, without rerunning commands to adopt changed data.
+
+V1 preparation records load compatibly into one-step sequences. Only `Verified`
+proves legacy completion; other legacy progress is unknown and may retry. Migration
+preserves frozen identities, policy bytes, source proof, and target plans. Lookup
+and preview only migrate in memory; real progress writes v2. Unsupported versions,
+malformed completion positions, or conflicting legacy/v2 command fields fail
+closed. Target pending/receipt schemas are unchanged.
+
+No commands means fetch/advance only, not a guessed build. Existing selected
+ignored payload may still be copied, explicitly reported as existing rather than
+freshly built. There is no automatic payload pruning. The command engine remains
+reachable through legacy `reseed --freshen` until the commissioned up integration;
+this stage introduces no partial public up command. See
+[operator configuration and retry guidance](reseed.md#freshen-the-source).
 
 ### Native freshening source foundation
 
