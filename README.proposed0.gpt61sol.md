@@ -9,7 +9,7 @@ generated:
   at: 2026-10-15
 sources:
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
-    title: Implemented up integration, assessed CLI consistency, and drafted paired README and agent-skill replacements at the user's request
+    title: Implemented up, assessed CLI consistency, drafted paired replacements, and combined creation/switch matrix cells following user direction
   - resource: /README.md
     title: Existing installation, creation, shell, configuration, status, ownership, and cleanup guidance
   - resource: /docs/reseed.md
@@ -93,26 +93,33 @@ the manager for controls and review any removal preview before confirming it.
 
 ## CLI at a glance
 
-“Creation only” means an existing switch does **not** reset the workspace, assert
-its donor tree, convert its mode, or refill dependencies.
+`s` is the short alias for `switch`. Parentheses in the combined column describe
+switch-specific behavior. Creation-only options never reset or refill an existing
+workspace when switching to it.
 
-| Behavior / option | `add` | `s` / `switch` | `reseed` | `up` |
-| --- | --- | --- | --- | --- |
-| Bare command in a variant | Name/path required | Name/path required | Current variant | Current variant |
-| Bare command at primary | Name/path required | Name/path required | Targets/group required | Source only |
-| Multiple names | Create all | Create missing; select last | Refill selected | Advance selected |
-| `--group`, `--on-unmatched` | — | — | Yes | Same |
-| Default source | Current checkout | Current checkout for creation | Local `source`, otherwise verified primary | Same |
-| `--from` | Select creation source/context | Select source/context | Select donor; retain caller role | Same as reseed |
-| `--path` | Exact destination; infer name | Creation destination; infer name | — | — |
-| Default target base | Source `@` | Source `@`, creation only | Keep target revision | Exact prepared upstream goal |
-| `--at` | Override creation base | Creation only | Explicit reset base | — |
-| `--source-at` | Donor tree assertion | Creation only | Donor tree assertion | Upstream advancement goal |
-| Ignored-copy controls | Creation only | Creation only | Yes | Same |
-| CoW / colocation switches | Creation mode | Creation only | Real CoW required | Real CoW required |
-| `--dry-run`, `--resume` | — | — | Yes | Yes |
-| `--replace-content` | — | — | Explicit destructive replacement | Same |
-| Bookmark controls | `--bookmark`, `--no-bookmark` | Creation only | Existing bookmarks unchanged | Automatic preservation; `--no-freshen-bookmark` opts out |
+| Behavior / option | `add` / (`switch`) | `reseed` | `up` |
+| --- | --- | --- | --- |
+| Purpose | Create (enter existing or create) | Renew CoW, keep work | Freshen source and advance |
+| Bare command in a variant | Name/path required | Current variant | Current variant |
+| Bare command at primary | Name/path required | Targets/group required | Source only |
+| Multiple names | Create all (create missing; enter last) | Refill selected | Advance selected |
+| `--group`, `--on-unmatched` | — | Yes | Same |
+| Explicit selection suppresses current | N/A | Yes | Same |
+| Default donor | Current checkout (when creating) | Local `source` → verified primary | Same |
+| `--from` | Select creation source/context (also selects switch context) | Select donor; retain caller role | Same as reseed |
+| Outside-workspace invocation with `--from` | Supported | Not supported | Not supported |
+| `--path` | Exact destination; infer name (creation destination) | — | — |
+| Default target history | Empty child of source `@` (creation only) | Keep snapshotted target | New empty child of fetched goal |
+| `--at` | Override creation base (creation only) | Explicit reset base | —; always prepared goal |
+| `--source-at` | Donor tree assertion (creation only) | Donor tree assertion | Upstream advancement goal |
+| Fetch / local preparation commands | Never | Never | Explicit command purpose |
+| `--copy-ignored`, `--no-copy-ignored` | Creation payload (creation only) | Refill payload | Same |
+| Ignored-copy precedence | CLI → local → global | Same | Same |
+| CoW / colocation switches | Creation mode (creation only) | Real CoW required | Real CoW required |
+| `--dry-run`, `--resume` | — | Yes | Same recovery model |
+| `--replace-content` | — | Explicit destructive replacement | Same |
+| Bookmark controls | `--bookmark`, `--no-bookmark` (creation only) | No automatic preservation bookmark | Automatic preservation; `--no-freshen-bookmark` opts out |
+| Existing feature bookmarks | Creation may add one (existing switch does not move them) | Unchanged | Unchanged |
 
 Creation can start outside a checkout with an explicit `--from`. Reseed and up
 must be invoked inside a registered workspace, even with `--from`. For maintenance,
