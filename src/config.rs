@@ -28,10 +28,11 @@ pub enum DefaultCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceConfig {
     pub create_bookmark: bool,
-    /// None inherits the verified primary workspace; Some(false) explicitly opts out.
+    /// None uses JJ-only creation; Some(true) explicitly requests colocation.
     pub colocate: Option<bool>,
     pub bookmark_template: String,
-    pub copy_on_write: bool,
+    /// None defaults to CoW unless colocation is explicitly selected.
+    pub copy_on_write: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +53,7 @@ struct RawWorkspaceConfig {
     create_bookmark: bool,
     colocate: Option<bool>,
     bookmark_template: Option<String>,
-    #[serde(default)]
-    copy_on_write: bool,
+    copy_on_write: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -69,7 +69,7 @@ impl Default for Config {
                 create_bookmark: false,
                 colocate: None,
                 bookmark_template: DEFAULT_BOOKMARK_TEMPLATE.to_owned(),
-                copy_on_write: false,
+                copy_on_write: None,
             },
             trunk: TrunkConfig {
                 revset: DEFAULT_TRUNK_REVSET.to_owned(),
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(config.default_command, DefaultCommand::Ui);
         assert!(!config.workspace.create_bookmark);
         assert_eq!(config.workspace.bookmark_template, "{workspace}");
-        assert!(!config.workspace.copy_on_write);
+        assert_eq!(config.workspace.copy_on_write, None);
         assert_eq!(config.trunk.revset, "trunk()");
     }
 
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_copy_on_write_opt_in() {
+    fn preserves_copy_on_write_configuration_intent() {
         let raw: RawConfig = toml::from_str(
             r#"
                 [workspace]
@@ -173,8 +173,10 @@ mod tests {
         .unwrap();
 
         let config = Config::from(raw);
-        assert!(config.workspace.copy_on_write);
+        assert_eq!(config.workspace.copy_on_write, Some(true));
         assert!(!config.workspace.create_bookmark);
+        let raw: RawConfig = toml::from_str("[workspace]\ncopy_on_write = false").unwrap();
+        assert_eq!(Config::from(raw).workspace.copy_on_write, Some(false));
     }
 
     #[test]

@@ -247,19 +247,15 @@ fn default_and_cli_config_precedence_and_existing_switch() {
         .assert()
         .failure();
     f.config("[workspace]\ncopy_on_write=true\n");
-    f.jw()
-        .args(["add", "cow", "--colocate"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot be combined"));
-    assert!(!f.path("cow").exists());
+    f.jw().args(["add", "cow", "--colocate"]).assert().success();
+    assert!(f.path("cow").join(".git").is_file());
 }
 
 #[test]
-fn auto_colocation_inherits_primary_from_both_kinds_of_sibling() {
+fn default_creation_stays_jj_only_from_both_kinds_of_sibling() {
     for primary_colocated in [false, true] {
         let f = Fixture::with_primary_colocation(primary_colocated);
-        let expected = primary_colocated && f.supports();
+        let expected = false;
         f.jw().args(["add", "from-primary"]).assert().success();
         assert_eq!(f.path("from-primary").join(".git").is_file(), expected);
         f.jw()
@@ -431,16 +427,14 @@ fn auto_colocation_keeps_cow_usable_and_explicit_conflicts_actionable() {
         .args(["add", "no-cow", "--no-cow"])
         .assert()
         .success();
-    assert_eq!(f.path("no-cow").join(".git").is_file(), f.supports());
+    assert!(!f.path("no-cow").join(".git").exists());
     let names = f.names();
     let registrations = f.registrations();
-    for config in [
-        "[workspace]\ncopy_on_write=true\n",
-        "[workspace]\ncopy_on_write=true\ncolocate=true\n",
-    ] {
-        f.config(config);
+    f.config("[workspace]\ncopy_on_write=true\ncolocate=true\n");
+    for flags in [vec![], vec!["--cow", "--colocate"]] {
         f.jw()
-            .args(["add", "conflict", "--colocate"])
+            .args(["add", "conflict"])
+            .args(flags)
             .assert()
             .failure()
             .stderr(predicate::str::contains(
@@ -455,7 +449,7 @@ fn auto_colocation_keeps_cow_usable_and_explicit_conflicts_actionable() {
         .assert()
         .success();
     assert!(!f.path("overridden").join(".git").exists());
-    f.config("[workspace]\n");
+    f.config("[workspace]\ncolocate=true\n");
     f.jw().args(["add", "cli-cow", "--cow"]).assert().success();
     assert!(!f.path("cli-cow").join(".git").exists());
 }

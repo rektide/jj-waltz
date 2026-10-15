@@ -56,6 +56,7 @@ pub struct AddResult {
     pub creation_operation_id: String,
     pub creation_base_commit_id: String,
     pub owned_git_worktree: Option<crate::ownership::OwnedGitWorktree>,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -649,14 +650,20 @@ fn add_workspace_by_name_with_inventory(
 
     if let Some(source) = &options.clone_from {
         match materialize_clone(source, &path) {
-            Ok(true) => {}
-            Ok(false) => {
+            Ok(None) => {}
+            Ok(Some(reason)) => {
                 // Recreate through JJ's ordinary path. That inherits the source
                 // sparse patterns verbatim, including paths with whitespace.
                 rollback_workspace_parts(name, &path, None, None)?;
                 let mut fallback = options.clone();
                 fallback.clone_from = None;
-                return add_workspace_by_name_with_inventory(name, &fallback, inventory);
+                let warning = format!(
+                    "copy-on-write is unavailable for workspace {name}, using ordinary JJ workspace creation: {reason}"
+                );
+                let mut result = add_workspace_by_name_with_inventory(name, &fallback, inventory)
+                    .with_context(|| warning.clone())?;
+                result.warning = Some(warning);
+                return Ok(result);
             }
             Err(error) => return Err(rollback_failed_add(error, name, &path, None)),
         }
@@ -704,6 +711,7 @@ fn add_workspace_by_name_with_inventory(
         creation_operation_id,
         creation_base_commit_id: options.base_commit_id.clone(),
         owned_git_worktree,
+        warning: None,
     })
 }
 
@@ -711,13 +719,13 @@ fn add_workspace_by_name_with_inventory(
 ///
 /// Only the files JJ tracks in the source's working-copy commit are cloned, so
 /// ignored and untracked files never reach the new workspace. JJ adopts the clone
-/// through the source's working-copy state. Return false when the caller must
+/// through the source's working-copy state. Return a reason when the caller must
 /// recreate through JJ's ordinary checkout path. Restoring `@` then rewrites every
 /// file that differs from the creation base, so the result matches a full checkout.
-fn materialize_clone(source_root: &Path, path: &Path) -> Result<bool> {
+fn materialize_clone(source_root: &Path, path: &Path) -> Result<Option<&'static str>> {
     let client = JjClient::new(path);
     if client.uses_watchman()? {
-        return Ok(false);
+        return Ok(Some("the target uses Watchman"));
     }
     let files = JjClient::new(source_root).tracked_files()?;
     cow::clone_files(source_root, &files, path).with_context(|| {
@@ -727,10 +735,10 @@ fn materialize_clone(source_root: &Path, path: &Path) -> Result<bool> {
         )
     })?;
     if !adopt_source_tree_state(&client, source_root, path)? {
-        return Ok(false);
+        return Ok(Some("JJ could not reuse the source working-copy state"));
     }
     client.run(["restore"])?;
-    Ok(true)
+    Ok(None)
 }
 
 /// Let the new workspace reuse the source checkout's working-copy state.

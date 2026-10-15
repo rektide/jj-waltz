@@ -340,7 +340,7 @@ impl Worker {
                     } => {
                         let result = CreationPolicy::load(Some(base), None, false, false, None, 1)
                             .and_then(|policy| lifecycle::add_workspaces(&[name], &policy))
-                            .map(|_| ())
+                            .map(|outcome| outcome.warnings)
                             .map_err(format_error);
                         WorkerReply::Create { generation, result }
                     }
@@ -467,7 +467,7 @@ enum WorkerReply {
     },
     Create {
         generation: u64,
-        result: std::result::Result<(), String>,
+        result: std::result::Result<Vec<String>, String>,
     },
     Health {
         generation: u64,
@@ -833,8 +833,15 @@ impl App {
                 Err(error) => self.open_error("Workspace check failed", error),
             },
             WorkerReply::Create { result, .. } => match result {
-                Ok(()) => {
+                Ok(warnings) => {
                     self.notice = Some("workspace created".to_owned());
+                    if !warnings.is_empty() {
+                        self.screen = Screen::Report {
+                            title: "Workspace created with warnings".to_owned(),
+                            body: warnings.join("\n\n"),
+                            scroll: 0,
+                        };
+                    }
                     self.request_capture(tx, Vec::new())?;
                 }
                 Err(error) => self.open_error("Create failed", error),
@@ -2450,6 +2457,24 @@ mod tests {
         ]));
         app.filter = Filter::Integrated;
         assert_eq!(app.visible_names(), vec!["integrated"]);
+    }
+
+    #[test]
+    fn creation_fallback_warning_is_visible_in_a_report() {
+        let mut app = App::new("trunk()".to_owned(), false);
+        app.busy = Some(Busy::Create(1));
+        let (tx, rx) = mpsc::channel();
+        let warning = "using ordinary JJ workspace creation".to_owned();
+        app.apply_reply(
+            WorkerReply::Create {
+                generation: 1,
+                result: Ok(vec![warning.clone()]),
+            },
+            &tx,
+        )
+        .unwrap();
+        assert!(matches!(&app.screen, Screen::Report { body, .. } if body == &warning));
+        assert!(matches!(rx.try_recv(), Ok(WorkerTask::Capture { .. })));
     }
 
     #[test]

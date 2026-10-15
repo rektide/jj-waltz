@@ -1257,6 +1257,59 @@ fn switch_applies_workspace_links_for_data_directory() {
 }
 
 #[test]
+fn default_creation_snapshots_dirty_source_before_freezing_current_base() {
+    skip_without_jj!();
+    for command in ["add", "s"] {
+        let repo = TestRepo::new().unwrap();
+        let old = repo.revision_commit_id("@");
+        fs::write(
+            repo.default_root.join("README.md"),
+            "unsnapshotted source bytes\n",
+        )
+        .unwrap();
+        let parent = repo.default_root.parent().unwrap();
+        let destination = parent.join("repo-dirty");
+        let mut cmd = if command == "add" {
+            repo.cmd()
+        } else {
+            repo.cmd_at(parent)
+        };
+        cmd.arg(command).arg("--path").arg(&destination);
+        if command == "s" {
+            cmd.arg("--from")
+                .arg(&repo.default_root)
+                .arg("--print-path");
+        }
+        cmd.assert().success();
+        let source = repo.revision_commit_id("@");
+        assert_ne!(
+            source, old,
+            "source must be snapshotted before base resolution"
+        );
+        assert_eq!(
+            repo.jj_stdout(
+                &destination,
+                &[
+                    "--ignore-working-copy",
+                    "log",
+                    "-r",
+                    "parents(@)",
+                    "--no-graph",
+                    "-T",
+                    "commit_id"
+                ]
+            ),
+            source
+        );
+        assert_eq!(
+            fs::read(destination.join("README.md")).unwrap(),
+            b"unsnapshotted source bytes\n"
+        );
+        assert!(!destination.join(".git").exists());
+    }
+}
+
+#[test]
 fn add_with_cow_checks_out_exactly_the_base() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
@@ -1274,7 +1327,7 @@ fn add_with_cow_checks_out_exactly_the_base() {
     fs::write(repo.default_root.join("README.md"), "edited\n").expect("edit readme");
     fs::write(repo.default_root.join("scratch.txt"), "draft\n").expect("write scratch");
 
-    let output = repo.command_output(&["add", "--cow", "feature-a"]);
+    let output = repo.command_output(&["add", "--cow", "--at", "@-", "feature-a"]);
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -1357,25 +1410,40 @@ fn check_cow_sparse(mode: Option<&str>) {
         }
         #[cfg(not(unix))]
         assert!(mode.is_none());
-        let output = command
-            .args(["add", "--cow", "feature-a"])
-            .output()
-            .unwrap();
+        command.args([
+            if patterns.is_empty() { "switch" } else { "add" },
+            "--cow",
+            "--at",
+            "@-",
+            "feature-a",
+        ]);
+        if patterns.is_empty() {
+            command.arg("--print-path");
+        }
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
         if env::var_os("JW_TEST_REQUIRE_COW").is_some_and(|value| !value.is_empty()) {
-            assert!(
-                !String::from_utf8_lossy(&output.stderr).contains("copy-on-write is unavailable")
-            );
-            if mode.is_some() {
+            if mode.is_none() {
+                assert!(
+                    !String::from_utf8_lossy(&output.stderr)
+                        .contains("copy-on-write is unavailable")
+                );
+            } else {
                 assert!(
                     repo._tempdir.path().join("fallback-seen").exists(),
                     "fallback branch not exercised"
                 );
             }
+        }
+        if repo._tempdir.path().join("fallback-seen").exists() {
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("using ordinary JJ workspace creation")
+            );
         }
         assert_eq!(
             repo.jj_stdout(&workspace, &["sparse", "list"]),
@@ -1486,6 +1554,7 @@ fn switch_with_cow_config_leaves_link_sources_to_links() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     repo.write_config("[workspace]\ncopy_on_write = true\n");
+    fs::write(repo.default_root.join(".gitignore"), "data/\n").unwrap();
     fs::create_dir_all(repo.default_root.join("data")).expect("create data directory");
     fs::write(repo.default_root.join("data/blob"), "x").expect("write data");
     fs::write(
@@ -1908,6 +1977,7 @@ fn switch_fails_on_conflicting_existing_path() {
 fn switch_reapplies_links_after_intermediate_commits_and_workspace_hops() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
+    fs::write(repo.default_root.join(".gitignore"), "data/\n").unwrap();
     fs::create_dir_all(repo.default_root.join("data")).expect("create data directory");
     fs::write(repo.default_root.join("data/blob.bin"), [7_u8; 8192]).expect("write data blob");
     fs::write(
@@ -2234,7 +2304,7 @@ fn doctor_uses_current_root_when_default_has_no_recorded_path() {
 fn creation_metadata_records_exact_base_prebookmark_operation_and_removal_cleans_it() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    let expected_base = repo.revision_commit_id("@-");
+    let expected_base = repo.revision_commit_id("@");
 
     let output = repo.command_output(&[
         "add",
@@ -2271,7 +2341,7 @@ fn creation_metadata_records_exact_base_prebookmark_operation_and_removal_cleans
 }
 
 #[test]
-fn merge_working_copy_requires_explicit_creation_base() {
+fn merge_working_copy_is_the_default_creation_base() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     repo.run_jj(["new", "root()", "-m", "left"]);
@@ -2280,13 +2350,15 @@ fn merge_working_copy_requires_explicit_creation_base() {
     let right = repo.revision_commit_id("@");
     repo.run_jj(["new", &left, &right, "-m", "merge"]);
     let merge = repo.revision_commit_id("@");
-    let before = repo.operation_id();
-
     let implicit = repo.command_output(&["add", "implicit", "--no-links"]);
-    assert!(!implicit.status.success());
-    assert!(String::from_utf8_lossy(&implicit.stderr).contains("use --at @"));
-    assert_eq!(repo.operation_id(), before);
-    assert!(!repo.workspace_names().contains(&"implicit".to_owned()));
+    assert!(
+        implicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&implicit.stderr)
+    );
+    let status = repo.command_output(&["status", "implicit", "--format=json", "--refresh=none"]);
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(value["workspaces"][0]["creation_base_commit_id"], merge);
 
     let explicit = repo.command_output(&[
         "add",

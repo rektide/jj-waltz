@@ -15,7 +15,7 @@ pub struct CreationPolicy {
     explicit_bookmark: Option<String>,
     no_bookmark: bool,
     apply_links: bool,
-    copy_on_write: bool,
+    copy_on_write_override: Option<bool>,
     config: Config,
     colocate_override: Option<bool>,
     destination: Option<PathBuf>,
@@ -43,7 +43,7 @@ impl CreationPolicy {
             explicit_bookmark,
             no_bookmark,
             apply_links: !no_links,
-            copy_on_write: copy_on_write.unwrap_or(config.workspace.copy_on_write),
+            copy_on_write_override: copy_on_write,
             config,
             colocate_override: None,
             destination: None,
@@ -60,24 +60,17 @@ impl CreationPolicy {
         self
     }
 
-    fn preflight_colocation(&self, client: &JjClient) -> Result<bool> {
-        if let Some(colocate) = self.colocate_override.or(self.config.workspace.colocate) {
-            if !colocate {
-                return Ok(false);
-            }
-            if self.copy_on_write {
-                bail!(
-                    "colocation and copy-on-write cannot be combined; use --no-cow or --no-colocate"
-                )
-            }
+    fn preflight_creation_mode(&self, client: &JjClient) -> Result<CreationMode> {
+        let mode = CreationMode::resolve(
+            self.copy_on_write_override,
+            self.colocate_override,
+            self.config.workspace.copy_on_write,
+            self.config.workspace.colocate,
+        )?;
+        if mode == CreationMode::Colocated {
             client.require_workspace_colocation()?;
-            return Ok(true);
         }
-        // Inheritance must not turn an otherwise valid CoW request into a conflict.
-        if self.copy_on_write {
-            return Ok(false);
-        }
-        client.inherited_workspace_colocation()
+        Ok(mode)
     }
 
     fn bookmark_for(&self, workspace: &str, allow_explicit: bool) -> Option<String> {
@@ -89,6 +82,48 @@ impl CreationPolicy {
         }
         self.config.workspace.create_bookmark.then(|| {
             config::bookmark_from_template(&self.config.workspace.bookmark_template, workspace)
+        })
+    }
+}
+
+/// Positive CLI mode selections override config; otherwise explicit per-field opt-outs
+/// overlay config. Unset configuration means CoW and JJ-only, never Git inheritance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CreationMode {
+    CopyOnWrite,
+    JjOnly,
+    Colocated,
+}
+
+impl CreationMode {
+    fn resolve(
+        cli_cow: Option<bool>,
+        cli_colocate: Option<bool>,
+        config_cow: Option<bool>,
+        config_colocate: Option<bool>,
+    ) -> Result<Self> {
+        let conflict = || {
+            anyhow!(
+                "colocation and copy-on-write cannot be combined; use --no-cow or --no-colocate"
+            )
+        };
+        match (cli_cow, cli_colocate) {
+            (Some(true), Some(true)) => return Err(conflict()),
+            (_, Some(true)) => return Ok(Self::Colocated),
+            (Some(true), _) => return Ok(Self::CopyOnWrite),
+            _ => {}
+        }
+        let cow = cli_cow.or(config_cow);
+        if cli_colocate.or(config_colocate) == Some(true) {
+            if cow == Some(true) {
+                return Err(conflict());
+            }
+            return Ok(Self::Colocated);
+        }
+        Ok(if cow.unwrap_or(true) {
+            Self::CopyOnWrite
+        } else {
+            Self::JjOnly
         })
     }
 }
@@ -204,7 +239,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         });
     }
     let client = JjClient::current()?;
-    let colocate = policy.preflight_colocation(&client)?;
+    let mode = policy.preflight_creation_mode(&client)?;
     let base = resolve_creation_base(&client, policy.at_revset.as_deref())?;
     let store = metadata_store(&client)?;
     preflight_creations(&inventory, &store, &plans)?;
@@ -212,7 +247,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         .apply_links
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
-    let checkout = plan_checkout(policy, &inventory, &plans)?;
+    let checkout = plan_checkout(mode, &inventory, &plans)?;
 
     let mut pending = Vec::new();
     for plan in plans {
@@ -223,7 +258,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
             &store,
             config_root.as_deref(),
             &checkout,
-            colocate,
+            mode == CreationMode::Colocated,
         ) {
             Ok(created) => {
                 inventory.record_created(&created.result);
@@ -232,9 +267,18 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
             Err(error) => return Err(rollback_after(error, Some(&store), &mut pending)),
         }
     }
+    let warnings = checkout
+        .warning
+        .into_iter()
+        .chain(
+            pending
+                .iter()
+                .filter_map(|created| created.result.warning.clone()),
+        )
+        .collect();
     Ok(AddOutcome {
         created: pending.into_iter().map(PendingWorkspace::finish).collect(),
-        warnings: checkout.warning.into_iter().collect(),
+        warnings,
     })
 }
 
@@ -306,10 +350,10 @@ fn switch_workspaces_with_creation(
         .cloned()
         .collect::<Vec<_>>();
     let client = JjClient::current()?;
-    let colocate = if all_plans.is_empty() {
-        false
+    let mode = if all_plans.is_empty() {
+        CreationMode::JjOnly
     } else {
-        policy.preflight_colocation(&client)?
+        policy.preflight_creation_mode(&client)?
     };
     let base = if all_plans.is_empty() {
         None
@@ -327,7 +371,7 @@ fn switch_workspaces_with_creation(
         .apply_links
         .then(|| inventory.root(inventory.default_name()?))
         .transpose()?;
-    let checkout = plan_checkout(policy, &inventory, &all_plans)?;
+    let checkout = plan_checkout(mode, &inventory, &all_plans)?;
 
     let mut intermediate = Vec::new();
     for plan in intermediate_plans {
@@ -340,7 +384,7 @@ fn switch_workspaces_with_creation(
             store,
             config_root.as_deref(),
             &checkout,
-            colocate,
+            mode == CreationMode::Colocated,
         ) {
             Ok(created) => {
                 inventory.record_created(&created.result);
@@ -360,7 +404,7 @@ fn switch_workspaces_with_creation(
             store,
             config_root.as_deref(),
             &checkout,
-            colocate,
+            mode == CreationMode::Colocated,
         ) {
             Ok(created) => Some(created),
             Err(error) => return Err(rollback_after(error, Some(store), &mut intermediate)),
@@ -416,6 +460,16 @@ fn switch_workspaces_with_creation(
         return Err(rollback_after(error, store.as_ref(), &mut intermediate));
     }
 
+    let warnings = checkout
+        .warning
+        .into_iter()
+        .chain(
+            intermediate
+                .iter()
+                .chain(final_created.iter())
+                .filter_map(|created| created.result.warning.clone()),
+        )
+        .collect();
     let links = match final_created {
         Some(created) => created.links.map(LinkApplication::into_report),
         None => existing_links.map(LinkApplication::into_report),
@@ -427,7 +481,7 @@ fn switch_workspaces_with_creation(
             .collect(),
         result,
         links,
-        warnings: checkout.warning.into_iter().collect(),
+        warnings,
     })
 }
 
@@ -624,18 +678,21 @@ fn preflight_creations(
 }
 
 fn resolve_creation_base(client: &JjClient, at_revset: Option<&str>) -> Result<ResolvedRevision> {
+    if at_revset.is_none() {
+        // operation_id()/resolve_one_at() deliberately do not snapshot. Refresh the
+        // selected source before freezing implicit @ so dirty tracked bytes are included.
+        client
+            .run(["status"])
+            .context("failed to snapshot source checkout before creation")?;
+    }
     let operation_id = client.operation_id()?;
     match at_revset {
         Some(revset) => client
             .resolve_one_at(&operation_id, revset)
             .with_context(|| format!("--at {revset:?} must resolve to exactly one revision")),
         None => client
-            .resolve_one_at(&operation_id, "parents(@)")
-            .map_err(|error| {
-                anyhow!(
-                    "cannot choose implicit creation base from parents(@): {error}; use --at @ to create on the current working-copy commit"
-                )
-            }),
+            .resolve_one_at(&operation_id, "@")
+            .context("cannot resolve the source working-copy commit after snapshot"),
     }
 }
 
@@ -644,11 +701,11 @@ fn resolve_creation_base(client: &JjClient, at_revset: Option<&str>) -> Result<R
 /// Cloning falls back to ordinary JJ workspace creation with a warning when the filesystem
 /// cannot clone.
 fn plan_checkout(
-    policy: &CreationPolicy,
+    mode: CreationMode,
     inventory: &workspace::WorkspaceInventory,
     plans: &[PlannedWorkspace],
 ) -> Result<CheckoutPlan> {
-    let Some(first) = plans.first().filter(|_| policy.copy_on_write) else {
+    let Some(first) = plans.first().filter(|_| mode == CreationMode::CopyOnWrite) else {
         return Ok(CheckoutPlan::default());
     };
     let source_root = inventory.current_root();
@@ -834,6 +891,30 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
+    #[test]
+    fn creation_modes_preserve_cli_and_config_intent() {
+        use CreationMode::{Colocated, CopyOnWrite, JjOnly};
+        for (cli_cow, cli_colocate, config_cow, config_colocate, expected) in [
+            (None, None, None, None, CopyOnWrite),
+            (Some(false), None, None, None, JjOnly),
+            (None, None, Some(false), None, JjOnly),
+            (None, None, None, Some(true), Colocated),
+            (None, Some(true), Some(true), Some(false), Colocated),
+            (Some(true), None, Some(false), Some(true), CopyOnWrite),
+            (Some(true), None, Some(true), Some(true), CopyOnWrite),
+            (None, Some(false), Some(true), Some(true), CopyOnWrite),
+            (Some(false), None, Some(true), Some(true), Colocated),
+            (Some(false), Some(false), Some(true), Some(true), JjOnly),
+        ] {
+            assert_eq!(
+                CreationMode::resolve(cli_cow, cli_colocate, config_cow, config_colocate).unwrap(),
+                expected
+            );
+        }
+        assert!(CreationMode::resolve(Some(true), Some(true), None, None).is_err());
+        assert!(CreationMode::resolve(None, None, Some(true), Some(true)).is_err());
+    }
+
     fn run_jj(cwd: &Path, args: &[&str]) -> String {
         let output = Command::new("jj")
             .current_dir(cwd)
@@ -938,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn implicit_base_rejects_multi_parent_working_copy() {
+    fn implicit_base_accepts_current_merge_commit() {
         if Command::new("jj").arg("--version").output().is_err() {
             return;
         }
@@ -956,9 +1037,10 @@ mod tests {
         run_jj(&root, &args);
 
         let client = JjClient::new(&root);
-        let error = resolve_creation_base(&client, None).expect_err("ambiguous default base");
-        assert!(error.to_string().contains("use --at @"));
-        assert!(resolve_creation_base(&client, Some("@")).is_ok());
+        assert_eq!(
+            resolve_creation_base(&client, None).unwrap(),
+            resolve_creation_base(&client, Some("@")).unwrap()
+        );
     }
 
     #[test]
