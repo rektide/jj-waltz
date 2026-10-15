@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6-astra
   at: 2026-10-14
 updated:
-  by: model:openai/gpt-6.1-sol
+  by: model:openai/gpt-6-astra
   at: 2026-10-15
 sources:
+  - resource: "opencode://ses_ec226a15effeUM4c1j7gwYPFHF"
+    title: Designed ordinary current-donor reseeding alongside CoW-first variant creation
   - resource: "opencode://ses_ec38a6d5fffeiVzJMUoRCYm9YM"
     title: User commissioning and verified no-adoption reseeding design
   - resource: "opencode://ses_ec37b01d2ffe9ytO0jRsdmoyXA"
@@ -21,6 +23,10 @@ sources:
 
 # In-place workspace reseeding
 
+- [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — proposed optional baseline
+  for borrowing the current donor, retaining target work, existing repeat-policy
+  configuration, and frozen recovery. Design for `jjwaltz-reseed-ergonomics`;
+  not implemented by the concurrent variants work.
 - [Repeatable in-place reflink reseeding](reseed0.gpt6a.md) — recommended
   `jw reseed` interface, prepared-source workflow, ignored dependencies, stock-JJ
   sparse-prefill mechanism, local verification, and implementation acceptance checks.
