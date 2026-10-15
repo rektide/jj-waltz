@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub struct ReseedRequest {
     pub names: Vec<String>,
     pub groups: Vec<String>,
+    /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
     pub source_at: Option<String>,
     pub at: Option<String>,

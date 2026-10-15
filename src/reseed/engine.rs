@@ -277,7 +277,7 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             .source
             .as_ref()
             .or(config.source.as_ref())
-            .context("reseed requires --from or source in .jwreseed.local.toml")?;
+            .unwrap_or(&default);
         let source = if raw_source.is_absolute() {
             raw_source.clone()
         } else if request.source.is_some() {
@@ -319,13 +319,9 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             require_full(&JjClient::new(&root))?;
             validate_contents(&root, false)?;
         }
-        // Full scans freeze dirty tracked work before tree/revision resolution.
+        // Assert the donor's prepared tree before snapshotting any target.
         snapshot(&source_client)?;
-        for root in &roots {
-            snapshot(&JjClient::new(root))?;
-        }
-        let operation = client.operation_id()?;
-        let source_operation = operation.clone();
+        let source_operation = client.operation_id()?;
         let source_wc = source_client
             .resolve_one_at(&source_operation, "@")?
             .commit_id;
@@ -354,6 +350,11 @@ pub(super) fn run(request: ReseedRequest) -> Result<ReseedReport> {
             &source,
             &source_entries,
         )?;
+        // Full scans freeze dirty target work only after donor validation.
+        for root in &roots {
+            snapshot(&JjClient::new(root))?;
+        }
+        let operation = client.operation_id()?;
         let base = request
             .at
             .as_ref()
@@ -563,13 +564,56 @@ impl Inventory {
             }
         }
         let context = crate::context::discover(Some(client.cwd()));
-        let default = roots
-            .get("default")
-            .cloned()
-            .or(context.jj.primary_checkout)
-            .context("cannot identify default/primary workspace")?
-            .canonicalize()?;
-        Ok(Self { default, roots })
+        let expected_repository = repository(client)?;
+        // A workspace named `default` need not own the repository. Only the
+        // unique registered checkout containing the actual repository qualifies.
+        let owners = roots
+            .iter()
+            .filter(|(_, root)| {
+                let pointer = root.join(".jj/repo");
+                fs::symlink_metadata(&pointer).is_ok_and(|m| m.is_dir())
+                    && pointer.canonicalize().ok().as_ref() == Some(&expected_repository)
+            })
+            .collect::<Vec<_>>();
+        if owners.len() != 1 {
+            bail!(
+                "cannot verify primary JJ workspace: repository owner registration is missing or ambiguous"
+            );
+        }
+        let (primary_name, default) = owners[0];
+        // Context may omit primary_checkout for a JJ-only checkout nested inside
+        // an unrelated Git checkout. The registered physical repository owner
+        // still proves JJ identity; never infer it from the enclosing Git root.
+        if context
+            .jj
+            .primary_checkout
+            .as_ref()
+            .is_some_and(|root| root != default)
+            || context
+                .jj
+                .primary_workspace
+                .as_ref()
+                .is_some_and(|name| name != primary_name)
+        {
+            bail!("primary JJ workspace discovery disagrees with repository owner registration");
+        }
+        let primary = crate::context::discover(Some(default));
+        if primary.jj.workspace_root.as_ref() != Some(default)
+            || primary.jj.workspace_name.as_ref() != Some(primary_name)
+            || repository(&JjClient::new(default))? != expected_repository
+            || context
+                .jj
+                .workspace_name
+                .as_ref()
+                .and_then(|name| roots.get(name))
+                != Some(&client.cwd().canonicalize()?)
+        {
+            bail!("primary/caller JJ workspace root registration is inconsistent");
+        }
+        Ok(Self {
+            default: default.clone(),
+            roots,
+        })
     }
     fn root(&self, name: &str) -> Result<&Path> {
         self.roots

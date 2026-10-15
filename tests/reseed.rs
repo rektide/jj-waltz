@@ -311,6 +311,359 @@ fn identity(path: &Path) -> (u64, u64) {
 }
 
 #[test]
+fn primary_default_from_sibling_and_subdirectory_preserves_different_feature_tree() {
+    let Some(repo) = Repo::new() else { return };
+    let caller = repo.workspace("caller");
+    let target = repo.workspace("feature");
+    if !repo.cow(&repo.root, &target) {
+        return;
+    }
+    fs::write(target.join("modified"), "feature\n").unwrap();
+    fs::write(target.join("feature-only"), "keep\n").unwrap();
+    let before = repo.id(&target, "@");
+    let subdir = caller.join("cache/subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    for cwd in [&caller, &subdir, &repo.root] {
+        success(
+            repo.jw(cwd)
+                .args(["reseed", "feature", "--source-at", &repo.baseline])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(repo.id(&target, "@"), before);
+        assert_eq!(
+            fs::read_to_string(target.join("modified")).unwrap(),
+            "feature\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("feature-only")).unwrap(),
+            "keep\n"
+        );
+        assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
+        let receipt = reseed_receipt(&repo, &repo.root);
+        assert_eq!(receipt["source"], repo.root.to_str().unwrap());
+        assert!(
+            receipt["clones"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p == "shared")
+        );
+        assert!(
+            !receipt["clones"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p == "modified")
+        );
+    }
+}
+
+fn reseed_receipt(repo: &Repo, cwd: &Path) -> serde_json::Value {
+    let config =
+        PathBuf::from(repo.jj_at(cwd, &["--ignore-working-copy", "config", "path", "--repo"]));
+    let receipt = fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".receipt.json")
+        })
+        .unwrap();
+    serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap()
+}
+
+#[test]
+fn renamed_primary_is_default_donor_even_with_another_workspace_named_default() {
+    let Some(repo) = Repo::new() else { return };
+    repo.jj_at(&repo.root, &["workspace", "rename", "primary"]);
+    let target = repo.workspace("feature");
+    if !repo.cow(&repo.root, &target) {
+        return;
+    }
+    for add_default in [false, true] {
+        if add_default {
+            let decoy = repo.workspace("default");
+            fs::write(decoy.join("modified"), "not the donor\n").unwrap();
+        }
+        success(
+            repo.jw(&target)
+                .args(["reseed", "feature", "--source-at", &repo.baseline])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(
+            reseed_receipt(&repo, &target)["source"],
+            repo.root.to_str().unwrap()
+        );
+    }
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "primary", "--source-at", &repo.baseline])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("primary/source"));
+}
+
+#[test]
+fn configured_relative_source_and_explicit_override_win_over_primary() {
+    let Some(repo) = Repo::new() else { return };
+    let configured = repo.workspace("configured");
+    let explicit = repo.workspace("explicit");
+    let target = repo.workspace("feature");
+    if !repo.cow(&configured, &target) {
+        return;
+    }
+    fs::write(
+        repo.root.join(".jwreseed.local.toml"),
+        format!(
+            "source = '../workspace-configured'\nsource_at = '{}'\n",
+            repo.baseline
+        ),
+    )
+    .unwrap();
+    // Neither override may fall back to the dirty primary's nonmatching tree.
+    fs::write(repo.root.join("modified"), "dirty primary\n").unwrap();
+    let subdir = target.join("cache/subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    success(
+        repo.jw(&subdir)
+            .args(["reseed", "feature"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        reseed_receipt(&repo, &target)["source"],
+        configured.to_str().unwrap()
+    );
+    success(
+        repo.jw(&subdir)
+            .args(["reseed", "feature", "--from", "../../../workspace-explicit"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        reseed_receipt(&repo, &target)["source"],
+        explicit.to_str().unwrap()
+    );
+    let before = repo.id(&target, "@");
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "feature", "--from"])
+        .arg(&target)
+        .output()
+        .unwrap();
+    repo.unchanged_failure(&target, output, &before);
+}
+
+#[test]
+fn primary_fallback_still_requires_source_at_and_matching_prepared_tree() {
+    let Some(repo) = Repo::new() else { return };
+    let target = repo.workspace("feature");
+    let before = repo.id(&target, "@");
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "feature"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --source-at"));
+    repo.unchanged_failure(&target, output, &before);
+    repo.jj_at(&repo.root, &["new", "-r", &repo.baseline]);
+    fs::write(repo.root.join("modified"), "dirty primary\n").unwrap();
+    fs::write(target.join("modified"), "unsnapshotted target\n").unwrap();
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "feature", "--source-at", &repo.baseline])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("source tracked tree does not match source_at"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success());
+    assert_eq!(
+        repo.jj_at(
+            &target,
+            &[
+                "--ignore-working-copy",
+                "log",
+                "--no-graph",
+                "-r",
+                "@",
+                "-T",
+                "commit_id"
+            ]
+        ),
+        before
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("modified")).unwrap(),
+        "unsnapshotted target\n"
+    );
+    assert_eq!(
+        repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
+        "."
+    );
+}
+
+#[test]
+fn unregistered_or_moved_primary_fails_without_snapshotting_target() {
+    for moved in [false, true] {
+        let Some(repo) = Repo::new() else { return };
+        let target = repo.workspace("feature");
+        let before = repo.id(&target, "@");
+        fs::write(target.join("modified"), "unsnapshotted feature\n").unwrap();
+        if moved {
+            let moved_root = repo.temp.path().join("moved-primary");
+            fs::rename(&repo.root, &moved_root).unwrap();
+            // Keep the repository accessible at its original identity, but move
+            // the primary working copy away from its registered root.
+            fs::create_dir_all(repo.root.join(".jj")).unwrap();
+            fs::rename(moved_root.join(".jj/repo"), repo.root.join(".jj/repo")).unwrap();
+        } else {
+            repo.jj_at(
+                &target,
+                &["--ignore-working-copy", "workspace", "forget", "default"],
+            );
+        }
+        let output = repo
+            .jw(&target)
+            .args(["reseed", "feature", "--source-at", &repo.baseline])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("primary"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            repo.jj_at(
+                &target,
+                &[
+                    "--ignore-working-copy",
+                    "log",
+                    "--no-graph",
+                    "-r",
+                    "@",
+                    "-T",
+                    "commit_id"
+                ]
+            ),
+            before
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("modified")).unwrap(),
+            "unsnapshotted feature\n"
+        );
+        assert_eq!(
+            repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
+            "."
+        );
+    }
+}
+
+#[test]
+fn primary_fallback_refuses_pending_donor_without_snapshotting_it() {
+    use sha2::{Digest, Sha256};
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let feature = repo.workspace("feature");
+    let target = repo.workspace("other");
+    if !repo.cow(&source, &feature) {
+        return;
+    }
+    repo.interrupt_reseed(&source, "clear", &[]);
+    // Simulate an existing pending journal on the inferred donor. Its complete
+    // frozen record must be detected before any donor snapshot is attempted.
+    let (path, bytes) = repo.pending_records().pop().unwrap();
+    let mut pending: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    pending["name"] = "default".into();
+    let digest = Sha256::digest(b"default")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    fs::write(
+        path.parent()
+            .unwrap()
+            .join(format!("workspace-{digest}.pending.json")),
+        serde_json::to_vec(&pending).unwrap(),
+    )
+    .unwrap();
+    fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
+    let output = repo
+        .jw(&target)
+        .args(["reseed", "other", "--source-at", &repo.baseline])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source has a pending reseed"));
+    assert_eq!(
+        repo.jj_at(
+            &repo.root,
+            &[
+                "--ignore-working-copy",
+                "log",
+                "--no-graph",
+                "-r",
+                "@",
+                "-T",
+                "commit_id"
+            ]
+        ),
+        repo.baseline
+    );
+}
+
+#[test]
+fn resume_uses_frozen_explicit_source_not_primary_fallback_or_new_config() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    repo.interrupt_reseed(&source, "clear", &[]);
+    fs::write(repo.root.join("modified"), "unsnapshotted primary\n").unwrap();
+    fs::write(
+        repo.root.join(".jwreseed.local.toml"),
+        "source = 'nonexistent'\nsource_at = 'nonexistent'\n",
+    )
+    .unwrap();
+    success(
+        repo.jw(&target)
+            .args(["reseed", "--resume", "feature"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        reseed_receipt(&repo, &target)["source"],
+        source.to_str().unwrap()
+    );
+    assert_eq!(
+        repo.jj_at(
+            &repo.root,
+            &[
+                "--ignore-working-copy",
+                "log",
+                "--no-graph",
+                "-r",
+                "@",
+                "-T",
+                "commit_id"
+            ]
+        ),
+        repo.baseline
+    );
+    assert!(repo.pending_records().is_empty());
+}
+
+#[test]
 fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
