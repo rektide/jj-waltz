@@ -31,7 +31,9 @@ struct Target {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VerifiedSource {
+    /// Historical WC at verification; restoration must not rewrite provenance.
     wc_commit: String,
+    change_id: String,
     stamp: Vec<Stamp>,
     ignored: Vec<PathBuf>,
     payload_digest: String,
@@ -61,6 +63,7 @@ pub(super) struct Batch {
     targets: Vec<Target>,
     pub plans: Option<Vec<Pending>>,
     verified_source: Option<VerifiedSource>,
+    accepted_verified_wc_commit: Option<String>,
 }
 
 fn config_bytes(root: &Path) -> Result<Option<Vec<u8>>> {
@@ -335,9 +338,7 @@ pub(super) fn begin(
     frozen_request.on_unmatched = None;
     frozen_request.source = Some(source.to_path_buf());
     frozen_request.source_at = Some(rev.into());
-    if frozen_request.copy_ignored.is_empty() && !frozen_request.no_copy_ignored {
-        frozen_request.copy_ignored = ignored.to_vec();
-    }
+    frozen_request.copy_ignored = ignored.to_vec();
     let nonce = tempfile::NamedTempFile::new_in(&store.root)?;
     let id = Sha256::digest(serde_json::to_vec(&(
         source,
@@ -375,6 +376,7 @@ pub(super) fn begin(
         targets,
         plans: None,
         verified_source: None,
+        accepted_verified_wc_commit: None,
     };
     save(store, &batch)?;
     Ok(batch)
@@ -421,6 +423,7 @@ fn capture_verified(batch: &Batch) -> Result<VerifiedSource> {
         bail!("source changed during preparation proof capture");
     }
     Ok(VerifiedSource {
+        change_id: client.resolve_one_at(&operation, &wc_commit)?.change_id,
         wc_commit,
         stamp: before,
         ignored,
@@ -428,7 +431,7 @@ fn capture_verified(batch: &Batch) -> Result<VerifiedSource> {
     })
 }
 
-pub(super) fn verify_verified(batch: &Batch) -> Result<()> {
+pub(super) fn verify_verified(batch: &mut Batch) -> Result<()> {
     validate(batch)?;
     let proof = batch
         .verified_source
@@ -438,7 +441,10 @@ pub(super) fn verify_verified(batch: &Batch) -> Result<()> {
     let (operation, current) = current_commit(&client)?;
     let before = stamp(&batch.source)?;
     let (ignored, _) = expand_ignored(&batch.source, &batch.request.copy_ignored)?;
-    if current != proof.wc_commit
+    let goal = batch.goal.as_ref().context("missing frozen goal")?;
+    require_unconflicted(&client, &operation, &current)?;
+    if client.resolve_one_at(&operation, &current)?.change_id != proof.change_id
+        || !exact_empty_child(&client, &operation, &current, goal)?
         || ignored != proof.ignored
         || payload_digest(&batch.source, &ignored)? != proof.payload_digest
     {
@@ -446,16 +452,18 @@ pub(super) fn verify_verified(batch: &Batch) -> Result<()> {
             "verified preparation source/payload changed before target freeze; pending retained; restore frozen verified donor rather than adopting changed dependencies"
         );
     }
-    if before != proof.stamp {
+    if before != proof.stamp || current != proof.wc_commit {
         // Exact payload restoration may have new inode/ctime. Never adopt new
         // bytes: reprove the tracked tree as well as the frozen logical payload.
-        let goal = batch.goal.as_ref().context("missing frozen goal")?;
         let source_entries = entries(&client, &operation, goal)?;
         verify_disk(&client, &operation, goal, &batch.source, &source_entries)?;
     }
     if stamp(&batch.source)? != before || current_commit(&client)?.1 != current {
         bail!("verified donor changed during proof validation");
     }
+    batch.source_identity.verify(&batch.source)?;
+    batch.source_jj_identity.verify(&batch.source.join(".jj"))?;
+    batch.accepted_verified_wc_commit = Some(current);
     Ok(())
 }
 
@@ -659,6 +667,11 @@ pub(super) fn execute(
             save(store, batch)?;
         }
         verify_verified(batch)?;
+        save(store, batch)?;
+        diagnostic(&format!(
+            "Freshen: donor verified at exact goal {:?}; targets not yet refilled; source preparation is not rolled back if later planning fails",
+            batch.goal
+        ));
         Ok(())
     })();
     result.with_context(|| format!("source preparation stopped in phase {:?}, frozen goal {:?}; source progress was not rolled back; targets not refilled; resume recorded batch {:?}", batch.phase, batch.goal, batch.request.names))

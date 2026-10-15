@@ -38,6 +38,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Option<Self> {
+        Self::new_with_colocation(false)
+    }
+    fn new_with_colocation(colocated: bool) -> Option<Self> {
         if !Command::new("jj")
             .arg("--version")
             .output()
@@ -76,7 +79,15 @@ impl Fixture {
         fs::write(f.remote.join("lockfile"), "frozen\n").unwrap();
         f.git_commit();
         ok(f.command("jj", f.temp.path())
-            .args(["git", "clone", "--no-colocate"])
+            .args([
+                "git",
+                "clone",
+                if colocated {
+                    "--colocate"
+                } else {
+                    "--no-colocate"
+                },
+            ])
             .arg(&f.remote)
             .arg(&f.source)
             .output()
@@ -120,6 +131,9 @@ impl Fixture {
             .env("GIT_AUTHOR_EMAIL", "freshen@example.invalid")
             .env("GIT_COMMITTER_NAME", "Freshen Test")
             .env("GIT_COMMITTER_EMAIL", "freshen@example.invalid");
+        if program == "jj" {
+            c.args(["--config", "git.colocate=false"]);
+        }
         c
     }
     fn jj(&self, cwd: &Path, args: &[&str]) -> String {
@@ -236,6 +250,9 @@ impl Fixture {
         (m.dev(), m.ino())
     }
     fn wrapper(&self, condition: &str) -> PathBuf {
+        self.wrapper_at(condition, false)
+    }
+    fn wrapper_at(&self, condition: &str, before: bool) -> PathBuf {
         let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|p| p.join("jj"))
             .find(|p| p.is_file())
@@ -243,9 +260,15 @@ impl Fixture {
         let bin = self.temp.path().join("wrapper-bin");
         fs::create_dir_all(&bin).unwrap();
         let marker = self.temp.path().join("wrapper fired");
+        let failure = format!(
+            "if [ ! -f {:?} ] && {condition}; then touch {:?}; exit 97; fi\n",
+            marker, marker
+        );
+        let delegate = format!("{:?} \"$@\"\n", real);
         let body = format!(
-            "#!/bin/sh\nset -eu\nnew=false; clear=false\nfor arg do\n[ \"$arg\" != new ] || new=true\n[ \"$arg\" != --clear ] || clear=true\ndone\n{:?} \"$@\"\nif [ ! -f {:?} ] && {condition}; then touch {:?}; exit 97; fi\n",
-            real, marker, marker
+            "#!/bin/sh\nset -eu\nnew=false; clear=false; fetch=false; sparse=false; listing=false\nfor arg do\n[ \"$arg\" != new ] || new=true\n[ \"$arg\" != --clear ] || clear=true\n[ \"$arg\" != fetch ] || fetch=true\n[ \"$arg\" != sparse ] || sparse=true\n[ \"$arg\" != list ] || listing=true\ndone\n{}{}",
+            if before { &failure } else { &delegate },
+            if before { &delegate } else { &failure }
         );
         fs::write(bin.join("jj"), body).unwrap();
         fs::set_permissions(bin.join("jj"), fs::Permissions::from_mode(0o755)).unwrap();
@@ -335,6 +358,7 @@ fn freshen_fetches_once_preserves_work_and_keeps_target_with_private_payload() {
         f.inode(&f.source.join("node_modules/package")),
         f.inode(&f.target.join("node_modules/package"))
     );
+    assert_shared_extents(&f.source.join("shared"), &f.target.join("shared"));
     fs::write(f.target.join("node_modules/package"), "private edit").unwrap();
     assert_eq!(
         fs::read_to_string(f.source.join("node_modules/package")).unwrap(),
@@ -704,7 +728,7 @@ fn ordinary_legacy_pending_donor_borrow_blocks_new_freshen_even_if_unselected() 
 }
 
 #[test]
-fn frozen_handoff_recreates_only_missing_intent_and_rejects_foreign_pending() {
+fn frozen_handoff_rejects_foreign_pending_without_overwriting_it() {
     let Some(f) = Fixture::new() else {
         return;
     };
@@ -728,12 +752,230 @@ fn frozen_handoff_recreates_only_missing_intent_and_rejects_foreign_pending() {
     fails(f.resume(), "foreign or changed pending plan");
     assert_eq!(fs::read(&p).unwrap(), bad);
     fs::write(&p, saved).unwrap();
-    // Missing record can be recreated only in its originally Prepared state:
-    // reconstruct the complete original tree through this recorded recovery,
-    // then simulate the crash between atomic intent and first target handoff.
+    // Restoring this batch's actual pending record permits recorded recovery.
     ok(f.resume());
     assert!(f.active().is_empty());
 }
+
+#[test]
+fn missing_handoff_record_uses_atomic_intent_not_an_unrelated_old_receipt() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    ok(f.jw().args(["reseed", "worker"]).output().unwrap());
+    f.advance();
+    let bin = f.wrapper_at(&format!("[ \"$sparse\" = true ] && [ \"$listing\" = true ] && [ \"$PWD\" = {:?} ] && [ -f {:?} ]", f.target, f.source.join("node_modules/package")), true);
+    let mut command = f.jw();
+    f.with_wrapper(&mut command, &bin);
+    fails(
+        command
+            .args([
+                "reseed",
+                "worker",
+                "--freshen",
+                "--copy-ignored",
+                "node_modules",
+            ])
+            .output()
+            .unwrap(),
+        "PENDING worker",
+    );
+    assert!(f.target.join("shared").is_file());
+    let before = f.id(&f.target, "@");
+    let batch: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.active()[0]).unwrap()).unwrap();
+    assert_eq!(batch["plans"][0]["phase"], "Prepared");
+    // Simulate crash after atomic intent but before target handoff. No target
+    // filesystem mutation occurred, so the original Prepared stamp still holds.
+    fs::remove_file(&f.pending()[0]).unwrap();
+    ok(f.resume());
+    assert!(f.active().is_empty());
+    assert_eq!(f.id(&f.target, "@"), before);
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+    assert_eq!(
+        fs::read_to_string(f.target.join("node_modules/package")).unwrap(),
+        "installed\n"
+    );
+}
+
+#[test]
+fn lost_successful_fetch_before_goal_freeze_refetches_only_unfrozen_intent() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    f.advance();
+    let bin = f.wrapper("[ \"$fetch\" = true ]");
+    let mut command = f.jw();
+    f.with_wrapper(&mut command, &bin);
+    fails(
+        command
+            .args([
+                "reseed",
+                "worker",
+                "--freshen",
+                "--copy-ignored",
+                "node_modules",
+            ])
+            .output()
+            .unwrap(),
+        "phase Fetching",
+    );
+    let batch: serde_json::Value =
+        serde_json::from_slice(&fs::read(&f.active()[0]).unwrap()).unwrap();
+    assert!(batch["goal"].is_null());
+    assert!(!f.log.exists());
+    fs::write(f.remote.join("version"), "latest before goal freeze\n").unwrap();
+    f.git_commit();
+    let latest = ok(f
+        .command("git", &f.remote)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap());
+    ok(f.resume());
+    assert_eq!(f.id(&f.source, "@-"), latest);
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
+}
+
+#[test]
+fn stale_target_refuses_freshen_before_fetch_or_installer() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    f.advance();
+    f.jj(
+        &f.source,
+        &["restore", "--into", "worker@", "--from", "root()"],
+    );
+    fails(f.freshen(&[]), "stale");
+    assert_eq!(f.id(&f.source, "dev@origin"), f.baseline);
+    assert!(!f.log.exists());
+    assert!(f.active().is_empty());
+}
+
+#[test]
+fn freshen_mutates_only_configured_or_explicit_donor_from_sibling_subdirectory() {
+    let Some(f) = Fixture::new() else {
+        return;
+    };
+    let donor = f.temp.path().join("configured donor");
+    f.jj(
+        &f.source,
+        &[
+            "workspace",
+            "add",
+            "--name",
+            "donor",
+            "-r",
+            &f.baseline,
+            donor.to_str().unwrap(),
+        ],
+    );
+    f.policy(true, &format!("source={:?}\n", donor));
+    let primary_before = f.id(&f.source, "@");
+    let goal = f.advance();
+    fs::create_dir_all(f.target.join("subdirectory")).unwrap();
+    ok(f.jw()
+        .current_dir(f.target.join("subdirectory"))
+        .args([
+            "reseed",
+            "worker",
+            "--freshen",
+            "--copy-ignored",
+            "node_modules",
+        ])
+        .output()
+        .unwrap());
+    assert_eq!(f.id(&donor, "@-"), goal);
+    assert_eq!(f.id(&f.source, "@"), primary_before);
+    assert_eq!(
+        fs::read_to_string(&f.log).unwrap().lines().next().unwrap(),
+        donor.to_str().unwrap()
+    );
+    let donor_before = f.id(&donor, "@");
+    ok(f.jw()
+        .args(["reseed", "worker", "--freshen", "--from"])
+        .arg(&f.source)
+        .args(["--copy-ignored", "node_modules"])
+        .output()
+        .unwrap());
+    assert_eq!(f.id(&f.source, "@-"), goal);
+    assert_eq!(f.id(&donor, "@"), donor_before);
+    assert_eq!(
+        fs::read_to_string(&f.log).unwrap().lines().nth(3).unwrap(),
+        f.source.to_str().unwrap()
+    );
+}
+
+#[test]
+fn ordinary_colocated_primary_can_be_freshened_without_root_replacement() {
+    let Some(f) = Fixture::new_with_colocation(true) else {
+        return;
+    };
+    let root = f.inode(&f.source);
+    let jj = f.inode(&f.source.join(".jj"));
+    let git = f.inode(&f.source.join(".git"));
+    let goal = f.advance();
+    ok(f.freshen(&[]));
+    assert_eq!(f.id(&f.source, "@-"), goal);
+    assert_eq!(f.inode(&f.source), root);
+    assert_eq!(f.inode(&f.source.join(".jj")), jj);
+    assert_eq!(f.inode(&f.source.join(".git")), git);
+}
+
+// Match the existing reseed acceptance proof: equal bytes and distinct inodes
+// alone do not demonstrate actual physical CoW sharing.
+#[cfg(target_os = "linux")]
+fn assert_shared_extents(source: &Path, target: &Path) {
+    use std::os::fd::AsRawFd;
+    #[repr(C)]
+    #[derive(Default, Debug)]
+    struct Extent {
+        logical: u64,
+        physical: u64,
+        length: u64,
+        reserved: [u64; 2],
+        flags: u32,
+        reserved2: [u32; 3],
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Map {
+        start: u64,
+        length: u64,
+        flags: u32,
+        mapped: u32,
+        count: u32,
+        reserved: u32,
+        extent: Extent,
+    }
+    fn extent(path: &Path) -> Extent {
+        let file = fs::File::open(path).unwrap();
+        let mut map = Map {
+            length: u64::MAX,
+            flags: 1,
+            count: 1,
+            ..Map::default()
+        };
+        assert_eq!(
+            unsafe { libc::ioctl(file.as_raw_fd(), 0xc020660b as libc::c_ulong, &mut map) },
+            0,
+            "FIEMAP {path:?}: {}",
+            std::io::Error::last_os_error()
+        );
+        assert_eq!(map.mapped, 1);
+        map.extent
+    }
+    let source = extent(source);
+    let target = extent(target);
+    assert_eq!(
+        source.physical, target.physical,
+        "freshen must actually share extents"
+    );
+    assert_ne!(source.flags & 0x2000, 0, "{source:?}");
+    assert_ne!(target.flags & 0x2000, 0, "{target:?}");
+}
+#[cfg(not(target_os = "linux"))]
+fn assert_shared_extents(_source: &Path, _target: &Path) {}
 
 #[test]
 fn baseline_owned_links_change_normally_and_done_handoff_keeps_runtime_diagnostics_separate() {
@@ -876,6 +1118,56 @@ fn verified_unfrozen_preparation_refuses_changed_dependencies_and_allows_exact_r
     fails(f.resume(), "verified preparation source/payload changed");
     assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3);
     fs::write(f.source.join("node_modules/package"), "installed\n").unwrap();
+    let original_verified = batch["verified_source"]["wc_commit"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let original_change = batch["verified_source"]["change_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let goal = batch["goal"].as_str().unwrap();
+    fs::write(
+        f.source.join("lockfile"),
+        "tracked edit after verification\n",
+    )
+    .unwrap();
+    f.jj(&f.source, &["status"]);
+    f.jj(&f.source, &["restore", "--from", goal]);
+    let restored = f.id(&f.source, "@");
+    assert_ne!(restored, original_verified);
+    assert_eq!(
+        f.jj(
+            &f.source,
+            &[
+                "log",
+                "--ignore-working-copy",
+                "--no-graph",
+                "-r",
+                "@",
+                "-T",
+                "change_id"
+            ]
+        ),
+        original_change
+    );
     ok(f.resume());
+    let batch_receipt = fs::read_dir(f.journal())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".receipt.json")
+        })
+        .map(|p| serde_json::from_slice::<serde_json::Value>(&fs::read(p).unwrap()).unwrap())
+        .find(|v| v["plans"].is_array())
+        .unwrap();
+    assert_eq!(
+        batch_receipt["verified_source"]["wc_commit"],
+        original_verified
+    );
+    assert_eq!(batch_receipt["accepted_verified_wc_commit"], restored);
     assert_eq!(fs::read_to_string(f.log).unwrap().lines().count(), 3);
 }
