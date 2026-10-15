@@ -503,6 +503,13 @@ mod tests {
         groups: BTreeMap<String, Group>,
     }
 
+    fn tempdir() -> tempfile::TempDir {
+        // macOS temporary-directory prefixes can themselves be symlink aliases.
+        // Use the real root so these fixtures test the configured path, not an
+        // incidental system alias that production selection correctly refuses.
+        tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
+    }
+
     fn plan(
         config: &str,
         request: ReseedRequest,
@@ -622,7 +629,7 @@ mod tests {
 
     #[test]
     fn paths_use_registration_not_basename_and_preserve_path_order() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         let base = temp.path();
         for name in ["opencode-a", "opencode-b", "opencode-notes", "unrelated"] {
             fs::create_dir(base.join(name)).unwrap();
@@ -651,7 +658,7 @@ mod tests {
 
     #[test]
     fn missing_recorded_paths_are_not_silently_skipped() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         let registered = registrations(temp.path(), &["opencode-missing"]);
         let result = plan(
             "[groups.w]\npath_globs=['opencode-*']\non_unmatched='warn'",
@@ -666,7 +673,7 @@ mod tests {
 
     #[test]
     fn misses_are_aggregated_escaped_and_never_lossy() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         for name in [
             b"opencode-\nquote\"".to_vec(),
             b"opencode-\xff".to_vec(),
@@ -698,7 +705,7 @@ mod tests {
 
     #[test]
     fn zero_matches_report_expression_and_invalid_groups_fail() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         let result = plan(
             "[groups.w]\npath_globs=['missing-*']\nname_globs=['missing-*']\non_unmatched='warn'",
             request(&["w"]),
@@ -737,7 +744,7 @@ mod tests {
 
     #[test]
     fn symlink_prefixes_are_not_traversed_and_registered_obstructions_are_errors() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         fs::create_dir(temp.path().join("real")).unwrap();
         fs::create_dir(temp.path().join("real/child")).unwrap();
         symlink("real", temp.path().join("alias")).unwrap();
@@ -759,7 +766,7 @@ mod tests {
 
     #[test]
     fn relative_pattern_prefix_is_literal_even_with_glob_characters() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempdir();
         let base = temp.path().join("literal*prefix");
         fs::create_dir(&base).unwrap();
         fs::create_dir(base.join("target")).unwrap();
