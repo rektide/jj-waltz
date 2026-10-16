@@ -150,7 +150,7 @@ Do not bypass this with native JJ/Git cleanup or a gardener; use the owning app.
   fail after forgetting; jw reports the remaining path as partial progress.
 - Ignored/untracked files outside JJ's snapshot are deleted with the directory;
   preserve them with `--keep-dir` when needed. Manager review gates still apply.
-- Associated bookmarks prompt by default. Use `--keep-bookmark` or `--delete-bookmark` to make the user's choice explicit for non-interactive work.
+- Associated bookmarks are kept by default; `jw remove` never prompts. Only an explicit `--delete-bookmark` deletes them.
 
 Complete removal when `jw list` no longer contains the workspace and the directory and bookmarks match the chosen preservation policy.
 

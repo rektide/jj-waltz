@@ -5,9 +5,11 @@ description: Release history and unreleased workspace lifecycle changes.
 resource: /CHANGELOG.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3
+  at: 2026-10-16
 sources:
+  - resource: "opencode://ses_ebcf7a55dffeC3pTCPy2RUXq4B"
+    title: Removed remove-command bookmark prompting and --keep-bookmark in favor of keep-by-default
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Delivered up integration, source-only receipts, native fetch pinning, frozen target preservation and legacy resume compatibility
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -28,6 +30,10 @@ sources:
 
 ## Unreleased
 
+- Remove `jw remove` bookmark prompting and the `--keep-bookmark` flag: associated
+  bookmarks are kept by default with no interactive ask, and only an explicit
+  `--delete-bookmark` ever deletes them. Scripted removals can no longer stall on
+  or accidentally answer a bookmark prompt.
 - Add `jw up`: native pre-fetch upstream selection, exact-name/remote fetch,
   sequential local commands, and private CoW refill on new empty target changes at
   the exact fetched goal. Bare up in a variant updates it; at primary it prepares

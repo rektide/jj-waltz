@@ -934,7 +934,7 @@ fn remove_reports_partial_progress_and_cleans_metadata_when_directory_remains() 
 }
 
 #[test]
-fn remove_prompts_before_deleting_associated_bookmark() {
+fn remove_keeps_associated_bookmark_by_default() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
 
@@ -949,43 +949,17 @@ fn remove_prompts_before_deleting_associated_bookmark() {
     repo.run_in(&feature_root, ["jj", "commit", "-m", "workspace work"])
         .expect("commit workspace work");
 
-    let mut remove = repo.cmd();
-    remove.args(["remove", "feature-a"]);
-    assert_cmd::Command::from_std(remove)
-        .write_stdin("y\n")
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "Delete associated bookmark 'custom-marker'? [y/N]",
-        ))
-        .stdout(predicate::str::contains("Deleted bookmark: custom-marker"));
-
-    assert!(!repo.bookmarks().contains(&"custom-marker".to_owned()));
-}
-
-#[test]
-fn remove_keeps_associated_bookmark_when_prompt_is_declined() {
-    skip_without_jj!();
-    let repo = TestRepo::new().expect("create test repo");
-
     repo.cmd()
-        .args(["switch", "--bookmark", "wip/feature-a", "feature-a"])
-        .assert()
-        .success();
-
-    let mut remove = repo.cmd();
-    remove.args(["remove", "feature-a"]);
-    assert_cmd::Command::from_std(remove)
-        .write_stdin("n\n")
+        .args(["remove", "feature-a"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Deleted bookmark:").not());
 
-    assert!(repo.bookmarks().contains(&"wip/feature-a".to_owned()));
+    assert!(repo.bookmarks().contains(&"custom-marker".to_owned()));
 }
 
 #[test]
-fn remove_bookmark_flags_support_noninteractive_callers() {
+fn remove_bookmark_deletion_requires_the_explicit_flag() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
 
@@ -993,10 +967,7 @@ fn remove_bookmark_flags_support_noninteractive_callers() {
         .args(["add", "--bookmark", "wip/feature-a", "feature-a"])
         .assert()
         .success();
-    repo.cmd()
-        .args(["remove", "--keep-bookmark", "feature-a"])
-        .assert()
-        .success();
+    repo.cmd().args(["remove", "feature-a"]).assert().success();
     assert!(repo.bookmarks().contains(&"wip/feature-a".to_owned()));
 
     repo.cmd()
@@ -2333,10 +2304,7 @@ fn creation_metadata_records_exact_base_prebookmark_operation_and_removal_cleans
     );
     assert_eq!(workspace["associated_bookmark"], "wip/feature-a");
 
-    repo.cmd()
-        .args(["remove", "feature-a", "--keep-bookmark"])
-        .assert()
-        .success();
+    repo.cmd().args(["remove", "feature-a"]).assert().success();
     assert!(repo.metadata_record_paths().is_empty());
 }
 

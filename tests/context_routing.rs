@@ -203,11 +203,7 @@ fn explicit_route_preserves_start_and_external_worktree() {
             .canonicalize()
             .is_ok_and(|path| path == expected_workspace)
     }));
-    fixture.run(
-        "jw",
-        &fixture.root,
-        &["remove", "agent-task", "--keep-bookmark"],
-    );
+    fixture.run("jw", &fixture.root, &["remove", "agent-task"]);
     assert!(!workspace.exists());
     assert!(fixture.external.is_dir());
     assert_eq!(

@@ -524,7 +524,7 @@ fn owned_cleanup_removes_only_target_and_keep_dir_preserves_files() {
             fs::remove_dir_all(f.path(name)).unwrap();
         }
         let mut cmd = f.jw();
-        cmd.args(["remove", name, "--keep-bookmark"]);
+        cmd.args(["remove", name]);
         if keep_dir {
             cmd.arg("--keep-dir");
         }
@@ -665,7 +665,7 @@ fn replaced_topology_or_marker_and_missing_metadata_are_protected() {
     )
     .unwrap();
     f.jw()
-        .args(["remove", "owned", "--keep-dir", "--keep-bookmark"])
+        .args(["remove", "owned", "--keep-dir"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("topology changed"));
@@ -673,20 +673,17 @@ fn replaced_topology_or_marker_and_missing_metadata_are_protected() {
     let marker = fs::read(admin.join("jw-owner")).unwrap();
     fs::write(admin.join("jw-owner"), "replacement").unwrap();
     f.jw()
-        .args(["remove", "owned", "--keep-bookmark"])
+        .args(["remove", "owned"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("marker changed"));
     fs::write(admin.join("jw-owner"), marker).unwrap();
     // Unreadable, missing, and old records may never infer jw ownership.
     fs::write(&record_path, b"{broken").unwrap();
-    f.jw()
-        .args(["remove", "owned", "--keep-bookmark"])
-        .assert()
-        .failure();
+    f.jw().args(["remove", "owned"]).assert().failure();
     fs::remove_file(record_path).unwrap();
     f.jw()
-        .args(["remove", "owned", "--keep-bookmark"])
+        .args(["remove", "owned"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("externally owned"));
@@ -829,7 +826,7 @@ fn forget_failure_restores_gitlink_and_retains_record() {
     let registrations = f.registrations();
     let mut cmd = f.jw();
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) echo injected >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-bookmark", "--keep-dir"])
+    cmd.args(["remove", "owned", "--keep-dir"])
         .assert()
         .failure();
     assert_eq!(fs::read(f.path("owned").join(".git")).unwrap(), link);
@@ -859,7 +856,7 @@ fn unverifiable_forget_retains_detached_link_and_metadata() {
     let mut cmd = f.jw();
     cmd.env("JW_FORGOTTEN", f.temp.path().join("forgotten"));
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; touch \"$JW_FORGOTTEN\"; exit 0;; *\"workspace list\"*) if test -f \"$JW_FORGOTTEN\"; then echo injected-list-error >&2; exit 1; fi;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-bookmark", "--keep-dir"])
+    cmd.args(["remove", "owned", "--keep-dir"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("detached Git link retained at"));
@@ -890,7 +887,7 @@ fn nonzero_status_after_forget_is_verified_and_cleanup_completes() {
     let (record, _) = f.record("owned");
     let mut cmd = f.jw();
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; echo injected-after-forget >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-bookmark", "--keep-dir"])
+    cmd.args(["remove", "owned", "--keep-dir"])
         .assert()
         .success()
         .stderr(predicate::str::contains(
@@ -957,7 +954,7 @@ fn externally_created_colocated_workspace_stays_protected_after_adoption() {
     let before = f.registrations();
     for keep in [false, true] {
         let mut cmd = f.jw();
-        cmd.args(["remove", "foreign", "--keep-bookmark"]);
+        cmd.args(["remove", "foreign"]);
         if keep {
             cmd.arg("--keep-dir");
         }
@@ -996,7 +993,7 @@ fn locked_owned_registration_is_preserved() {
     let before = f.registrations();
     let (record, _) = f.record("locked");
     f.jw()
-        .args(["remove", "locked", "--keep-bookmark"])
+        .args(["remove", "locked"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("locked"));
@@ -1073,7 +1070,7 @@ fn keep_dir_can_disconnect_the_current_owned_workspace() {
         .success();
     let (record, _) = f.record("current");
     f.command(env!("CARGO_BIN_EXE_jw"), &f.path("current"))
-        .args(["remove", "current", "--keep-dir", "--keep-bookmark"])
+        .args(["remove", "current", "--keep-dir"])
         .assert()
         .success();
     assert_eq!(
@@ -1123,10 +1120,7 @@ fn native_removal_snapshots_dirty_target_before_deleting_it() {
         // Ignored content is outside JJ's snapshot and follows existing CLI deletion semantics.
         fs::write(f.path("dirty").join(".gitignore"), "ignored\n").unwrap();
         fs::write(f.path("dirty").join("ignored"), "cache\n").unwrap();
-        f.jw()
-            .args(["remove", "dirty", "--keep-bookmark"])
-            .assert()
-            .success();
+        f.jw().args(["remove", "dirty"]).assert().success();
         assert!(!f.path("dirty").exists());
         assert_eq!(
             f.run("jj", &f.root, &["file", "show", "-r", &change, "tracked"])
@@ -1200,7 +1194,7 @@ fn native_removal_is_capability_based_and_never_retries_after_mutation() {
     let mut cmd = f.jw();
     // A build with an older version string can still advertise native removal.
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *--version*) echo 'jj 0.39.0'; exit 0;; *\"workspace remove\"*--help*) exec \"$JW_REAL_JJ\" \"$@\";; *\"workspace remove\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; echo injected-after-remove >&2; exit 1;; *\"workspace forget\"*) echo forbidden-fallback >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-bookmark"])
+    cmd.args(["remove", "owned"])
         .assert()
         .success()
         .stderr(predicate::str::contains(
@@ -1228,7 +1222,7 @@ fn unsupported_native_removal_falls_back_but_probe_errors_fail_before_mutation()
             "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*--help*) echo \"error: unrecognized subcommand 'remove'\" >&2; exit 2;; *\"workspace remove\"*) echo forbidden-native >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n"
         };
         f.with_shim(&mut cmd, script);
-        cmd.args(["remove", "old", "--keep-bookmark"]);
+        cmd.args(["remove", "old"]);
         if probe_error {
             cmd.assert().failure().stderr(predicate::str::contains(
                 "cannot probe native workspace removal",
@@ -1296,7 +1290,7 @@ fn unverifiable_native_removal_retains_registration_and_metadata() {
     let mut cmd = f.jw();
     cmd.env("JW_REMOVED", f.temp.path().join("removed"));
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*--help*) exec \"$JW_REAL_JJ\" \"$@\";; *\"workspace remove\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; touch \"$JW_REMOVED\"; exit 0;; *\"workspace list\"*) if test -f \"$JW_REMOVED\"; then echo injected-list-error >&2; exit 1; fi;; *\"workspace forget\"*) echo forbidden-fallback >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-bookmark"])
+    cmd.args(["remove", "owned"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot verify remove outcome"));
@@ -1336,10 +1330,10 @@ fn keep_dir_missing_remove_and_prune_do_not_use_native_removal() {
         f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*) echo forbidden-native >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
         match mode {
             "keep" => {
-                cmd.args(["remove", "target", "--keep-dir", "--keep-bookmark"]);
+                cmd.args(["remove", "target", "--keep-dir"]);
             }
             "missing" => {
-                cmd.args(["remove", "target", "--keep-bookmark"]);
+                cmd.args(["remove", "target"]);
             }
             _ => {
                 cmd.arg("prune");

@@ -64,7 +64,7 @@
       "files": [],
       "expectations": [
         "Inspects `jw list`, `jw current`, `jw status old-workspace --refresh none`, `jw path old-workspace`, target JJ status, and bookmark state before removal.",
-        "Explains default directory deletion, `--keep-dir`, current/default protections, and `--keep-bookmark` versus `--delete-bookmark`.",
+        "Explains default directory deletion, `--keep-dir`, current/default protections, and that associated bookmarks are kept unless `--delete-bookmark` is given explicitly.",
         "Explains that prune only forgets missing paths and lacks remove's explicit default-workspace guard, so it requires inventory inspection first.",
         "Verifies workspace, directory, and bookmark state after the chosen operation."
       ]

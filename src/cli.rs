@@ -470,18 +470,10 @@ struct RemoveCommand {
     keep_dir: bool,
     #[arg(
         long,
-        conflicts_with = "keep_bookmark",
         action = ArgAction::SetTrue,
-        help = "Delete associated bookmarks without prompting"
+        help = "Delete associated bookmarks; they are kept by default"
     )]
     delete_bookmark: bool,
-    #[arg(
-        long,
-        conflicts_with = "delete_bookmark",
-        action = ArgAction::SetTrue,
-        help = "Keep associated bookmarks without prompting"
-    )]
-    keep_bookmark: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1247,47 +1239,11 @@ fn run_remove(cmd: RemoveCommand) -> Result<()> {
         }
     }
 
-    let mut choices = Vec::with_capacity(plans.len());
     for plan in plans {
-        let delete_bookmarks = choose_bookmark_removal(&plan, &cmd)?;
-        choices.push((plan, delete_bookmarks));
-    }
-    for (plan, delete_bookmarks) in choices {
-        let result = workspace::execute_remove_workspace(plan, delete_bookmarks)?;
+        let result = workspace::execute_remove_workspace(plan, cmd.delete_bookmark)?;
         print_remove_result(&result);
     }
     Ok(())
-}
-
-fn choose_bookmark_removal(plan: &workspace::RemovalPlan, cmd: &RemoveCommand) -> Result<bool> {
-    Ok(if plan.bookmarks.is_empty() || cmd.keep_bookmark {
-        false
-    } else if cmd.delete_bookmark {
-        true
-    } else {
-        prompt_delete_bookmarks(&plan.bookmarks)?
-    })
-}
-
-fn prompt_delete_bookmarks(bookmarks: &[String]) -> Result<bool> {
-    let label = if bookmarks.len() == 1 {
-        format!("bookmark '{}'", bookmarks[0])
-    } else {
-        format!("bookmarks {}", bookmarks.join(", "))
-    };
-    let mut stderr = io::stderr().lock();
-    write!(stderr, "Delete associated {label}? [y/N] ")
-        .context("failed to write bookmark prompt")?;
-    stderr.flush().context("failed to flush bookmark prompt")?;
-
-    let mut answer = String::new();
-    io::stdin()
-        .read_line(&mut answer)
-        .context("failed to read bookmark prompt")?;
-    Ok(matches!(
-        answer.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes"
-    ))
 }
 
 fn print_remove_result(result: &workspace::RemovalResult) {

@@ -160,10 +160,7 @@ fn adopted_external_checkout_is_protected_without_and_with_metadata() {
     let git_dir = f.git_dir();
     let graph = f.graph();
     // Missing jw metadata must never make a live linked checkout removable.
-    for flags in [
-        vec!["remove", "app", "--keep-bookmark"],
-        vec!["remove", "app", "--keep-dir", "--keep-bookmark"],
-    ] {
+    for flags in [vec!["remove", "app"], vec!["remove", "app", "--keep-dir"]] {
         f.jw()
             .args(flags)
             .assert()
@@ -194,7 +191,7 @@ fn adopted_external_checkout_is_protected_without_and_with_metadata() {
     // Persisted ownership protects even after .git topology was damaged.
     fs::remove_file(f.linked.join(".git")).unwrap();
     f.jw()
-        .args(["remove", "app", "--keep-dir", "--keep-bookmark"])
+        .args(["remove", "app", "--keep-dir"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("externally owned"));
@@ -290,10 +287,7 @@ fn jw_creation_under_pinned_jj_remains_an_ordinary_removable_workspace() {
     let path_output = f.jw().args(["path", "ordinary"]).output().unwrap();
     let path = PathBuf::from(String::from_utf8(path_output.stdout).unwrap().trim());
     assert!(!path.join(".git").exists());
-    f.jw()
-        .args(["remove", "ordinary", "--keep-bookmark"])
-        .assert()
-        .success();
+    f.jw().args(["remove", "ordinary"]).assert().success();
     assert!(!path.exists());
     assert!(f.git_dir().exists());
 }

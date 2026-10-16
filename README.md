@@ -384,11 +384,12 @@ workers read-only. See [app ownership](skills/jj-waltz/references/codex.md).
 ### Removing workspaces
 
 ```sh
-jw remove feature --keep-dir --keep-bookmark
+jw remove feature --keep-dir
 ```
 
 Without `--keep-dir`, removal deletes ignored/private files too; JJ's operation log
-is not a directory backup. Bookmarks are kept unless deletion is selected/confirmed.
+is not a directory backup. Associated bookmarks are kept by default; only an
+explicit `--delete-bookmark` deletes them, and removal never prompts.
 For jw-created colocated workspaces, keeping the directory still disconnects its
 Git link. Native removal is used when supported; failures may leave partial progress.
 Prune forgets missing registrations and should run only when every removal is intended.
