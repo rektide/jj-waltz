@@ -21,11 +21,7 @@ impl Fixture {
         let config = base.join("config");
         fs::create_dir(&config).unwrap();
         let user_config = config.join("jj.toml");
-        fs::write(
-            &user_config,
-            "[user]\nname='Test'\nemail='test@example.com'\n",
-        )
-        .unwrap();
+        fs::write(&user_config, "[user]\nname='Test'\nemail='test@example.com'\n").unwrap();
         let root = base.join("repo");
         let external = base.join(".codex/worktrees/task/repo");
         let mut fixture = Self {
@@ -36,31 +32,17 @@ impl Fixture {
             external,
             start: String::new(),
         };
-        fixture.run(
-            "jj",
-            &base,
-            &["git", "init", fixture.root.to_str().unwrap()],
-        );
+        fixture.run("jj", &base, &["git", "init", fixture.root.to_str().unwrap()]);
         fs::write(fixture.root.join("tracked.txt"), "initial\n").unwrap();
         fixture.run("jj", &fixture.root, &["commit", "-m", "initial"]);
-        fixture.start = fixture.run(
-            "jj",
-            &fixture.root,
-            &["log", "--no-graph", "-r", "@-", "-T", "commit_id"],
-        );
+        fixture.start = fixture.run("jj", &fixture.root, &["log", "--no-graph", "-r", "@-", "-T", "commit_id"]);
         // Keep the canonical paths for identity assertions, but Git for Windows
         // needs an ordinary destination spelling when constructing the fixture.
         let external_argument = fixture._temp.path().join(".codex/worktrees/task/repo");
         fixture.run(
             "git",
             &fixture.root,
-            &[
-                "worktree",
-                "add",
-                "--detach",
-                external_argument.to_str().unwrap(),
-                &fixture.start,
-            ],
+            &["worktree", "add", "--detach", external_argument.to_str().unwrap(), &fixture.start],
         );
         fixture
     }
@@ -82,11 +64,7 @@ impl Fixture {
 
     fn run(&self, program: &str, cwd: &Path, args: &[&str]) -> String {
         let output = self.command(program, cwd).args(args).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{program} {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
@@ -94,17 +72,7 @@ impl Fixture {
         self.run(
             "jj",
             &self.root,
-            &[
-                "--ignore-working-copy",
-                "--at-op=@",
-                "op",
-                "log",
-                "--no-graph",
-                "-n",
-                "1",
-                "-T",
-                "id",
-            ],
+            &["--ignore-working-copy", "--at-op=@", "op", "log", "--no-graph", "-n", "1", "-T", "id"],
         )
     }
 
@@ -116,12 +84,7 @@ impl Fixture {
         self.run(
             "git",
             &self.external,
-            &[
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-            ],
+            &["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"],
         )
     }
 }
@@ -137,18 +100,12 @@ fn discovery_preserves_dirty_detached_checkout_and_operation() {
     let report = fixture.context(&fixture.external.join("nested"));
     assert_eq!(report["git"]["head_commit"], fixture.start);
     assert!(report["git"]["head_ref"].is_null());
-    assert_eq!(
-        report["jj"]["primary_checkout"],
-        fixture.root.to_str().unwrap()
-    );
+    assert_eq!(report["jj"]["primary_checkout"], fixture.root.to_str().unwrap());
     assert!(report["jj"]["workspace_root"].is_null());
     assert_eq!(fixture.git_status(), status);
     assert_eq!(fixture.operation(), operation);
     assert!(!fixture.external.join(".jj").exists());
-    assert_eq!(
-        fs::read_to_string(fixture.external.join("tracked.txt")).unwrap(),
-        "user edit\n"
-    );
+    assert_eq!(fs::read_to_string(fixture.external.join("tracked.txt")).unwrap(), "user edit\n");
 }
 
 #[test]
@@ -160,56 +117,26 @@ fn explicit_route_preserves_start_and_external_worktree() {
     let resolved = fixture.run(
         "jj",
         &fixture.root,
-        &[
-            "--ignore-working-copy",
-            "--at-op=@",
-            "log",
-            "--no-graph",
-            "-r",
-            start,
-            "-T",
-            "commit_id",
-        ],
+        &["--ignore-working-copy", "--at-op=@", "log", "--no-graph", "-r", start, "-T", "commit_id"],
     );
     assert_eq!(resolved, fixture.start);
     fixture.run("jw", &fixture.root, &["add", "agent-task", "--at", start]);
     let workspace = PathBuf::from(fixture.run("jw", &fixture.root, &["path", "agent-task"]));
     assert_eq!(
-        fixture.run(
-            "jj",
-            &workspace,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "@-",
-                "-T",
-                "commit_id"
-            ]
-        ),
+        fixture.run("jj", &workspace, &["--ignore-working-copy", "log", "--no-graph", "-r", "@-", "-T", "commit_id"]),
         fixture.start
     );
-    let executed = fixture.run(
-        "jw",
-        &fixture.root,
-        &["switch", "agent-task", "--execute", "jj root"],
+    let executed = fixture.run("jw", &fixture.root, &["switch", "agent-task", "--execute", "jj root"]);
+    let expected_workspace = workspace.canonicalize().expect("workspace exists after execution");
+    assert!(
+        executed
+            .lines()
+            .any(|line| { Path::new(line).canonicalize().is_ok_and(|path| path == expected_workspace) })
     );
-    let expected_workspace = workspace
-        .canonicalize()
-        .expect("workspace exists after execution");
-    assert!(executed.lines().any(|line| {
-        Path::new(line)
-            .canonicalize()
-            .is_ok_and(|path| path == expected_workspace)
-    }));
     fixture.run("jw", &fixture.root, &["remove", "agent-task"]);
     assert!(!workspace.exists());
     assert!(fixture.external.is_dir());
-    assert_eq!(
-        fixture.run("git", &fixture.external, &["rev-parse", "HEAD"]),
-        fixture.start
-    );
+    assert_eq!(fixture.run("git", &fixture.external, &["rev-parse", "HEAD"]), fixture.start);
     assert!(fixture.git_status().is_empty());
 }
 
@@ -219,13 +146,7 @@ fn unavailable_start_stops_before_workspace_creation() {
     let before = fixture.operation();
     let output: Output = fixture
         .command("jj", &fixture.root)
-        .args([
-            "--ignore-working-copy",
-            "--at-op=@",
-            "log",
-            "-r",
-            "1111111111111111111111111111111111111111",
-        ])
+        .args(["--ignore-working-copy", "--at-op=@", "log", "-r", "1111111111111111111111111111111111111111"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -237,22 +158,12 @@ fn unavailable_start_stops_before_workspace_creation() {
 #[test]
 fn secondary_workspace_has_its_own_jj_identity() {
     let fixture = Fixture::new();
-    fixture.run(
-        "jw",
-        &fixture.root,
-        &["add", "secondary", "--at", &fixture.start, "--no-colocate"],
-    );
+    fixture.run("jw", &fixture.root, &["add", "secondary", "--at", &fixture.start, "--no-colocate"]);
     let workspace = PathBuf::from(fixture.run("jw", &fixture.root, &["path", "secondary"]));
     let report = fixture.context(&workspace);
     assert_eq!(report["jj"]["workspace_name"], "secondary");
-    assert_eq!(
-        report["jj"]["workspace_root"],
-        workspace.canonicalize().unwrap().to_str().unwrap()
-    );
-    assert_eq!(
-        report["jj"]["primary_checkout"],
-        fixture.root.to_str().unwrap()
-    );
+    assert_eq!(report["jj"]["workspace_root"], workspace.canonicalize().unwrap().to_str().unwrap());
+    assert_eq!(report["jj"]["primary_checkout"], fixture.root.to_str().unwrap());
     assert!(report["git"]["checkout_root"].is_null());
 }
 
@@ -266,13 +177,7 @@ fn git_only_unborn_and_broken_paths_report_diagnostics() {
     assert_eq!(report["git"]["checkout_root"], plain.to_str().unwrap());
     assert!(report["jj"]["workspace_root"].is_null());
     assert!(report["jj"]["primary_checkout"].is_null());
-    assert!(
-        report["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "git_head_unavailable")
-    );
+    assert!(report["diagnostics"].as_array().unwrap().iter().any(|d| d["code"] == "git_head_unavailable"));
 
     let broken = fixture.config.join("broken");
     fs::create_dir(&broken).unwrap();
@@ -280,31 +185,12 @@ fn git_only_unborn_and_broken_paths_report_diagnostics() {
     fs::create_dir(broken.join(".jj")).unwrap();
     let report = fixture.context(&broken);
     let diagnostics = report["diagnostics"].as_array().unwrap();
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d["code"] == "git_metadata_invalid")
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d["code"] == "jj_metadata_invalid")
-    );
+    assert!(diagnostics.iter().any(|d| d["code"] == "git_metadata_invalid"));
+    assert!(diagnostics.iter().any(|d| d["code"] == "jj_metadata_invalid"));
 
     let absent = fixture.config.join("absent");
-    let report: Value = serde_json::from_str(&fixture.run(
-        "jw",
-        &fixture.root,
-        &["context", absent.to_str().unwrap(), "--format=json"],
-    ))
-    .unwrap();
-    assert!(
-        report["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "path_unavailable")
-    );
+    let report: Value = serde_json::from_str(&fixture.run("jw", &fixture.root, &["context", absent.to_str().unwrap(), "--format=json"])).unwrap();
+    assert!(report["diagnostics"].as_array().unwrap().iter().any(|d| d["code"] == "path_unavailable"));
 }
 
 #[test]
@@ -332,18 +218,11 @@ fn explicit_path_overrides_inherited_git_directory() {
         .command("jw", &fixture.root)
         .env("GIT_DIR", fixture.root.join(".git"))
         .env("GIT_WORK_TREE", &fixture.root)
-        .args([
-            "context",
-            fixture.external.to_str().unwrap(),
-            "--format=json",
-        ])
+        .args(["context", fixture.external.to_str().unwrap(), "--format=json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        report["git"]["checkout_root"],
-        fixture.external.to_str().unwrap()
-    );
+    assert_eq!(report["git"]["checkout_root"], fixture.external.to_str().unwrap());
     assert_eq!(report["git"]["linked_worktree"], true);
 }

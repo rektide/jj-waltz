@@ -10,14 +10,10 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{
-    Clear as ClearTerminal, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
-    disable_raw_mode, enable_raw_mode,
-};
+use ratatui::crossterm::terminal::{Clear as ClearTerminal, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -37,9 +33,7 @@ mod palette {
     use ratatui::style::{Color, Modifier, Style};
 
     pub fn focus() -> Style {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     }
     pub fn bookmark() -> Style {
         Style::default().fg(Color::Magenta)
@@ -58,9 +52,7 @@ mod palette {
         Style::default()
     }
     pub fn heading() -> Style {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     }
 }
 
@@ -76,12 +68,7 @@ pub fn run(trunk: &str) -> Result<Option<String>> {
     let worker = Worker::start(task_rx, reply_tx);
     let (delete_bookmarks, preference_warning) = match load_delete_bookmarks() {
         Ok(value) => (value, None),
-        Err(error) => (
-            false,
-            Some(format!(
-                "could not read UI preferences; bookmarks will be kept: {error:#}"
-            )),
-        ),
+        Err(error) => (false, Some(format!("could not read UI preferences; bookmarks will be kept: {error:#}"))),
     };
     let mut app = App::new(trunk.to_owned(), delete_bookmarks);
     app.notice = preference_warning;
@@ -133,11 +120,7 @@ fn event_loop(
     }
 }
 
-fn drain_replies(
-    app: &mut App,
-    task_tx: &Sender<WorkerTask>,
-    reply_rx: &Receiver<WorkerReply>,
-) -> Result<bool> {
+fn drain_replies(app: &mut App, task_tx: &Sender<WorkerTask>, reply_rx: &Receiver<WorkerReply>) -> Result<bool> {
     let mut changed = false;
     loop {
         match reply_rx.try_recv() {
@@ -157,12 +140,7 @@ fn drain_replies(
     }
 }
 
-fn apply_action(
-    app: &mut App,
-    terminal: &mut Terminal<CrosstermBackend<Stderr>>,
-    task_tx: &Sender<WorkerTask>,
-    action: Action,
-) -> Result<()> {
+fn apply_action(app: &mut App, terminal: &mut Terminal<CrosstermBackend<Stderr>>, task_tx: &Sender<WorkerTask>, action: Action) -> Result<()> {
     if app.busy.is_some() && (action.requires_worker() || matches!(action, Action::Choose(_))) {
         app.notice = Some("another repository check is still running".to_owned());
         return Ok(());
@@ -179,8 +157,7 @@ fn apply_action(
         }
         Action::Quit => {
             if app.busy.as_ref().is_some_and(Busy::is_mutating) {
-                app.notice =
-                    Some("finish the confirmed repository change before leaving".to_owned());
+                app.notice = Some("finish the confirmed repository change before leaving".to_owned());
             } else {
                 app.done = Some(None);
             }
@@ -192,11 +169,7 @@ fn apply_action(
             app.busy = Some(Busy::Create(generation));
             app.screen = Screen::Main;
             task_tx
-                .send(WorkerTask::Create {
-                    generation,
-                    name,
-                    base,
-                })
+                .send(WorkerTask::Create { generation, name, base })
                 .map_err(|_| anyhow!("background worker stopped"))?;
         }
         Action::Health => {
@@ -263,13 +236,7 @@ impl TerminalSession {
         enable_raw_mode().context("could not enable terminal raw mode")?;
         let mut restore_on_error = RestoreOnDrop(true);
         let mut stderr = io::stderr();
-        if let Err(error) = execute!(
-            stderr,
-            EnterAlternateScreen,
-            ClearTerminal(ClearType::All),
-            MoveTo(0, 0),
-            EnableMouseCapture
-        ) {
+        if let Err(error) = execute!(stderr, EnterAlternateScreen, ClearTerminal(ClearType::All), MoveTo(0, 0), EnableMouseCapture) {
             let _ = disable_raw_mode();
             return Err(error).context("could not enter the alternate screen");
         }
@@ -325,19 +292,11 @@ impl Worker {
         let handle = thread::spawn(move || {
             while let Ok(task) = tasks.recv() {
                 let reply = match task {
-                    WorkerTask::Capture {
-                        generation,
-                        trunk,
-                        refresh,
-                    } => WorkerReply::Capture {
+                    WorkerTask::Capture { generation, trunk, refresh } => WorkerReply::Capture {
                         generation,
                         result: status::capture(&trunk, &refresh).map_err(format_error),
                     },
-                    WorkerTask::Create {
-                        generation,
-                        name,
-                        base,
-                    } => {
+                    WorkerTask::Create { generation, name, base } => {
                         let result = CreationPolicy::load(Some(base), None, false, false, None, 1)
                             .and_then(|policy| lifecycle::add_workspaces(&[name], &policy))
                             .map(|outcome| outcome.warnings)
@@ -346,9 +305,7 @@ impl Worker {
                     }
                     WorkerTask::Health { generation, trunk } => WorkerReply::Health {
                         generation,
-                        result: DoctorEngine::current(trunk)
-                            .map(|engine| engine.run().render_plain())
-                            .map_err(format_error),
+                        result: DoctorEngine::current(trunk).map(|engine| engine.run().render_plain()).map_err(format_error),
                     },
                     WorkerTask::Prepare {
                         generation,
@@ -366,18 +323,9 @@ impl Worker {
                         include_risky,
                         acknowledge_ignored,
                     } => {
-                        let (outcomes, preference_warning) = execute_with_preference(
-                            delete_bookmarks,
-                            save_delete_bookmarks,
-                            || {
-                                removal::execute(
-                                    plan,
-                                    delete_bookmarks,
-                                    include_risky,
-                                    acknowledge_ignored,
-                                )
-                            },
-                        );
+                        let (outcomes, preference_warning) = execute_with_preference(delete_bookmarks, save_delete_bookmarks, || {
+                            removal::execute(plan, delete_bookmarks, include_risky, acknowledge_ignored)
+                        });
                         WorkerReply::Execute {
                             generation,
                             result: Ok(outcomes),
@@ -390,9 +338,7 @@ impl Worker {
                 }
             }
         });
-        Self {
-            handle: Some(handle),
-        }
+        Self { handle: Some(handle) }
     }
 
     fn join(mut self) {
@@ -414,11 +360,7 @@ fn format_error(error: anyhow::Error) -> String {
     format!("{error:#}")
 }
 
-fn execute_with_preference<T, F, E>(
-    delete_bookmarks: bool,
-    save: F,
-    execute: E,
-) -> (T, Option<String>)
+fn execute_with_preference<T, F, E>(delete_bookmarks: bool, save: F, execute: E) -> (T, Option<String>)
 where
     F: FnOnce(bool) -> Result<()>,
     E: FnOnce() -> T,
@@ -497,10 +439,7 @@ impl Busy {
     fn generation(self) -> u64 {
         match self {
             Self::Capture { generation, .. } => generation,
-            Self::Create(value)
-            | Self::Health(value)
-            | Self::Prepare(value)
-            | Self::Remove(value) => value,
+            Self::Create(value) | Self::Health(value) | Self::Prepare(value) | Self::Remove(value) => value,
         }
     }
 
@@ -517,12 +456,7 @@ impl Busy {
     fn is_mutating(&self) -> bool {
         matches!(
             self,
-            Self::Capture {
-                refreshing: true,
-                ..
-            } | Self::Create(_)
-                | Self::Prepare(_)
-                | Self::Remove(_)
+            Self::Capture { refreshing: true, .. } | Self::Create(_) | Self::Prepare(_) | Self::Remove(_)
         )
     }
 }
@@ -608,10 +542,7 @@ impl CreateForm {
     fn selected_base(&self, trunk: &str) -> String {
         match self.base_choice {
             BaseChoice::Trunk => trunk.to_owned(),
-            BaseChoice::Workspace => self
-                .workspace_base
-                .clone()
-                .unwrap_or_else(|| trunk.to_owned()),
+            BaseChoice::Workspace => self.workspace_base.clone().unwrap_or_else(|| trunk.to_owned()),
             BaseChoice::Custom => self.base.trim().to_owned(),
         }
     }
@@ -692,11 +623,7 @@ enum Screen {
     Search,
     Create(CreateForm),
     Preview(Preview),
-    Report {
-        title: String,
-        body: String,
-        scroll: u16,
-    },
+    Report { title: String, body: String, scroll: u16 },
 }
 
 enum Action {
@@ -727,11 +654,7 @@ impl Action {
     fn requires_worker(&self) -> bool {
         matches!(
             self,
-            Self::Capture(_)
-                | Self::Create { .. }
-                | Self::Health
-                | Self::Prepare { .. }
-                | Self::Execute { .. }
+            Self::Capture(_) | Self::Create { .. } | Self::Health | Self::Prepare { .. } | Self::Execute { .. }
         )
     }
 }
@@ -809,10 +732,7 @@ impl App {
         if generation < self.generation {
             return Ok(());
         }
-        if self
-            .busy
-            .is_some_and(|busy| busy.generation() != generation)
-        {
+        if self.busy.is_some_and(|busy| busy.generation() != generation) {
             return Ok(());
         }
         self.busy = None;
@@ -820,11 +740,7 @@ impl App {
             WorkerReply::Capture { generation, result } => match result {
                 Ok(snapshot) if generation >= self.last_capture => {
                     self.last_capture = generation;
-                    let names = snapshot
-                        .rows
-                        .iter()
-                        .map(|row| &row.workspace.name)
-                        .collect::<HashSet<_>>();
+                    let names = snapshot.rows.iter().map(|row| &row.workspace.name).collect::<HashSet<_>>();
                     self.selected.retain(|name| names.contains(name));
                     self.snapshot = Some(snapshot);
                     self.clamp_cursor();
@@ -857,9 +773,7 @@ impl App {
                 Err(error) => self.open_error("Health report failed", error),
             },
             WorkerReply::Prepare { result, .. } => match result {
-                Ok(plan) if plan.rows.is_empty() => {
-                    self.notice = Some("nothing matched the removal request".to_owned())
-                }
+                Ok(plan) if plan.rows.is_empty() => self.notice = Some("nothing matched the removal request".to_owned()),
                 Ok(plan) => {
                     self.screen = Screen::Preview(Preview {
                         plan,
@@ -870,9 +784,7 @@ impl App {
                 Err(error) => self.open_error("Removal preview failed", error),
             },
             WorkerReply::Execute {
-                result,
-                preference_warning,
-                ..
+                result, preference_warning, ..
             } => {
                 let outcomes = match result {
                     Ok(outcomes) => outcomes,
@@ -926,20 +838,14 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Action::Quit;
         }
-        if key.code == KeyCode::Char('m')
-            && !matches!(self.screen, Screen::Search | Screen::Create(_))
-        {
+        if key.code == KeyCode::Char('m') && !matches!(self.screen, Screen::Search | Screen::Create(_)) {
             return Action::ToggleMouse;
         }
         match &mut self.screen {
             Screen::Main => self.handle_main_key(key),
             Screen::Help => {
                 self.screen = Screen::Main;
-                if key.code == KeyCode::Char('q') {
-                    Action::Quit
-                } else {
-                    Action::None
-                }
+                if key.code == KeyCode::Char('q') { Action::Quit } else { Action::None }
             }
             Screen::Search => {
                 match key.code {
@@ -1002,9 +908,7 @@ impl App {
                 KeyCode::Char(character) => {
                     match form.field {
                         CreateField::Name => form.name.push(character),
-                        CreateField::Base if form.base_choice == BaseChoice::Custom => {
-                            form.base.push(character)
-                        }
+                        CreateField::Base if form.base_choice == BaseChoice::Custom => form.base.push(character),
                         CreateField::Base => {}
                     }
                     Action::None
@@ -1044,14 +948,12 @@ impl App {
                     plan: preview.plan.clone(),
                     delete_bookmarks: preview.options.delete_bookmarks,
                     include_risky: preview.options.include_risky,
-                    acknowledge_ignored: preview.options.unrecorded_files
-                        == UnrecordedChoice::Delete,
+                    acknowledge_ignored: preview.options.unrecorded_files == UnrecordedChoice::Delete,
                 },
                 KeyCode::Enter => {
                     let counts = preview.counts();
                     self.notice = Some(if counts.undecided > 0 {
-                        "Choose [i] delete listed files or [s] skip those workspaces first"
-                            .to_owned()
+                        "Choose [i] delete listed files or [s] skip those workspaces first".to_owned()
                     } else {
                         "No eligible workspace to remove".to_owned()
                     });
@@ -1061,12 +963,8 @@ impl App {
             },
             Screen::Report { scroll, .. } => {
                 match key.code {
-                    KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown => {
-                        *scroll = scroll.saturating_add(1)
-                    }
-                    KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp => {
-                        *scroll = scroll.saturating_sub(1)
-                    }
+                    KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown => *scroll = scroll.saturating_add(1),
+                    KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp => *scroll = scroll.saturating_sub(1),
                     _ => self.screen = Screen::Main,
                 }
                 Action::None
@@ -1123,15 +1021,11 @@ impl App {
             }
             KeyCode::Enter => self.current_name().map_or(Action::None, Action::Choose),
             KeyCode::Char('n') => {
-                let workspace_base = self
-                    .current_row()
-                    .map(|row| row.workspace.commit_id.clone());
+                let workspace_base = self.current_row().map(|row| row.workspace.commit_id.clone());
                 self.screen = Screen::Create(CreateForm::new(&self.trunk, workspace_base));
                 Action::None
             }
-            KeyCode::Char('i') => self
-                .current_name()
-                .map_or(Action::None, |name| Action::Capture(vec![name])),
+            KeyCode::Char('i') => self.current_name().map_or(Action::None, |name| Action::Capture(vec![name])),
             KeyCode::Char('h') => Action::Health,
             KeyCode::Char('y') => self
                 .current_row()
@@ -1151,10 +1045,7 @@ impl App {
                 if names.is_empty() {
                     Action::None
                 } else {
-                    Action::Prepare {
-                        names,
-                        prune: false,
-                    }
+                    Action::Prepare { names, prune: false }
                 }
             }
             KeyCode::Tab => {
@@ -1187,19 +1078,14 @@ impl App {
                 self.move_cursor(-1);
                 self.cursor != old
             }
-            MouseEventKind::Down(MouseButton::Left)
-                if self.table_area.contains((mouse.column, mouse.row).into()) =>
-            {
+            MouseEventKind::Down(MouseButton::Left) if self.table_area.contains((mouse.column, mouse.row).into()) => {
                 // Border, header, and the header's bottom margin are not rows.
                 let first_row = self.table_area.y.saturating_add(3);
                 if mouse.row < first_row {
                     return false;
                 }
                 let visible_row = mouse.row - first_row;
-                let index = self
-                    .table_state
-                    .offset()
-                    .saturating_add(visible_row as usize);
+                let index = self.table_state.offset().saturating_add(visible_row as usize);
                 if index < self.visible_indices().len() {
                     let old = self.cursor;
                     self.cursor = index;
@@ -1270,17 +1156,12 @@ impl App {
     }
 
     fn clamp_cursor(&mut self) {
-        self.cursor = self
-            .cursor
-            .min(self.visible_indices().len().saturating_sub(1));
+        self.cursor = self.cursor.min(self.visible_indices().len().saturating_sub(1));
     }
 
     fn hidden_selection_count(&self) -> usize {
         let visible = self.visible_names().into_iter().collect::<HashSet<_>>();
-        self.selected
-            .iter()
-            .filter(|name| !visible.contains(*name))
-            .count()
+        self.selected.iter().filter(|name| !visible.contains(*name)).count()
     }
 
     fn render(&mut self, frame: &mut Frame<'_>) {
@@ -1288,11 +1169,7 @@ impl App {
         frame.render_widget(Block::default(), area);
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(5),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(5), Constraint::Length(3)])
             .split(area);
         self.render_header(frame, vertical[0]);
         self.render_body(frame, vertical[1]);
@@ -1308,11 +1185,7 @@ impl App {
             Screen::Search => render_search(frame, area, &self.query),
             Screen::Create(form) => render_create(frame, area, form, &self.trunk),
             Screen::Preview(preview) => render_preview(frame, area, preview),
-            Screen::Report {
-                title,
-                body,
-                scroll,
-            } => render_report(frame, area, title, body, *scroll),
+            Screen::Report { title, body, scroll } => render_report(frame, area, title, body, *scroll),
         }
     }
 
@@ -1321,20 +1194,14 @@ impl App {
         let mut spans = vec![
             Span::styled(" jj-waltz ", palette::heading()),
             Span::styled(
-                format!(
-                    "{} workspaces",
-                    self.snapshot.as_ref().map_or(0, |s| s.rows.len())
-                ),
+                format!("{} workspaces", self.snapshot.as_ref().map_or(0, |s| s.rows.len())),
                 palette::secondary(),
             ),
             Span::raw("  "),
             Span::styled(format!("filter:{}", self.filter.label()), palette::focus()),
         ];
         if !self.query.is_empty() {
-            spans.push(Span::styled(
-                format!("  search:{}", self.query),
-                palette::focus(),
-            ));
+            spans.push(Span::styled(format!("  search:{}", self.query), palette::focus()));
         }
         if !self.selected.is_empty() {
             spans.push(Span::styled(
@@ -1342,38 +1209,22 @@ impl App {
                 palette::caution(),
             ));
         }
-        let repository_warnings = self
-            .snapshot
-            .as_ref()
-            .map_or(0, |snapshot| snapshot.snapshot.warnings.len());
+        let repository_warnings = self.snapshot.as_ref().map_or(0, |snapshot| snapshot.snapshot.warnings.len());
         if repository_warnings != 0 {
-            spans.push(Span::styled(
-                format!("  repository warnings:{repository_warnings}"),
-                palette::caution(),
-            ));
+            spans.push(Span::styled(format!("  repository warnings:{repository_warnings}"), palette::caution()));
         }
         let trunk = self.snapshot.as_ref().map_or_else(
             || format!("trunk: {}", self.trunk),
             |snapshot| {
                 let trunk = &snapshot.snapshot.repository.trunk;
-                format!(
-                    "trunk: {} · {} · {}",
-                    trunk.revset,
-                    short_id(&trunk.commit_id),
-                    trunk.description
-                )
+                format!("trunk: {} · {} · {}", trunk.revset, short_id(&trunk.commit_id), trunk.description)
             },
         );
-        let block = Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(palette::secondary());
+        let block = Block::default().borders(Borders::BOTTOM).border_style(palette::secondary());
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(spans),
-                Line::from(vec![
-                    Span::styled(" ", palette::secondary()),
-                    Span::styled(trunk, palette::focus()),
-                ]),
+                Line::from(vec![Span::styled(" ", palette::secondary()), Span::styled(trunk, palette::focus())]),
             ])
             .block(block),
             area,
@@ -1419,11 +1270,7 @@ impl App {
                 .map(|(visible_index, index)| {
                     let row = &snapshot.rows[*index];
                     let workspace = &row.workspace;
-                    let selected = if self.selected.contains(&workspace.name) {
-                        "[x]"
-                    } else {
-                        "[ ]"
-                    };
+                    let selected = if self.selected.contains(&workspace.name) { "[x]" } else { "[ ]" };
                     let role = if workspace.role.current {
                         "@"
                     } else if workspace.role.previous {
@@ -1435,25 +1282,13 @@ impl App {
                     };
                     let bookmark = workspace.associated_bookmark.as_deref().unwrap_or("—");
                     let warned = !row.warnings.is_empty() || !workspace.hazards.is_empty();
-                    let name_style = if visible_index == self.cursor {
-                        palette::focus()
-                    } else {
-                        Style::default()
-                    };
+                    let name_style = if visible_index == self.cursor { palette::focus() } else { Style::default() };
                     Row::new(vec![
-                        Cell::from(format!("{selected} {role} {}", workspace.name))
-                            .style(name_style),
+                        Cell::from(format!("{selected} {role} {}", workspace.name)).style(name_style),
                         Cell::from(bookmark.to_owned()).style(palette::bookmark()),
-                        Cell::from(integration_short(&row.bookmark_integration))
-                            .style(integration_style(&row.bookmark_integration)),
-                        Cell::from(integration_short(&row.work_integration))
-                            .style(integration_style(&row.work_integration)),
-                        Cell::from(format!(
-                            "{} {}",
-                            working_copy_label(workspace.working_copy),
-                            if warned { "!" } else { "" }
-                        ))
-                        .style(if warned {
+                        Cell::from(integration_short(&row.bookmark_integration)).style(integration_style(&row.bookmark_integration)),
+                        Cell::from(integration_short(&row.work_integration)).style(integration_style(&row.work_integration)),
+                        Cell::from(format!("{} {}", working_copy_label(workspace.working_copy), if warned { "!" } else { "" })).style(if warned {
                             palette::caution()
                         } else {
                             working_copy_style(workspace.working_copy)
@@ -1462,15 +1297,9 @@ impl App {
                 })
                 .collect()
         });
-        let header = Row::new([
-            "workspace",
-            "bookmark",
-            "bookmark state",
-            "work state",
-            "checkout",
-        ])
-        .style(palette::heading())
-        .bottom_margin(1);
+        let header = Row::new(["workspace", "bookmark", "bookmark state", "work state", "checkout"])
+            .style(palette::heading())
+            .bottom_margin(1);
         let table = Table::new(
             rows,
             [
@@ -1491,16 +1320,12 @@ impl App {
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED))
         .highlight_symbol("› ");
-        self.table_state
-            .select((!indices.is_empty()).then_some(self.cursor));
+        self.table_state.select((!indices.is_empty()).then_some(self.cursor));
         frame.render_stateful_widget(table, area, &mut self.table_state);
     }
 
     fn render_detail(&self, frame: &mut Frame<'_>, area: Rect) {
-        let text = self
-            .current_row()
-            .map(detail_text)
-            .unwrap_or_else(|| Text::from("No matching workspace"));
+        let text = self.current_row().map(detail_text).unwrap_or_else(|| Text::from("No matching workspace"));
         frame.render_widget(
             Paragraph::new(text).wrap(Wrap { trim: false }).block(
                 Block::default()
@@ -1526,19 +1351,11 @@ impl App {
             Span::styled(notice.clone(), palette::caution())
         } else {
             Span::styled(
-                format!(
-                    "{} visible · {} selected",
-                    self.visible_indices().len(),
-                    self.selected.len()
-                ),
+                format!("{} visible · {} selected", self.visible_indices().len(), self.selected.len()),
                 palette::secondary(),
             )
         };
-        let mouse_mode = if self.mouse_capture {
-            "mouse: controls"
-        } else {
-            "mouse: text selection"
-        };
+        let mouse_mode = if self.mouse_capture { "mouse: controls" } else { "mouse: text selection" };
         let bindings: &[(&str, &str)] = if area.width < 100 {
             &[
                 ("↑↓", "move"),
@@ -1566,14 +1383,7 @@ impl App {
             .iter()
             .flat_map(|(key, label)| {
                 [
-                    Span::styled(
-                        *key,
-                        if *key == "d" {
-                            palette::danger()
-                        } else {
-                            palette::focus()
-                        },
-                    ),
+                    Span::styled(*key, if *key == "d" { palette::danger() } else { palette::focus() }),
                     Span::raw(format!(" {label}  ")),
                 ]
             })
@@ -1581,16 +1391,9 @@ impl App {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(shortcuts),
-                Line::from(vec![
-                    Span::styled(format!(" [m] {mouse_mode} · "), palette::focus()),
-                    status,
-                ]),
+                Line::from(vec![Span::styled(format!(" [m] {mouse_mode} · "), palette::focus()), status]),
             ])
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(palette::secondary()),
-            ),
+            .block(Block::default().borders(Borders::TOP).border_style(palette::secondary())),
             area,
         );
     }
@@ -1606,12 +1409,7 @@ fn row_matches(row: &ManagerRow, filter: Filter, query: &str) -> bool {
         row.bookmark_integration.label(),
         row.work_integration.label(),
         row.warnings.join(" "),
-        workspace
-            .hazards
-            .iter()
-            .map(|hazard| hazard.message.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+        workspace.hazards.iter().map(|hazard| hazard.message.as_str()).collect::<Vec<_>>().join(" ")
     )
     .to_lowercase();
     if !query.is_empty() && !searchable.contains(query) {
@@ -1687,47 +1485,24 @@ fn detail_text(row: &ManagerRow) -> Text<'static> {
         Line::from(Span::styled(workspace.name.clone(), palette::heading())),
         Line::from(vec![
             Span::styled("path: ", palette::secondary()),
-            Span::raw(
-                workspace
-                    .path
-                    .as_ref()
-                    .map_or_else(|| "missing".to_owned(), |path| path.display().to_string()),
-            ),
+            Span::raw(workspace.path.as_ref().map_or_else(|| "missing".to_owned(), |path| path.display().to_string())),
         ]),
         Line::from(vec![
             Span::styled("bookmark: ", palette::secondary()),
-            Span::styled(
-                workspace
-                    .associated_bookmark
-                    .clone()
-                    .unwrap_or_else(|| "none".to_owned()),
-                palette::bookmark(),
-            ),
+            Span::styled(workspace.associated_bookmark.clone().unwrap_or_else(|| "none".to_owned()), palette::bookmark()),
             Span::raw(" ("),
-            Span::styled(
-                integration_detail(&row.bookmark_integration),
-                integration_style(&row.bookmark_integration),
-            ),
+            Span::styled(integration_detail(&row.bookmark_integration), integration_style(&row.bookmark_integration)),
             Span::raw(")"),
         ]),
         Line::from(vec![
             Span::styled("work: ", palette::secondary()),
-            Span::styled(
-                integration_detail(&row.work_integration),
-                integration_style(&row.work_integration),
-            ),
+            Span::styled(integration_detail(&row.work_integration), integration_style(&row.work_integration)),
         ]),
         Line::from(vec![
             Span::styled("checkout: ", palette::secondary()),
-            Span::styled(
-                working_copy_label(workspace.working_copy),
-                working_copy_style(workspace.working_copy),
-            ),
+            Span::styled(working_copy_label(workspace.working_copy), working_copy_style(workspace.working_copy)),
         ]),
-        Line::from(vec![
-            Span::styled("change: ", palette::secondary()),
-            Span::raw(workspace.change_id.clone()),
-        ]),
+        Line::from(vec![Span::styled("change: ", palette::secondary()), Span::raw(workspace.change_id.clone())]),
         Line::from(vec![
             Span::styled("commit: ", palette::secondary()),
             Span::raw(short_id(&workspace.commit_id).to_owned()),
@@ -1737,21 +1512,18 @@ fn detail_text(row: &ManagerRow) -> Text<'static> {
     ];
     if !row.warnings.is_empty() || !workspace.hazards.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Warnings",
-            palette::caution().add_modifier(Modifier::BOLD),
-        )));
+        lines.push(Line::from(Span::styled("Warnings", palette::caution().add_modifier(Modifier::BOLD))));
         lines.extend(
-            row.warnings.iter().map(|warning| {
-                Line::from(Span::styled(format!("• {warning}"), palette::caution()))
-            }),
+            row.warnings
+                .iter()
+                .map(|warning| Line::from(Span::styled(format!("• {warning}"), palette::caution()))),
         );
-        lines.extend(workspace.hazards.iter().map(|hazard| {
-            Line::from(Span::styled(
-                format!("• {}", hazard.message),
-                palette::caution(),
-            ))
-        }));
+        lines.extend(
+            workspace
+                .hazards
+                .iter()
+                .map(|hazard| Line::from(Span::styled(format!("• {}", hazard.message), palette::caution()))),
+        );
     }
     Text::from(lines)
 }
@@ -1765,40 +1537,23 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         ("a / c", "mark all visible / clear marks"),
         ("Enter", "switch to highlighted workspace"),
         ("/", "search (Enter accepts, Esc closes)"),
-        (
-            "f or 1–4",
-            "filter all / integrated / unfinished / problems",
-        ),
+        ("f or 1–4", "filter all / integrated / unfinished / problems"),
         ("Tab", "show details on a narrow terminal"),
         ("n", "create workspace"),
         ("i", "refresh highlighted checkout details"),
         ("h", "repository health report"),
         ("y", "copy workspace path with OSC 52"),
-        (
-            "p",
-            "prune missing workspaces: forget registrations with missing directories",
-        ),
-        (
-            "d",
-            "remove: forget registrations and delete existing directories",
-        ),
+        ("p", "prune missing workspaces: forget registrations with missing directories"),
+        ("d", "remove: forget registrations and delete existing directories"),
         ("m", "toggle mouse controls / native text selection"),
         ("q", "cancel"),
     ];
     let mut lines = bindings
         .into_iter()
-        .map(|(key, action)| {
-            Line::from(vec![
-                Span::styled(format!("{key:<14}"), palette::focus()),
-                Span::raw(action),
-            ])
-        })
+        .map(|(key, action)| Line::from(vec![Span::styled(format!("{key:<14}"), palette::focus()), Span::raw(action)]))
         .collect::<Vec<_>>();
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "@ current   - previous   ^ default   ! warning",
-        palette::secondary(),
-    )));
+    lines.push(Line::from(Span::styled("@ current   - previous   ^ default   ! warning", palette::secondary())));
     lines.push(Line::from(Span::styled(
         "Removing a directory is permanent. Review every row before Enter.",
         palette::caution(),
@@ -1845,19 +1600,10 @@ fn render_create(frame: &mut Frame<'_>, area: Rect, form: &CreateForm, trunk: &s
         choice_marker(form.base_choice == BaseChoice::Custom),
     );
     let lines = vec![
-        Line::from(vec![
-            Span::styled("workspace  ", palette::secondary()),
-            Span::styled(&form.name, name_style),
-        ]),
+        Line::from(vec![Span::styled("workspace  ", palette::secondary()), Span::styled(&form.name, name_style)]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("start at   ", palette::secondary()),
-            Span::styled(choices, base_style),
-        ]),
-        Line::from(vec![
-            Span::styled("revset    ", palette::secondary()),
-            Span::styled(base, base_style),
-        ]),
+        Line::from(vec![Span::styled("start at   ", palette::secondary()), Span::styled(choices, base_style)]),
+        Line::from(vec![Span::styled("revset    ", palette::secondary()), Span::styled(base, base_style)]),
         Line::from(""),
         Line::from(Span::styled(
             "Tab changes field · ←/→ changes base · Enter creates · Esc cancels",
@@ -1882,11 +1628,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
     let inner = popup.inner(Margin::new(1, 1));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(4),
-            Constraint::Length(7),
-        ])
+        .constraints([Constraint::Length(4), Constraint::Min(4), Constraint::Length(7)])
         .split(inner);
     let counts = preview.counts();
     let warning = if preview.plan.prune {
@@ -1896,22 +1638,12 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
     };
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled(
-                warning,
-                if preview.plan.prune {
-                    palette::caution()
-                } else {
-                    palette::danger()
-                },
-            )),
+            Line::from(Span::styled(warning, if preview.plan.prune { palette::caution() } else { palette::danger() })),
             Line::from(vec![
                 Span::styled(format!("remove: {}  ", counts.remove), palette::good()),
                 Span::styled(format!("skip: {}  ", counts.skip), palette::caution()),
                 Span::styled(format!("blocked: {}  ", counts.blocked), palette::danger()),
-                Span::styled(
-                    format!("needs choice: {}", counts.undecided),
-                    palette::caution(),
-                ),
+                Span::styled(format!("needs choice: {}", counts.undecided), palette::caution()),
             ]),
         ])
         .wrap(Wrap { trim: false }),
@@ -1922,16 +1654,10 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
         let disposition = if let Some(reason) = &row.blocked {
             (format!("BLOCKED: {reason}"), palette::danger())
         } else if row.risky && !preview.options.include_risky {
-            (
-                "SKIP: risky work; press [r] to include".to_owned(),
-                palette::caution(),
-            )
+            ("SKIP: risky work; press [r] to include".to_owned(), palette::caution())
         } else if !row.ignored.is_empty() {
             match preview.options.unrecorded_files {
-                UnrecordedChoice::Undecided => (
-                    "NEEDS CHOICE: files not recorded by JJ".to_owned(),
-                    palette::caution(),
-                ),
+                UnrecordedChoice::Undecided => ("NEEDS CHOICE: files not recorded by JJ".to_owned(), palette::caution()),
                 UnrecordedChoice::Delete => (
                     if preview.plan.prune {
                         "PRUNE: forget registration"
@@ -1941,10 +1667,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
                     .to_owned(),
                     palette::danger(),
                 ),
-                UnrecordedChoice::Skip => (
-                    "SKIP: keep directory with files not recorded by JJ".to_owned(),
-                    palette::caution(),
-                ),
+                UnrecordedChoice::Skip => ("SKIP: keep directory with files not recorded by JJ".to_owned(), palette::caution()),
             }
         } else {
             (
@@ -1957,14 +1680,8 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
                 palette::good(),
             )
         };
-        lines.push(Line::from(Span::styled(
-            row.name.clone(),
-            palette::heading(),
-        )));
-        lines.push(Line::from(Span::styled(
-            format!("  {}", disposition.0),
-            disposition.1,
-        )));
+        lines.push(Line::from(Span::styled(row.name.clone(), palette::heading())));
+        lines.push(Line::from(Span::styled(format!("  {}", disposition.0), disposition.1)));
         if let Some(path) = &row.path {
             lines.push(Line::from(vec![
                 Span::styled("  path: ", palette::secondary()),
@@ -1988,12 +1705,11 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
                 .iter()
                 .map(|value| Line::from(Span::styled(format!("  ! {value}"), palette::caution()))),
         );
-        lines.extend(row.ignored.iter().map(|value| {
-            Line::from(vec![
-                Span::styled("  not recorded by JJ: ", palette::caution()),
-                Span::raw(value.clone()),
-            ])
-        }));
+        lines.extend(
+            row.ignored
+                .iter()
+                .map(|value| Line::from(vec![Span::styled("  not recorded by JJ: ", palette::caution()), Span::raw(value.clone())])),
+        );
         lines.push(Line::from(""));
     }
     frame.render_widget(
@@ -2002,11 +1718,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
             .wrap(Wrap { trim: false }),
         chunks[1],
     );
-    let bookmark = if preview.options.delete_bookmarks {
-        "DELETE"
-    } else {
-        "KEEP"
-    };
+    let bookmark = if preview.options.delete_bookmarks { "DELETE" } else { "KEEP" };
     let choice = match preview.options.unrecorded_files {
         UnrecordedChoice::Undecided => "choose before confirmation",
         UnrecordedChoice::Delete => "DELETE listed files",
@@ -2064,14 +1776,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
                     },
                 ),
             ]),
-            Line::from(Span::styled(
-                confirm,
-                if preview.ready() {
-                    palette::focus()
-                } else {
-                    palette::caution()
-                },
-            )),
+            Line::from(Span::styled(confirm, if preview.ready() { palette::focus() } else { palette::caution() })),
         ])
         .wrap(Wrap { trim: false }),
         chunks[2],
@@ -2082,23 +1787,11 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, preview: &Preview) {
             .border_style(palette::secondary())
             .title(format!(
                 " {} — {} target{} ",
-                if preview.plan.prune {
-                    "Prune missing workspaces"
-                } else {
-                    "Removal preview"
-                },
+                if preview.plan.prune { "Prune missing workspaces" } else { "Removal preview" },
                 preview.plan.rows.len(),
-                if preview.plan.rows.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                }
+                if preview.plan.rows.len() == 1 { "" } else { "s" }
             ))
-            .title_style(if preview.plan.prune {
-                palette::heading()
-            } else {
-                palette::danger()
-            }),
+            .title_style(if preview.plan.prune { palette::heading() } else { palette::danger() }),
         popup,
     );
 }
@@ -2107,28 +1800,22 @@ fn render_report(frame: &mut Frame<'_>, area: Rect, title: &str, body: &str, scr
     let popup = centered(area, 90, 88);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(Text::from(
-            body.lines().map(report_line).collect::<Vec<_>>(),
-        ))
-        .scroll((scroll, 0))
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(palette::secondary())
-                .title(format!(" {title} — ↑↓ scroll, any other key closes "))
-                .title_style(palette::heading()),
-        ),
+        Paragraph::new(Text::from(body.lines().map(report_line).collect::<Vec<_>>()))
+            .scroll((scroll, 0))
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(palette::secondary())
+                    .title(format!(" {title} — ↑↓ scroll, any other key closes "))
+                    .title_style(palette::heading()),
+            ),
         popup,
     );
 }
 
 fn report_line(line: &str) -> Line<'static> {
-    let prefix = line
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_end_matches(':');
+    let prefix = line.split_whitespace().next().unwrap_or("").trim_end_matches(':');
     let style = match prefix {
         "DONE" | "PASS" | "OK" => palette::good(),
         "FAILED" | "FAIL" | "BLOCKED" | "ERROR" => palette::danger(),
@@ -2202,11 +1889,7 @@ fn base64(bytes: &[u8]) -> String {
         } else {
             '='
         });
-        output.push(if chunk.len() > 2 {
-            ALPHABET[(third & 0x3f) as usize] as char
-        } else {
-            '='
-        });
+        output.push(if chunk.len() > 2 { ALPHABET[(third & 0x3f) as usize] as char } else { '=' });
     }
     output
 }
@@ -2279,10 +1962,7 @@ mod tests {
     #[test]
     fn main_events_open_and_close_help() {
         let mut app = App::new("trunk()".to_owned(), false);
-        assert!(matches!(
-            app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
-            Action::None
-        ));
+        assert!(matches!(app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)), Action::None));
         assert!(matches!(app.screen, Screen::Help));
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(app.screen, Screen::Main));
@@ -2307,12 +1987,7 @@ mod tests {
             blocked: None,
             risky: false,
         };
-        let mut rows = vec![
-            make_row("safe"),
-            make_row("risky"),
-            make_row("unrecorded"),
-            make_row("blocked"),
-        ];
+        let mut rows = vec![make_row("safe"), make_row("risky"), make_row("unrecorded"), make_row("blocked")];
         rows[1].risky = true;
         rows[2].ignored = vec!["private/data".to_owned()];
         rows[3].blocked = Some("current workspace".to_owned());
@@ -2395,10 +2070,7 @@ mod tests {
     #[test]
     fn selection_survives_search_and_reports_hidden_count() {
         let mut app = App::new("trunk()".to_owned(), false);
-        app.snapshot = Some(snapshot(vec![
-            row("alpha", Integration::OutsideTrunk),
-            row("beta", Integration::InTrunk),
-        ]));
+        app.snapshot = Some(snapshot(vec![row("alpha", Integration::OutsideTrunk), row("beta", Integration::InTrunk)]));
         app.selected.extend(["alpha".to_owned(), "beta".to_owned()]);
         app.query = "alpha".to_owned();
         assert_eq!(app.visible_names(), vec!["alpha"]);
@@ -2412,35 +2084,25 @@ mod tests {
     #[test]
     fn refresh_drops_removed_selections_but_keeps_filtered_rows() {
         let mut app = App::new("trunk()".to_owned(), false);
-        app.selected
-            .extend(["alpha", "beta", "removed"].map(str::to_owned));
+        app.selected.extend(["alpha", "beta", "removed"].map(str::to_owned));
         app.query = "alpha".to_owned();
         let (tx, _rx) = mpsc::channel();
         app.apply_reply(
             WorkerReply::Capture {
                 generation: 1,
-                result: Ok(snapshot(vec![
-                    row("alpha", Integration::OutsideTrunk),
-                    row("beta", Integration::InTrunk),
-                ])),
+                result: Ok(snapshot(vec![row("alpha", Integration::OutsideTrunk), row("beta", Integration::InTrunk)])),
             },
             &tx,
         )
         .unwrap();
-        assert_eq!(
-            app.selected,
-            HashSet::from(["alpha".to_owned(), "beta".to_owned()])
-        );
+        assert_eq!(app.selected, HashSet::from(["alpha".to_owned(), "beta".to_owned()]));
         assert_eq!(app.hidden_selection_count(), 1);
     }
 
     #[test]
     fn select_all_marks_only_visible_rows() {
         let mut app = App::new("trunk()".to_owned(), false);
-        app.snapshot = Some(snapshot(vec![
-            row("alpha", Integration::OutsideTrunk),
-            row("beta", Integration::InTrunk),
-        ]));
+        app.snapshot = Some(snapshot(vec![row("alpha", Integration::OutsideTrunk), row("beta", Integration::InTrunk)]));
         app.query = "alpha".to_owned();
         app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
         assert_eq!(app.selected, HashSet::from(["alpha".to_owned()]));
@@ -2451,10 +2113,7 @@ mod tests {
         let mut integrated = row("integrated", Integration::OutsideTrunk);
         integrated.bookmark_integration = Integration::InTrunk;
         let mut app = App::new("trunk()".to_owned(), false);
-        app.snapshot = Some(snapshot(vec![
-            integrated,
-            row("outside", Integration::OutsideTrunk),
-        ]));
+        app.snapshot = Some(snapshot(vec![integrated, row("outside", Integration::OutsideTrunk)]));
         app.filter = Filter::Integrated;
         assert_eq!(app.visible_names(), vec!["integrated"]);
     }
@@ -2529,11 +2188,8 @@ mod tests {
     #[test]
     fn removal_results_keep_only_failed_and_skipped_names_selected() {
         let mut app = App::new("trunk()".to_owned(), false);
-        app.selected.extend(
-            ["failed", "skipped", "partial", "completed"]
-                .into_iter()
-                .map(str::to_owned),
-        );
+        app.selected
+            .extend(["failed", "skipped", "partial", "completed"].into_iter().map(str::to_owned));
         app.busy = Some(Busy::Remove(1));
         let (tx, _rx) = mpsc::channel();
         app.apply_reply(
@@ -2567,10 +2223,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            app.selected,
-            HashSet::from(["failed".to_owned(), "skipped".to_owned()])
-        );
+        assert_eq!(app.selected, HashSet::from(["failed".to_owned(), "skipped".to_owned()]));
     }
 
     #[test]
@@ -2631,11 +2284,7 @@ mod tests {
         let mut app = App::new("trunk()".to_owned(), false);
         terminal.draw(|frame| app.render(frame)).unwrap();
         let buffer = terminal.backend().buffer();
-        let rendered = buffer
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
         assert!(rendered.contains("Checking the current repository"));
     }
 
@@ -2646,13 +2295,7 @@ mod tests {
         let mut app = App::new("trunk()".to_owned(), false);
         app.snapshot = Some(snapshot(vec![row("feature-09", Integration::OutsideTrunk)]));
         terminal.draw(|frame| app.render(frame)).unwrap();
-        let rendered = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let rendered = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect::<String>();
         assert!(rendered.contains("feature-09"));
         assert!(rendered.contains("work on feature-09"));
     }
@@ -2671,9 +2314,11 @@ mod tests {
             let chars = needle.chars().collect::<Vec<_>>();
             for y in 0..buffer.area.height {
                 for x in 0..buffer.area.width.saturating_sub(chars.len() as u16) {
-                    if chars.iter().enumerate().all(|(index, character)| {
-                        buffer[(x + index as u16, y)].symbol() == character.to_string()
-                    }) {
+                    if chars
+                        .iter()
+                        .enumerate()
+                        .all(|(index, character)| buffer[(x + index as u16, y)].symbol() == character.to_string())
+                    {
                         return &buffer[(x, y)];
                     }
                 }

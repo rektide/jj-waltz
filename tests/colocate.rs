@@ -18,16 +18,8 @@ impl Fixture {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("repo");
         fs::create_dir(&root).unwrap();
-        fs::write(
-            temp.path().join("jj.toml"),
-            "[user]\nname='Colocation Test'\nemail='test@example.test'\n",
-        )
-        .unwrap();
-        fs::write(
-            temp.path().join("gitconfig"),
-            "[user]\nname=Colocation Test\nemail=test@example.test\n",
-        )
-        .unwrap();
+        fs::write(temp.path().join("jj.toml"), "[user]\nname='Colocation Test'\nemail='test@example.test'\n").unwrap();
+        fs::write(temp.path().join("gitconfig"), "[user]\nname=Colocation Test\nemail=test@example.test\n").unwrap();
         let f = Self { temp, root };
         if colocated {
             f.run("git", &f.root, &["init"]);
@@ -47,8 +39,7 @@ impl Fixture {
         let mut command = Command::new(program);
         command.current_dir(cwd);
         for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("JJ_") || key.to_string_lossy().starts_with("GIT_")
-            {
+            if key.to_string_lossy().starts_with("JJ_") || key.to_string_lossy().starts_with("GIT_") {
                 command.env_remove(key);
             }
         }
@@ -64,11 +55,7 @@ impl Fixture {
     }
     fn run(&self, program: &str, cwd: &Path, args: &[&str]) -> Output {
         let output = self.command(program, cwd).args(args).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{program} {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&output.stderr));
         output
     }
     fn jw(&self) -> Command {
@@ -78,12 +65,7 @@ impl Fixture {
         self.root.with_extension(name)
     }
     fn supports(&self) -> bool {
-        String::from_utf8_lossy(
-            &self
-                .run("jj", &self.root, &["workspace", "add", "--help"])
-                .stdout,
-        )
-        .contains("--colocate")
+        String::from_utf8_lossy(&self.run("jj", &self.root, &["workspace", "add", "--help"]).stdout).contains("--colocate")
     }
     fn supports_removal(&self) -> bool {
         self.command("jj", &self.root)
@@ -100,10 +82,7 @@ impl Fixture {
     }
     fn metadata_root(&self) -> PathBuf {
         let out = self.run("jj", &self.root, &["config", "path", "--repo"]);
-        PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
-            .parent()
-            .unwrap()
-            .join("jj-waltz")
+        PathBuf::from(String::from_utf8(out.stdout).unwrap().trim()).parent().unwrap().join("jj-waltz")
     }
     fn record(&self, name: &str) -> (PathBuf, serde_json::Value) {
         let out = self.run("jj", &self.root, &["config", "path", "--repo"]);
@@ -111,8 +90,7 @@ impl Fixture {
         for entry in fs::read_dir(config.parent().unwrap().join("jj-waltz/workspaces")).unwrap() {
             let path = entry.unwrap().path();
             if path.extension().is_some_and(|ext| ext == "json") {
-                let value: serde_json::Value =
-                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
                 if value["metadata"]["workspace_name"] == name {
                     return (path, value);
                 }
@@ -121,23 +99,10 @@ impl Fixture {
         panic!("no record for {name}")
     }
     fn registrations(&self) -> Vec<u8> {
-        self.run(
-            "git",
-            &self.root,
-            &["worktree", "list", "--porcelain", "-z"],
-        )
-        .stdout
+        self.run("git", &self.root, &["worktree", "list", "--porcelain", "-z"]).stdout
     }
     fn names(&self) -> String {
-        String::from_utf8(
-            self.run(
-                "jj",
-                &self.root,
-                &["workspace", "list", "-T", r#"name ++ "\n""#],
-            )
-            .stdout,
-        )
-        .unwrap()
+        String::from_utf8(self.run("jj", &self.root, &["workspace", "list", "-T", r#"name ++ "\n""#]).stdout).unwrap()
     }
     fn stale_registration(&self) -> PathBuf {
         #[cfg(unix)]
@@ -148,17 +113,7 @@ impl Fixture {
     }
     fn stale_registration_named(&self, name: &str) -> PathBuf {
         let path = self.temp.path().join(name);
-        self.run(
-            "git",
-            &self.root,
-            &[
-                "worktree",
-                "add",
-                "--detach",
-                path.to_str().unwrap(),
-                "HEAD",
-            ],
-        );
+        self.run("git", &self.root, &["worktree", "add", "--detach", path.to_str().unwrap(), "HEAD"]);
         let out = self.run("git", &path, &["rev-parse", "--absolute-git-dir"]);
         let admin = PathBuf::from(String::from_utf8(out.stdout).unwrap().trim());
         fs::remove_dir_all(path).unwrap();
@@ -197,17 +152,9 @@ impl Fixture {
     /// version-manager-style shims. The interception directory is never part
     /// of it.
     #[cfg(unix)]
-    fn with_shim_delegating(
-        &self,
-        command: &mut Command,
-        script: &str,
-        delegated: std::ffi::OsString,
-    ) {
+    fn with_shim_delegating(&self, command: &mut Command, script: &str, delegated: std::ffi::OsString) {
         let bin = self.shim(script);
-        let real = std::env::split_paths(&delegated)
-            .map(|p| p.join("jj"))
-            .find(|p| p.is_file())
-            .unwrap();
+        let real = std::env::split_paths(&delegated).map(|p| p.join("jj")).find(|p| p.is_file()).unwrap();
         let launcher = self.executable(
             "real",
             "jj",
@@ -223,8 +170,7 @@ exec "$JW_REAL_JJ_EXE" "$@"
             .env("JW_REAL_JJ_EXE", real)
             .env(
                 "PATH",
-                std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&delegated)))
-                    .unwrap(),
+                std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&delegated))).unwrap(),
             );
     }
 }
@@ -232,10 +178,7 @@ exec "$JW_REAL_JJ_EXE" "$@"
 #[test]
 fn default_and_cli_config_precedence_and_existing_switch() {
     let f = Fixture::new();
-    f.jw()
-        .args(["add", "plain", "--no-colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "plain", "--no-colocate"]).assert().success();
     assert!(!f.path("plain").join(".git").exists());
     if !f.supports() {
         return;
@@ -243,48 +186,27 @@ fn default_and_cli_config_precedence_and_existing_switch() {
     f.config("[workspace]\ncolocate=true\n");
     f.jw().args(["add", "configured"]).assert().success();
     assert!(f.path("configured").join(".git").is_file());
-    f.jw()
-        .args(["add", "off", "--no-colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "off", "--no-colocate"]).assert().success();
     assert!(!f.path("off").join(".git").exists());
-    f.jw()
-        .args(["switch", "configured-switch", "--print-path"])
-        .assert()
-        .success();
+    f.jw().args(["switch", "configured-switch", "--print-path"]).assert().success();
     assert!(f.path("configured-switch").join(".git").is_file());
-    f.jw()
-        .args(["switch", "switch-off", "--no-colocate", "--print-path"])
-        .assert()
-        .success();
+    f.jw().args(["switch", "switch-off", "--no-colocate", "--print-path"]).assert().success();
     assert!(!f.path("switch-off").join(".git").exists());
     f.config("[workspace]\ncolocate=false\n");
-    f.jw()
-        .args(["switch", "first", "last", "--colocate", "--print-path"])
-        .assert()
-        .success();
+    f.jw().args(["switch", "first", "last", "--colocate", "--print-path"]).assert().success();
     for name in ["first", "last"] {
         let path = f.path(name);
         assert!(path.join(".git").is_file());
-        assert_eq!(
-            f.run("git", &path, &["show", "HEAD:tracked"]).stdout,
-            b"base\n"
-        );
+        assert_eq!(f.run("git", &path, &["show", "HEAD:tracked"]).stdout, b"base\n");
         let (_, record) = f.record(name);
         assert_eq!(record["schema_version"], 3);
         assert!(record["metadata"].get("external_owner").is_none());
         assert!(record["metadata"]["owned_git_worktree"].is_object());
     }
     // Existing workspaces are never converted, and do not need capability support.
-    f.jw()
-        .args(["switch", "plain", "--colocate", "--print-path"])
-        .assert()
-        .success();
+    f.jw().args(["switch", "plain", "--colocate", "--print-path"]).assert().success();
     assert!(!f.path("plain").join(".git").exists());
-    f.jw()
-        .args(["add", "conflict", "--colocate", "--no-colocate"])
-        .assert()
-        .failure();
+    f.jw().args(["add", "conflict", "--colocate", "--no-colocate"]).assert().failure();
     f.config("[workspace]\ncopy_on_write=true\n");
     f.jw().args(["add", "cow", "--colocate"]).assert().success();
     assert!(f.path("cow").join(".git").is_file());
@@ -297,10 +219,7 @@ fn default_creation_stays_jj_only_from_both_kinds_of_sibling() {
         let expected = false;
         f.jw().args(["add", "from-primary"]).assert().success();
         assert_eq!(f.path("from-primary").join(".git").is_file(), expected);
-        f.jw()
-            .args(["add", "jj-only", "--no-colocate"])
-            .assert()
-            .success();
+        f.jw().args(["add", "jj-only", "--no-colocate"]).assert().success();
         f.jw()
             .current_dir(f.path("jj-only"))
             .args(["switch", "from-jj-only", "--print-path"])
@@ -308,15 +227,8 @@ fn default_creation_stays_jj_only_from_both_kinds_of_sibling() {
             .success();
         assert_eq!(f.path("from-jj-only").join(".git").is_file(), expected);
         if f.supports() {
-            f.jw()
-                .args(["add", "git-sibling", "--colocate"])
-                .assert()
-                .success();
-            f.jw()
-                .current_dir(f.path("git-sibling"))
-                .args(["add", "from-git-sibling"])
-                .assert()
-                .success();
+            f.jw().args(["add", "git-sibling", "--colocate"]).assert().success();
+            f.jw().current_dir(f.path("git-sibling")).args(["add", "from-git-sibling"]).assert().success();
             assert_eq!(f.path("from-git-sibling").join(".git").is_file(), expected);
         }
         assert_eq!(f.root.join(".git").exists(), primary_colocated);
@@ -327,18 +239,10 @@ fn default_creation_stays_jj_only_from_both_kinds_of_sibling() {
 #[test]
 fn auto_colocation_respects_effective_jj_setting_and_explicit_jw_false() {
     let f = Fixture::new();
-    f.run(
-        "jj",
-        &f.root,
-        &["config", "set", "--repo", "git.colocate", "false"],
-    );
+    f.run("jj", &f.root, &["config", "set", "--repo", "git.colocate", "false"]);
     f.jw().args(["add", "jj-disabled"]).assert().success();
     assert!(!f.path("jj-disabled").join(".git").exists());
-    f.jw()
-        .current_dir(f.path("jj-disabled"))
-        .args(["add", "sibling-disabled"])
-        .assert()
-        .success();
+    f.jw().current_dir(f.path("jj-disabled")).args(["add", "sibling-disabled"]).assert().success();
     assert!(!f.path("sibling-disabled").join(".git").exists());
     f.config("[workspace]\ncolocate=true\n");
     if f.supports() {
@@ -348,11 +252,7 @@ fn auto_colocation_respects_effective_jj_setting_and_explicit_jw_false() {
         f.jw().args(["add", "jw-enabled"]).assert().failure();
         assert!(!f.path("jw-enabled").exists());
     }
-    f.run(
-        "jj",
-        &f.root,
-        &["config", "set", "--repo", "git.colocate", "true"],
-    );
+    f.run("jj", &f.root, &["config", "set", "--repo", "git.colocate", "true"]);
     f.config("[workspace]\ncolocate=false\n");
     f.jw().args(["add", "jw-disabled"]).assert().success();
     assert!(!f.path("jw-disabled").join(".git").exists());
@@ -388,14 +288,12 @@ fn auto_colocation_keeps_jj_only_when_primary_setting_is_unreadable() {
     if !f.supports() {
         return;
     }
-    for (name, response) in [
-        ("missing-setting", "exit 1"),
-        ("invalid-setting", "echo invalid; exit 0"),
-    ] {
+    for (name, response) in [("missing-setting", "exit 1"), ("invalid-setting", "echo invalid; exit 0")] {
         let mut command = f.jw();
-        f.with_shim(&mut command, &format!(
-            "#!/bin/sh\ncase \"$*\" in *\"config get git.colocate\"*) {response};; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n"
-        ));
+        f.with_shim(
+            &mut command,
+            &format!("#!/bin/sh\ncase \"$*\" in *\"config get git.colocate\"*) {response};; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n"),
+        );
         command.args(["add", name]).assert().success();
         assert!(!f.path(name).join(".git").exists());
     }
@@ -438,11 +336,7 @@ exit 127
     // The resolved end of delegation: the "real" jj a version manager would
     // finally hand off to.
     let stub = f.executable("stub-bin", "jj", "#!/bin/sh\necho 'jj 0.0.0-stub'\n");
-    let delegated = std::env::join_paths([
-        shims.parent().unwrap().to_path_buf(),
-        stub.parent().unwrap().to_path_buf(),
-    ])
-    .unwrap();
+    let delegated = std::env::join_paths([shims.parent().unwrap().to_path_buf(), stub.parent().unwrap().to_path_buf()]).unwrap();
     let mut cmd = f.command("jj", &f.root);
     f.with_shim_delegating(
         &mut cmd,
@@ -474,15 +368,8 @@ exit 127
 #[test]
 fn auto_colocation_keeps_jj_only_without_a_registered_primary() {
     let f = Fixture::new();
-    f.jw()
-        .args(["add", "sibling", "--no-colocate"])
-        .assert()
-        .success();
-    f.run(
-        "jj",
-        &f.path("sibling"),
-        &["workspace", "forget", "default"],
-    );
+    f.jw().args(["add", "sibling", "--no-colocate"]).assert().success();
+    f.run("jj", &f.path("sibling"), &["workspace", "forget", "default"]);
     f.jw()
         .current_dir(f.path("sibling"))
         .args(["add", "unverified-primary", "--no-links"])
@@ -496,24 +383,10 @@ fn auto_colocation_keeps_jj_only_without_a_registered_primary() {
 fn git_only_sibling_stays_outside_workspace_lifecycle() {
     let f = Fixture::new();
     let external = f.temp.path().join("git-only");
-    f.run(
-        "git",
-        &f.root,
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            external.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
+    f.run("git", &f.root, &["worktree", "add", "--detach", external.to_str().unwrap(), "HEAD"]);
     let registrations = f.registrations();
     let names = f.names();
-    f.jw()
-        .current_dir(&external)
-        .args(["add", "unregistered"])
-        .assert()
-        .failure();
+    f.jw().current_dir(&external).args(["add", "unregistered"]).assert().failure();
     assert_eq!(f.registrations(), registrations);
     assert_eq!(f.names(), names);
     assert!(!f.path("unregistered").exists());
@@ -526,16 +399,9 @@ fn auto_colocation_keeps_cow_usable_and_explicit_conflicts_actionable() {
     f.config("[workspace]\ncopy_on_write=true\n");
     f.jw().args(["add", "global-cow"]).assert().success();
     assert!(!f.path("global-cow").join(".git").exists());
-    f.jw()
-        .current_dir(f.path("global-cow"))
-        .args(["add", "sibling-cow"])
-        .assert()
-        .success();
+    f.jw().current_dir(f.path("global-cow")).args(["add", "sibling-cow"]).assert().success();
     assert!(!f.path("sibling-cow").join(".git").exists());
-    f.jw()
-        .args(["add", "no-cow", "--no-cow"])
-        .assert()
-        .success();
+    f.jw().args(["add", "no-cow", "--no-cow"]).assert().success();
     assert!(!f.path("no-cow").join(".git").exists());
     let names = f.names();
     let registrations = f.registrations();
@@ -546,17 +412,12 @@ fn auto_colocation_keeps_cow_usable_and_explicit_conflicts_actionable() {
             .args(flags)
             .assert()
             .failure()
-            .stderr(predicate::str::contains(
-                "cannot be combined; use --no-cow or --no-colocate",
-            ));
+            .stderr(predicate::str::contains("cannot be combined; use --no-cow or --no-colocate"));
         assert!(!f.path("conflict").exists());
         assert_eq!(f.names(), names);
         assert_eq!(f.registrations(), registrations);
     }
-    f.jw()
-        .args(["add", "overridden", "--no-colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "overridden", "--no-colocate"]).assert().success();
     assert!(!f.path("overridden").join(".git").exists());
     f.config("[workspace]\ncolocate=true\n");
     f.jw().args(["add", "cli-cow", "--cow"]).assert().success();
@@ -575,28 +436,18 @@ fn unsupported_colocation_fails_before_mutation() {
         .args(["add", "unsupported", "--colocate"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "upgrade to JJ 0.46+ or use --no-colocate",
-        ));
+        .stderr(predicate::str::contains("upgrade to JJ 0.46+ or use --no-colocate"));
     f.config("[workspace]\ncolocate=true\n");
     f.jw()
         .args(["switch", "unsupported", "--print-path"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "upgrade to JJ 0.46+ or use --no-colocate",
-        ));
+        .stderr(predicate::str::contains("upgrade to JJ 0.46+ or use --no-colocate"));
     assert_eq!(f.names(), before);
     assert_eq!(f.registrations(), registrations);
     assert!(!f.path("unsupported").exists());
-    f.jw()
-        .args(["add", "override", "--no-colocate"])
-        .assert()
-        .success();
-    f.jw()
-        .args(["switch", "override", "--colocate", "--print-path"])
-        .assert()
-        .success();
+    f.jw().args(["add", "override", "--no-colocate"]).assert().success();
+    f.jw().args(["switch", "override", "--colocate", "--print-path"]).assert().success();
 }
 
 #[test]
@@ -609,26 +460,12 @@ fn owned_cleanup_removes_only_target_and_keep_dir_preserves_files() {
     let locked = f.stale_registration_named("locked stale checkout");
     fs::write(locked.join("locked"), "external owner lock\n").unwrap();
     let external = f.temp.path().join("external");
-    f.run(
-        "git",
-        &f.root,
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            external.to_str().unwrap(),
-            "HEAD",
-        ],
-    );
+    f.run("git", &f.root, &["worktree", "add", "--detach", external.to_str().unwrap(), "HEAD"]);
     let before = f.registrations();
     for (name, keep_dir) in [("removed", false), ("kept", true), ("missing", false)] {
         f.jw().args(["add", name, "--colocate"]).assert().success();
         let (record_path, record) = f.record(name);
-        let admin = PathBuf::from(
-            record["metadata"]["owned_git_worktree"]["topology"]["git_dir"]
-                .as_str()
-                .unwrap(),
-        );
+        let admin = PathBuf::from(record["metadata"]["owned_git_worktree"]["topology"]["git_dir"].as_str().unwrap());
         if name == "missing" {
             fs::remove_dir_all(f.path(name)).unwrap();
         }
@@ -649,10 +486,7 @@ fn owned_cleanup_removes_only_target_and_keep_dir_preserves_files() {
             assert!(!f.path(name).exists());
         }
         assert!(stale.exists());
-        assert_eq!(
-            fs::read(locked.join("locked")).unwrap(),
-            b"external owner lock\n"
-        );
+        assert_eq!(fs::read(locked.join("locked")).unwrap(), b"external owner lock\n");
         assert!(external.join(".git").exists());
     }
 }
@@ -665,25 +499,11 @@ fn doctor_validates_live_owned_provenance_without_mutating_repository() {
             return;
         }
         f.config("[trunk]\nrevset='root()'\n");
-        f.jw()
-            .args(["add", "owned", "--colocate"])
-            .assert()
-            .success();
+        f.jw().args(["add", "owned", "--colocate"]).assert().success();
         let (record_path, record) = f.record("owned");
         let record_bytes = fs::read(&record_path).unwrap();
-        let admin = PathBuf::from(
-            record["metadata"]["owned_git_worktree"]["topology"]["git_dir"]
-                .as_str()
-                .unwrap(),
-        );
-        let healthy = f
-            .jw()
-            .args(["doctor", "--format=json"])
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone();
+        let admin = PathBuf::from(record["metadata"]["owned_git_worktree"]["topology"]["git_dir"].as_str().unwrap());
+        let healthy = f.jw().args(["doctor", "--format=json"]).assert().success().get_output().stdout.clone();
         let healthy: serde_json::Value = serde_json::from_slice(&healthy).unwrap();
         assert!(
             healthy["diagnostics"]
@@ -693,11 +513,7 @@ fn doctor_validates_live_owned_provenance_without_mutating_repository() {
                 .any(|d| d["code"] == "metadata-consistency" && d["state"] == "passed")
         );
         match damage {
-            "gitlink" => fs::write(
-                f.path("owned").join(".git"),
-                format!("gitdir: {}\n", f.root.join(".git").display()),
-            )
-            .unwrap(),
+            "gitlink" => fs::write(f.path("owned").join(".git"), format!("gitdir: {}\n", f.root.join(".git").display())).unwrap(),
             "marker" => fs::write(admin.join("jw-owner"), "damaged").unwrap(),
             "registration" => {
                 fs::rename(&admin, admin.with_extension("saved")).unwrap();
@@ -705,41 +521,20 @@ fn doctor_validates_live_owned_provenance_without_mutating_repository() {
             }
             _ => unreachable!(),
         }
-        let operation_args = [
-            "--ignore-working-copy",
-            "op",
-            "log",
-            "--no-graph",
-            "-T",
-            "id ++ '\\n'",
-        ];
+        let operation_args = ["--ignore-working-copy", "op", "log", "--no-graph", "-T", "id ++ '\\n'"];
         let operations = f.run("jj", &f.root, &operation_args).stdout;
-        let output = f
-            .jw()
-            .args(["doctor", "--format=json"])
-            .assert()
-            .failure()
-            .get_output()
-            .stdout
-            .clone();
+        let output = f.jw().args(["doctor", "--format=json"]).assert().failure().get_output().stdout.clone();
         let report: serde_json::Value = serde_json::from_slice(&output).unwrap();
         let diagnostics = report["diagnostics"].as_array().unwrap();
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d["code"] == "metadata-consistency"
-                    && d["subject"] == "owned"
-                    && d["state"] == "failed"
-                    && d["message"]
-                        .as_str()
-                        .unwrap()
-                        .contains("provenance is invalid")),
+            diagnostics.iter().any(|d| d["code"] == "metadata-consistency"
+                && d["subject"] == "owned"
+                && d["state"] == "failed"
+                && d["message"].as_str().unwrap().contains("provenance is invalid")),
             "{damage}: {report}"
         );
         assert!(
-            !diagnostics
-                .iter()
-                .any(|d| d["code"] == "metadata-consistency" && d["state"] == "passed"),
+            !diagnostics.iter().any(|d| d["code"] == "metadata-consistency" && d["state"] == "passed"),
             "{damage}: {report}"
         );
         assert_eq!(f.run("jj", &f.root, &operation_args).stdout, operations);
@@ -755,24 +550,13 @@ fn replaced_topology_or_marker_and_missing_metadata_are_protected() {
     if !f.supports() {
         return;
     }
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let path = f.path("owned");
     let (record_path, record) = f.record("owned");
-    let admin = PathBuf::from(
-        record["metadata"]["owned_git_worktree"]["topology"]["git_dir"]
-            .as_str()
-            .unwrap(),
-    );
+    let admin = PathBuf::from(record["metadata"]["owned_git_worktree"]["topology"]["git_dir"].as_str().unwrap());
     let before = f.registrations();
     let link = fs::read(path.join(".git")).unwrap();
-    fs::write(
-        path.join(".git"),
-        format!("gitdir: {}\n", f.root.join(".git").display()),
-    )
-    .unwrap();
+    fs::write(path.join(".git"), format!("gitdir: {}\n", f.root.join(".git").display())).unwrap();
     f.jw()
         .args(["remove", "owned", "--keep-dir"])
         .assert()
@@ -803,9 +587,7 @@ fn replaced_topology_or_marker_and_missing_metadata_are_protected() {
         .args(["prune"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "external Git worktree registration",
-        ));
+        .stderr(predicate::str::contains("external Git worktree registration"));
     assert!(admin.exists());
 }
 
@@ -820,14 +602,7 @@ fn creation_failures_roll_back_owned_links_and_leave_unrelated_registrations() {
     let before = f.registrations();
     // Fail before add, after add, capturing the operation, creating the bookmark,
     // recording its legacy marker, and persisting lifecycle metadata.
-    for stage in [
-        "before-add",
-        "after-add",
-        "operation",
-        "bookmark",
-        "marker",
-        "metadata",
-    ] {
+    for stage in ["before-add", "after-add", "operation", "bookmark", "marker", "metadata"] {
         let script = r#"#!/bin/sh
 case "$*" in
   *"workspace add"*)
@@ -852,13 +627,7 @@ exec "$JW_REAL_JJ" "$@"
         cmd.env("JW_FAIL_STAGE", stage)
             .env("JW_FAIL_FILE", f.temp.path().join("fail"))
             .env("JW_METADATA_ROOT", f.metadata_root())
-            .args([
-                "add",
-                stage,
-                "--colocate",
-                "--bookmark",
-                &format!("wip/{stage}"),
-            ])
+            .args(["add", stage, "--colocate", "--bookmark", &format!("wip/{stage}")])
             .assert()
             .failure();
         assert!(!f.path(stage).exists(), "{stage} checkout leaked");
@@ -910,10 +679,7 @@ fn link_failure_rolls_back_created_git_worktrees() {
     let stale = f.stale_registration();
     let before = f.registrations();
     fs::write(f.root.join(".jwlinks.toml"), "not valid toml [").unwrap();
-    f.jw()
-        .args(["switch", "linkfail", "--colocate", "--print-path"])
-        .assert()
-        .failure();
+    f.jw().args(["switch", "linkfail", "--colocate", "--print-path"]).assert().failure();
     assert!(!f.path("linkfail").exists());
     assert_eq!(f.registrations(), before);
     assert!(stale.exists());
@@ -926,18 +692,16 @@ fn forget_failure_restores_gitlink_and_retains_record() {
     if !f.supports() {
         return;
     }
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let link = fs::read(f.path("owned").join(".git")).unwrap();
     let (record, _) = f.record("owned");
     let registrations = f.registrations();
     let mut cmd = f.jw();
-    f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) echo injected >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
-    cmd.args(["remove", "owned", "--keep-dir"])
-        .assert()
-        .failure();
+    f.with_shim(
+        &mut cmd,
+        "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) echo injected >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n",
+    );
+    cmd.args(["remove", "owned", "--keep-dir"]).assert().failure();
     assert_eq!(fs::read(f.path("owned").join(".git")).unwrap(), link);
     assert!(record.exists());
     assert_eq!(f.registrations(), registrations);
@@ -951,17 +715,10 @@ fn unverifiable_forget_retains_detached_link_and_metadata() {
         return;
     }
     let stale = f.stale_registration();
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let (record, value) = f.record("owned");
     let link = fs::read(f.path("owned").join(".git")).unwrap();
-    let admin = PathBuf::from(
-        value["metadata"]["owned_git_worktree"]["topology"]["git_dir"]
-            .as_str()
-            .unwrap(),
-    );
+    let admin = PathBuf::from(value["metadata"]["owned_git_worktree"]["topology"]["git_dir"].as_str().unwrap());
     let mut cmd = f.jw();
     cmd.env("JW_FORGOTTEN", f.temp.path().join("forgotten"));
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; touch \"$JW_FORGOTTEN\"; exit 0;; *\"workspace list\"*) if test -f \"$JW_FORGOTTEN\"; then echo injected-list-error >&2; exit 1; fi;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
@@ -971,10 +728,7 @@ fn unverifiable_forget_retains_detached_link_and_metadata() {
         .stderr(predicate::str::contains("detached Git link retained at"));
     assert!(!f.names().lines().any(|name| name == "owned"));
     assert!(!f.path("owned").join(".git").exists());
-    assert_eq!(
-        fs::read(f.path("owned").join(".jj/jw-detached-git")).unwrap(),
-        link
-    );
+    assert_eq!(fs::read(f.path("owned").join(".jj/jw-detached-git")).unwrap(), link);
     assert!(record.exists());
     assert!(admin.exists());
     assert!(stale.exists());
@@ -989,19 +743,14 @@ fn nonzero_status_after_forget_is_verified_and_cleanup_completes() {
     }
     let stale = f.stale_registration();
     let before = f.registrations();
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let (record, _) = f.record("owned");
     let mut cmd = f.jw();
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace forget\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; echo injected-after-forget >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
     cmd.args(["remove", "owned", "--keep-dir"])
         .assert()
         .success()
-        .stderr(predicate::str::contains(
-            "verified workspace owned was forgotten",
-        ));
+        .stderr(predicate::str::contains("verified workspace owned was forgotten"));
     assert!(f.path("owned").is_dir());
     assert!(!f.path("owned").join(".git").exists());
     assert!(!record.exists());
@@ -1017,10 +766,7 @@ fn prune_owned_missing_checkout_preserves_unrelated_stale_registration() {
     }
     let stale = f.stale_registration();
     let before = f.registrations();
-    f.jw()
-        .args(["add", "gone", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "gone", "--colocate"]).assert().success();
     let (record, _) = f.record("gone");
     fs::remove_dir_all(f.path("gone")).unwrap();
     f.jw().args(["prune"]).assert().success();
@@ -1038,23 +784,10 @@ fn externally_created_colocated_workspace_stays_protected_after_adoption() {
     f.run(
         "jj",
         &f.root,
-        &[
-            "workspace",
-            "add",
-            "--colocate",
-            "--name",
-            "foreign",
-            f.path("foreign").to_str().unwrap(),
-        ],
+        &["workspace", "add", "--colocate", "--name", "foreign", f.path("foreign").to_str().unwrap()],
     );
     f.jw()
-        .args([
-            "adopt",
-            "foreign",
-            "--base",
-            "parents(foreign@)",
-            "--no-bookmark",
-        ])
+        .args(["adopt", "foreign", "--base", "parents(foreign@)", "--no-bookmark"])
         .assert()
         .success();
     let (record_path, record) = f.record("foreign");
@@ -1067,20 +800,14 @@ fn externally_created_colocated_workspace_stays_protected_after_adoption() {
         if keep {
             cmd.arg("--keep-dir");
         }
-        cmd.assert()
-            .failure()
-            .stderr(predicate::str::contains("externally owned"));
+        cmd.assert().failure().stderr(predicate::str::contains("externally owned"));
         assert!(f.path("foreign").join(".git").exists());
         assert!(record_path.exists());
         assert_eq!(f.registrations(), before);
     }
     fs::remove_dir_all(f.path("foreign")).unwrap();
     let stale_before = f.registrations();
-    f.jw()
-        .args(["prune"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("externally owned"));
+    f.jw().args(["prune"]).assert().failure().stderr(predicate::str::contains("externally owned"));
     assert_eq!(f.registrations(), stale_before);
 }
 
@@ -1090,22 +817,11 @@ fn locked_owned_registration_is_preserved() {
     if !f.supports() {
         return;
     }
-    f.jw()
-        .args(["add", "locked", "--colocate"])
-        .assert()
-        .success();
-    f.run(
-        "git",
-        &f.root,
-        &["worktree", "lock", f.path("locked").to_str().unwrap()],
-    );
+    f.jw().args(["add", "locked", "--colocate"]).assert().success();
+    f.run("git", &f.root, &["worktree", "lock", f.path("locked").to_str().unwrap()]);
     let before = f.registrations();
     let (record, _) = f.record("locked");
-    f.jw()
-        .args(["remove", "locked"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("locked"));
+    f.jw().args(["remove", "locked"]).assert().failure().stderr(predicate::str::contains("locked"));
     assert!(f.path("locked").join(".git").exists());
     assert!(record.exists());
     assert_eq!(f.registrations(), before);
@@ -1124,15 +840,18 @@ fn capability_probe_precedes_creation_even_on_a_new_version() {
             "[workspace]\ncolocate=false\n"
         });
         let mut cmd = f.jw();
-        f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace add\"*--help*) \"$JW_REAL_JJ\" \"$@\" | sed '/--colocate/d'; exit $?;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
+        f.with_shim(
+            &mut cmd,
+            "#!/bin/sh\ncase \"$*\" in *\"workspace add\"*--help*) \"$JW_REAL_JJ\" \"$@\" | sed '/--colocate/d'; exit $?;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n",
+        );
         if configured {
             cmd.args(["switch", "unsupported", "--print-path"]);
         } else {
             cmd.args(["add", "unsupported", "--colocate"]);
         }
-        cmd.assert().failure().stderr(predicate::str::contains(
-            "upgrade to JJ 0.46+ or use --no-colocate",
-        ));
+        cmd.assert()
+            .failure()
+            .stderr(predicate::str::contains("upgrade to JJ 0.46+ or use --no-colocate"));
         assert!(!f.path("unsupported").exists());
         assert_eq!(f.registrations(), before);
         assert_eq!(f.names(), names);
@@ -1159,10 +878,7 @@ fn non_git_backend_rejects_colocation_before_creation() {
         .failure()
         .stderr(predicate::str::contains("Git-backed"));
     assert!(!local.with_extension("unsupported").exists());
-    f.command(env!("CARGO_BIN_EXE_jw"), &local)
-        .args(["add", "automatic"])
-        .assert()
-        .success();
+    f.command(env!("CARGO_BIN_EXE_jw"), &local).args(["add", "automatic"]).assert().success();
     assert!(!local.with_extension("automatic").join(".git").exists());
 }
 
@@ -1173,19 +889,13 @@ fn keep_dir_can_disconnect_the_current_owned_workspace() {
         return;
     }
     let before = f.registrations();
-    f.jw()
-        .args(["add", "current", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "current", "--colocate"]).assert().success();
     let (record, _) = f.record("current");
     f.command(env!("CARGO_BIN_EXE_jw"), &f.path("current"))
         .args(["remove", "current", "--keep-dir"])
         .assert()
         .success();
-    assert_eq!(
-        fs::read(f.path("current").join("tracked")).unwrap(),
-        b"base\n"
-    );
+    assert_eq!(fs::read(f.path("current").join("tracked")).unwrap(), b"base\n");
     assert!(!f.path("current").join(".git").exists());
     assert!(!record.exists());
     assert_eq!(f.registrations(), before);
@@ -1199,29 +909,13 @@ fn native_removal_snapshots_dirty_target_before_deleting_it() {
             continue;
         }
         f.jw()
-            .args([
-                "add",
-                "dirty",
-                if colocated {
-                    "--colocate"
-                } else {
-                    "--no-colocate"
-                },
-            ])
+            .args(["add", "dirty", if colocated { "--colocate" } else { "--no-colocate" }])
             .assert()
             .success();
         let change = f.run(
             "jj",
             &f.root,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "dirty@",
-                "-T",
-                "change_id",
-            ],
+            &["--ignore-working-copy", "log", "--no-graph", "-r", "dirty@", "-T", "change_id"],
         );
         let change = String::from_utf8(change.stdout).unwrap();
         fs::write(f.path("dirty").join("tracked"), "unsaved target work\n").unwrap();
@@ -1232,15 +926,10 @@ fn native_removal_snapshots_dirty_target_before_deleting_it() {
         f.jw().args(["remove", "dirty"]).assert().success();
         assert!(!f.path("dirty").exists());
         assert_eq!(
-            f.run("jj", &f.root, &["file", "show", "-r", &change, "tracked"])
-                .stdout,
+            f.run("jj", &f.root, &["file", "show", "-r", &change, "tracked"]).stdout,
             b"unsaved target work\n"
         );
-        assert_eq!(
-            f.run("jj", &f.root, &["file", "show", "-r", &change, "new-file"])
-                .stdout,
-            b"new target work\n"
-        );
+        assert_eq!(f.run("jj", &f.root, &["file", "show", "-r", &change, "new-file"]).stdout, b"new target work\n");
         assert!(
             !f.command("jj", &f.root)
                 .args(["file", "show", "-r", &change, "ignored"])
@@ -1258,10 +947,7 @@ fn native_removal_of_stale_target_fails_without_lifecycle_cleanup() {
     if !f.supports_removal() {
         return;
     }
-    f.jw()
-        .args(["add", "stale", "--colocate", "--bookmark", "wip/stale"])
-        .assert()
-        .success();
+    f.jw().args(["add", "stale", "--colocate", "--bookmark", "wip/stale"]).assert().success();
     let link = fs::read(f.path("stale").join(".git")).unwrap();
     let (record, _) = f.record("stale");
     let metadata = fs::read(&record).unwrap();
@@ -1276,10 +962,7 @@ fn native_removal_of_stale_target_fails_without_lifecycle_cleanup() {
         .failure()
         .stderr(predicate::str::contains("stale"));
     assert!(f.names().lines().any(|name| name == "stale"));
-    assert_eq!(
-        fs::read(f.path("stale").join("tracked")).unwrap(),
-        b"unsaved stale target\n"
-    );
+    assert_eq!(fs::read(f.path("stale").join("tracked")).unwrap(), b"unsaved stale target\n");
     assert_eq!(fs::read(f.path("stale").join(".git")).unwrap(), link);
     assert_eq!(fs::read(record).unwrap(), metadata);
     assert_eq!(f.registrations(), registrations);
@@ -1295,10 +978,7 @@ fn native_removal_is_capability_based_and_never_retries_after_mutation() {
     }
     let stale = f.stale_registration();
     let before = f.registrations();
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let (record, _) = f.record("owned");
     let mut cmd = f.jw();
     // A build with an older version string can still advertise native removal.
@@ -1306,9 +986,7 @@ fn native_removal_is_capability_based_and_never_retries_after_mutation() {
     cmd.args(["remove", "owned"])
         .assert()
         .success()
-        .stderr(predicate::str::contains(
-            "verified workspace owned was forgotten",
-        ));
+        .stderr(predicate::str::contains("verified workspace owned was forgotten"));
     assert!(!f.path("owned").exists());
     assert!(!record.exists());
     assert_eq!(f.registrations(), before);
@@ -1320,10 +998,7 @@ fn native_removal_is_capability_based_and_never_retries_after_mutation() {
 fn unsupported_native_removal_falls_back_but_probe_errors_fail_before_mutation() {
     for probe_error in [false, true] {
         let f = Fixture::new();
-        f.jw()
-            .args(["add", "old", "--no-colocate"])
-            .assert()
-            .success();
+        f.jw().args(["add", "old", "--no-colocate"]).assert().success();
         let mut cmd = f.jw();
         let script = if probe_error {
             "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*--help*) echo cannot-read-config >&2; exit 1;; *\"workspace remove\"*|*\"workspace forget\"*) echo forbidden-mutation >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n"
@@ -1333,9 +1008,7 @@ fn unsupported_native_removal_falls_back_but_probe_errors_fail_before_mutation()
         f.with_shim(&mut cmd, script);
         cmd.args(["remove", "old"]);
         if probe_error {
-            cmd.assert().failure().stderr(predicate::str::contains(
-                "cannot probe native workspace removal",
-            ));
+            cmd.assert().failure().stderr(predicate::str::contains("cannot probe native workspace removal"));
             assert!(f.path("old").is_dir());
             assert!(f.names().lines().any(|name| name == "old"));
         } else {
@@ -1353,16 +1026,7 @@ fn native_success_with_remaining_directory_reports_partial_without_retry() {
     if !f.supports_removal() {
         return;
     }
-    f.jw()
-        .args([
-            "add",
-            "partial",
-            "--no-colocate",
-            "--bookmark",
-            "wip/partial",
-        ])
-        .assert()
-        .success();
+    f.jw().args(["add", "partial", "--no-colocate", "--bookmark", "wip/partial"]).assert().success();
     let (record, _) = f.record("partial");
     let mut cmd = f.jw();
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*--help*) exec \"$JW_REAL_JJ\" \"$@\";; *\"workspace remove\"*) \"$JW_REAL_JJ\" workspace forget partial || exit $?; echo 'Warning: failed to remove workspace directory' >&2; exit 0;; *\"workspace forget\"*) echo forbidden-fallback >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
@@ -1386,16 +1050,9 @@ fn unverifiable_native_removal_retains_registration_and_metadata() {
         return;
     }
     let stale = f.stale_registration();
-    f.jw()
-        .args(["add", "owned", "--colocate"])
-        .assert()
-        .success();
+    f.jw().args(["add", "owned", "--colocate"]).assert().success();
     let (record, value) = f.record("owned");
-    let admin = PathBuf::from(
-        value["metadata"]["owned_git_worktree"]["topology"]["git_dir"]
-            .as_str()
-            .unwrap(),
-    );
+    let admin = PathBuf::from(value["metadata"]["owned_git_worktree"]["topology"]["git_dir"].as_str().unwrap());
     let mut cmd = f.jw();
     cmd.env("JW_REMOVED", f.temp.path().join("removed"));
     f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*--help*) exec \"$JW_REAL_JJ\" \"$@\";; *\"workspace remove\"*) \"$JW_REAL_JJ\" \"$@\" || exit $?; touch \"$JW_REMOVED\"; exit 0;; *\"workspace list\"*) if test -f \"$JW_REMOVED\"; then echo injected-list-error >&2; exit 1; fi;; *\"workspace forget\"*) echo forbidden-fallback >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
@@ -1414,29 +1071,23 @@ fn unverifiable_native_removal_retains_registration_and_metadata() {
 fn keep_dir_missing_remove_and_prune_do_not_use_native_removal() {
     for mode in ["keep", "missing", "prune"] {
         let f = Fixture::new();
-        f.jw()
-            .args(["add", "target", "--no-colocate"])
-            .assert()
-            .success();
+        f.jw().args(["add", "target", "--no-colocate"]).assert().success();
         if mode != "keep" {
             fs::remove_dir_all(f.path("target")).unwrap();
         }
         let path_unknown = mode == "missing"
             && !f
                 .command("jj", &f.root)
-                .args([
-                    "--ignore-working-copy",
-                    "workspace",
-                    "root",
-                    "--name",
-                    "target",
-                ])
+                .args(["--ignore-working-copy", "workspace", "root", "--name", "target"])
                 .output()
                 .unwrap()
                 .status
                 .success();
         let mut cmd = f.jw();
-        f.with_shim(&mut cmd, "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*) echo forbidden-native >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n");
+        f.with_shim(
+            &mut cmd,
+            "#!/bin/sh\ncase \"$*\" in *\"workspace remove\"*) echo forbidden-native >&2; exit 1;; esac\nexec \"$JW_REAL_JJ\" \"$@\"\n",
+        );
         match mode {
             "keep" => {
                 cmd.args(["remove", "target", "--keep-dir"]);

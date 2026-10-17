@@ -144,23 +144,16 @@ mod imp {
 
         // Exclusive creation and mode 0700 keep both files private. TempDir only
         // cleans up the directory it created, never a caller's existing paths.
-        let directory = match tempfile::Builder::new()
-            .prefix(".jw-cow-probe-")
-            .tempdir_in(destination_parent)
-        {
+        let directory = match tempfile::Builder::new().prefix(".jw-cow-probe-").tempdir_in(destination_parent) {
             Ok(directory) => directory,
             Err(error) => return Some(format!("cannot create private clone probe: {error}")),
         };
         let probe = directory.path().join("source");
         let probe_clone = directory.path().join("clone");
-        let result =
-            fs::write(&probe, b"probe").and_then(|()| reflink_copy::reflink(&probe, &probe_clone));
-        result.err().map(|error| {
-            format!(
-                "the filesystem at {} cannot clone files: {error}",
-                destination_parent.display()
-            )
-        })
+        let result = fs::write(&probe, b"probe").and_then(|()| reflink_copy::reflink(&probe, &probe_clone));
+        result
+            .err()
+            .map(|error| format!("the filesystem at {} cannot clone files: {error}", destination_parent.display()))
     }
 
     pub(super) fn clone_files(source: &Path, files: &[PathBuf], destination: &Path) -> Result<()> {
@@ -172,8 +165,7 @@ mod imp {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("failed to inspect {}", from.display()));
+                    return Err(error).with_context(|| format!("failed to inspect {}", from.display()));
                 }
             };
             let file_type = metadata.file_type();
@@ -183,18 +175,13 @@ mod imp {
             if let Some(parent) = to.parent()
                 && created_directories.insert(parent.to_path_buf())
             {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))?;
+                fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
             }
             if file_type.is_symlink() {
-                let link = fs::read_link(&from)
-                    .with_context(|| format!("failed to read {}", from.display()))?;
-                symlink(&link, &to)
-                    .with_context(|| format!("failed to create {}", to.display()))?;
+                let link = fs::read_link(&from).with_context(|| format!("failed to read {}", from.display()))?;
+                symlink(&link, &to).with_context(|| format!("failed to create {}", to.display()))?;
             } else {
-                reflink_copy::reflink(&from, &to).with_context(|| {
-                    format!("failed to clone {} to {}", from.display(), to.display())
-                })?;
+                reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
                 preserve_mode(&to, &metadata)?;
                 preserve_modified_time(&to, &metadata)?;
             }
@@ -224,18 +211,11 @@ mod imp {
         let source_directory = tempfile::Builder::new()
             .prefix(".jw-cow-probe-")
             .tempdir_in(source)
-            .with_context(|| {
-                format!("cannot create private clone probe in {}", source.display())
-            })?;
+            .with_context(|| format!("cannot create private clone probe in {}", source.display()))?;
         let destination_directory = tempfile::Builder::new()
             .prefix(".jw-cow-probe-")
             .tempdir_in(destination)
-            .with_context(|| {
-                format!(
-                    "cannot create private clone probe in {}",
-                    destination.display()
-                )
-            })?;
+            .with_context(|| format!("cannot create private clone probe in {}", destination.display()))?;
         let probe = source_directory.path().join("source");
         let probe_clone = destination_directory.path().join("clone");
         fs::write(&probe, b"probe").with_context(|| format!("cannot write {}", probe.display()))?;
@@ -250,34 +230,18 @@ mod imp {
     }
 
     pub(super) fn validate_tree(root: &Path) -> Result<()> {
-        let metadata = fs::symlink_metadata(root)
-            .with_context(|| format!("failed to inspect {}", root.display()))?;
-        ensure!(
-            !metadata.file_type().is_symlink(),
-            "refusing {}: it is a symbolic link",
-            root.display()
-        );
-        ensure!(
-            metadata.is_dir(),
-            "refusing {}: it is not a directory",
-            root.display()
-        );
+        let metadata = fs::symlink_metadata(root).with_context(|| format!("failed to inspect {}", root.display()))?;
+        ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", root.display());
+        ensure!(metadata.is_dir(), "refusing {}: it is not a directory", root.display());
         validate_directory(root)
     }
 
     fn validate_directory(directory: &Path) -> Result<()> {
-        for entry in fs::read_dir(directory)
-            .with_context(|| format!("failed to read {}", directory.display()))?
-        {
+        for entry in fs::read_dir(directory).with_context(|| format!("failed to read {}", directory.display()))? {
             let entry = entry.with_context(|| format!("failed to read {}", directory.display()))?;
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)
-                .with_context(|| format!("failed to inspect {}", path.display()))?;
-            ensure!(
-                !is_admin_name(&entry.file_name()),
-                "refusing {}: it is an administrative entry",
-                path.display()
-            );
+            let metadata = fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {}", path.display()))?;
+            ensure!(!is_admin_name(&entry.file_name()), "refusing {}: it is an administrative entry", path.display());
             let file_type = metadata.file_type();
             if file_type.is_symlink() {
                 // Cloned as a link; its target is never inspected.
@@ -287,21 +251,15 @@ mod imp {
             if file_type.is_dir() {
                 validate_directory(&path)?;
             } else {
-                ensure!(
-                    file_type.is_file(),
-                    "refusing {}: it is an unsupported special file",
-                    path.display()
-                );
+                ensure!(file_type.is_file(), "refusing {}: it is an unsupported special file", path.display());
             }
         }
         Ok(())
     }
 
     pub(super) fn validate_same_mount(parent: &Path, child: &Path) -> Result<()> {
-        let parent_metadata = fs::symlink_metadata(parent)
-            .with_context(|| format!("failed to inspect {}", parent.display()))?;
-        let child_metadata = fs::symlink_metadata(child)
-            .with_context(|| format!("failed to inspect {}", child.display()))?;
+        let parent_metadata = fs::symlink_metadata(parent).with_context(|| format!("failed to inspect {}", parent.display()))?;
+        let child_metadata = fs::symlink_metadata(child).with_context(|| format!("failed to inspect {}", child.display()))?;
         ensure!(
             parent_metadata.dev() == child_metadata.dev(),
             "refusing {}: it is a mounted filesystem boundary",
@@ -324,8 +282,7 @@ mod imp {
     /// symlinks. Requires Linux 5.8+ (`statx` with `STATX_MNT_ID`).
     #[cfg(target_os = "linux")]
     pub(super) fn linux_mount_id(path: &Path) -> Result<u64> {
-        let encoded = CString::new(path.as_os_str().as_encoded_bytes())
-            .with_context(|| format!("cannot inspect {}", path.display()))?;
+        let encoded = CString::new(path.as_os_str().as_encoded_bytes()).with_context(|| format!("cannot inspect {}", path.display()))?;
         let mut buffer: libc::statx = unsafe { std::mem::zeroed() };
         let status = unsafe {
             libc::statx(
@@ -337,14 +294,10 @@ mod imp {
             )
         };
         if status != 0 {
-            return Err(std::io::Error::last_os_error())
-                .with_context(|| format!("cannot verify mount topology at {}", path.display()));
+            return Err(std::io::Error::last_os_error()).with_context(|| format!("cannot verify mount topology at {}", path.display()));
         }
         if buffer.stx_mask & libc::STATX_MNT_ID == 0 {
-            bail!(
-                "cannot verify mount topology at {}: the kernel does not report mount IDs",
-                path.display()
-            );
+            bail!("cannot verify mount topology at {}: the kernel does not report mount IDs", path.display());
         }
         Ok(buffer.stx_mnt_id)
     }
@@ -355,15 +308,10 @@ mod imp {
     }
 
     fn clone_directory(source_directory: &Path, destination_directory: &Path) -> Result<()> {
-        let metadata = fs::symlink_metadata(source_directory)
-            .with_context(|| format!("failed to inspect {}", source_directory.display()))?;
-        fs::create_dir(destination_directory)
-            .with_context(|| format!("failed to create {}", destination_directory.display()))?;
-        for entry in fs::read_dir(source_directory)
-            .with_context(|| format!("failed to read {}", source_directory.display()))?
-        {
-            let entry =
-                entry.with_context(|| format!("failed to read {}", source_directory.display()))?;
+        let metadata = fs::symlink_metadata(source_directory).with_context(|| format!("failed to inspect {}", source_directory.display()))?;
+        fs::create_dir(destination_directory).with_context(|| format!("failed to create {}", destination_directory.display()))?;
+        for entry in fs::read_dir(source_directory).with_context(|| format!("failed to read {}", source_directory.display()))? {
+            let entry = entry.with_context(|| format!("failed to read {}", source_directory.display()))?;
             let name = entry.file_name();
             // validate_tree already rejected administrative entries; skipping
             // them here too keeps the clone safe if validation ever loosens.
@@ -372,27 +320,19 @@ mod imp {
             }
             let from = entry.path();
             let to = destination_directory.join(&name);
-            let metadata = fs::symlink_metadata(&from)
-                .with_context(|| format!("failed to inspect {}", from.display()))?;
+            let metadata = fs::symlink_metadata(&from).with_context(|| format!("failed to inspect {}", from.display()))?;
             let file_type = metadata.file_type();
             if file_type.is_symlink() {
-                let link = fs::read_link(&from)
-                    .with_context(|| format!("failed to read {}", from.display()))?;
-                symlink(&link, &to)
-                    .with_context(|| format!("failed to create {}", to.display()))?;
+                let link = fs::read_link(&from).with_context(|| format!("failed to read {}", from.display()))?;
+                symlink(&link, &to).with_context(|| format!("failed to create {}", to.display()))?;
             } else if file_type.is_dir() {
                 clone_directory(&from, &to)?;
             } else if file_type.is_file() {
-                reflink_copy::reflink(&from, &to).with_context(|| {
-                    format!("failed to clone {} to {}", from.display(), to.display())
-                })?;
+                reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
                 preserve_mode(&to, &metadata)?;
                 preserve_modified_time(&to, &metadata)?;
             } else {
-                bail!(
-                    "refusing {}: it is an unsupported special file",
-                    from.display()
-                );
+                bail!("refusing {}: it is an unsupported special file", from.display());
             }
         }
         // Restrictive source modes are applied only after the directory is
@@ -408,31 +348,18 @@ mod imp {
                 return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
             }
         };
-        let name = path.file_name().with_context(|| {
-            format!(
-                "refusing to remove {}: it has no final component",
-                path.display()
-            )
-        })?;
-        ensure!(
-            !is_admin_name(name),
-            "refusing to remove {}: it is an administrative entry",
-            path.display()
-        );
+        let name = path
+            .file_name()
+            .with_context(|| format!("refusing to remove {}: it has no final component", path.display()))?;
+        ensure!(!is_admin_name(name), "refusing to remove {}: it is an administrative entry", path.display());
         let file_type = metadata.file_type();
         if file_type.is_symlink() {
             // Unlink exactly what was named; a symlink's target is never touched.
-            return fs::remove_file(path)
-                .with_context(|| format!("failed to remove {}", path.display()));
+            return fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()));
         }
         if !file_type.is_dir() {
-            ensure!(
-                file_type.is_file(),
-                "refusing to remove {}: it is an unsupported special file",
-                path.display()
-            );
-            return fs::remove_file(path)
-                .with_context(|| format!("failed to remove {}", path.display()));
+            ensure!(file_type.is_file(), "refusing to remove {}: it is an unsupported special file", path.display());
+            return fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()));
         }
         // Reject a mounted selected leaf: checking descendants against this
         // directory alone cannot see a mount rooted at the leaf itself.
@@ -452,21 +379,15 @@ mod imp {
     /// must not block their authorized replacement, and the bits are added only
     /// after validation so a rejected tree is never modified.
     fn ensure_removable(directory: &Path) -> Result<()> {
-        let metadata = fs::symlink_metadata(directory)
-            .with_context(|| format!("failed to inspect {}", directory.display()))?;
+        let metadata = fs::symlink_metadata(directory).with_context(|| format!("failed to inspect {}", directory.display()))?;
         let mode = metadata.permissions().mode() & 0o7777;
         if mode & 0o300 != 0o300 {
             fs::set_permissions(directory, fs::Permissions::from_mode(mode | 0o300))
                 .with_context(|| format!("failed to make {} removable", directory.display()))?;
         }
-        for entry in fs::read_dir(directory)
-            .with_context(|| format!("failed to read {}", directory.display()))?
-        {
-            let path = entry
-                .with_context(|| format!("failed to read {}", directory.display()))?
-                .path();
-            let metadata = fs::symlink_metadata(&path)
-                .with_context(|| format!("failed to inspect {}", path.display()))?;
+        for entry in fs::read_dir(directory).with_context(|| format!("failed to read {}", directory.display()))? {
+            let path = entry.with_context(|| format!("failed to read {}", directory.display()))?.path();
+            let metadata = fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {}", path.display()))?;
             if metadata.file_type().is_dir() {
                 ensure_removable(&path)?;
             }
@@ -484,8 +405,7 @@ mod imp {
     /// on reflink internals or the process umask.
     fn preserve_mode(target: &Path, metadata: &Metadata) -> Result<()> {
         let mode = metadata.permissions().mode() & 0o7777;
-        fs::set_permissions(target, fs::Permissions::from_mode(mode))
-            .with_context(|| format!("failed to set permissions on {}", target.display()))
+        fs::set_permissions(target, fs::Permissions::from_mode(mode)).with_context(|| format!("failed to set permissions on {}", target.display()))
     }
 
     /// `clonefile(2)` clones timestamps along with the data.
@@ -514,11 +434,7 @@ mod imp {
         Some("copy-on-write cloning is supported on macOS and Linux only".to_owned())
     }
 
-    pub(super) fn clone_files(
-        _source: &Path,
-        _files: &[std::path::PathBuf],
-        _destination: &Path,
-    ) -> Result<()> {
+    pub(super) fn clone_files(_source: &Path, _files: &[std::path::PathBuf], _destination: &Path) -> Result<()> {
         bail!("copy-on-write cloning is supported on macOS and Linux only")
     }
 
@@ -585,41 +501,22 @@ mod tests {
         fs::create_dir_all(source.join("nested/deeper")).unwrap();
         fs::create_dir_all(destination.join(".jj")).unwrap();
         fs::write(source.join("nested/deeper/tool.sh"), "#!/bin/sh\n").unwrap();
-        fs::set_permissions(
-            source.join("nested/deeper/tool.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        fs::set_permissions(source.join("nested/deeper/tool.sh"), fs::Permissions::from_mode(0o755)).unwrap();
         symlink("deeper/tool.sh", source.join("nested/link")).unwrap();
         fs::write(source.join(".env"), "SECRET=1\n").unwrap();
-        let files = [
-            "nested/deeper/tool.sh",
-            "nested/link",
-            "deleted.txt",
-            "nested",
-        ]
-        .map(PathBuf::from);
+        let files = ["nested/deeper/tool.sh", "nested/link", "deleted.txt", "nested"].map(PathBuf::from);
 
         clone_files(&source, &files, &destination).expect("clone files");
 
         let tool = destination.join("nested/deeper/tool.sh");
         assert_eq!(fs::read_to_string(&tool).unwrap(), "#!/bin/sh\n");
-        assert_eq!(
-            fs::metadata(&tool).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
-        assert_eq!(
-            fs::read_link(destination.join("nested/link")).unwrap(),
-            Path::new("deeper/tool.sh")
-        );
+        assert_eq!(fs::metadata(&tool).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(fs::read_link(destination.join("nested/link")).unwrap(), Path::new("deeper/tool.sh"));
         assert!(!destination.join(".env").exists());
         assert!(!destination.join("deleted.txt").exists());
         // Sharing storage must never couple later edits or share an inode.
         fs::write(&tool, "destination edit\n").unwrap();
-        assert_eq!(
-            fs::read_to_string(source.join("nested/deeper/tool.sh")).unwrap(),
-            "#!/bin/sh\n"
-        );
+        assert_eq!(fs::read_to_string(source.join("nested/deeper/tool.sh")).unwrap(), "#!/bin/sh\n");
         fs::write(source.join("nested/deeper/tool.sh"), "source edit\n").unwrap();
         assert_eq!(fs::read_to_string(&tool).unwrap(), "destination edit\n");
     }
@@ -629,9 +526,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let victim = temp.path().join("victim");
         fs::write(&victim, "untouched").unwrap();
-        let legacy = temp
-            .path()
-            .join(format!(".jw-cow-probe-{}", std::process::id()));
+        let legacy = temp.path().join(format!(".jw-cow-probe-{}", std::process::id()));
         let legacy_clone = legacy.with_extension("clone");
         symlink(&victim, &legacy).unwrap();
         fs::write(&legacy_clone, "caller-owned").unwrap();
@@ -643,10 +538,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched");
         assert_eq!(fs::read_link(&legacy).unwrap(), victim);
         assert_eq!(fs::read_to_string(&legacy_clone).unwrap(), "caller-owned");
-        assert_eq!(
-            fs::read_to_string(other.join("source")).unwrap(),
-            "also caller-owned"
-        );
+        assert_eq!(fs::read_to_string(other.join("source")).unwrap(), "also caller-owned");
         assert_eq!(fs::read_dir(temp.path()).unwrap().count(), before);
     }
 
@@ -673,18 +565,9 @@ mod tests {
         probe_between(&source, &destination).expect("probe between");
 
         assert_eq!(fs::read_dir(&source).unwrap().count(), source_entries);
-        assert_eq!(
-            fs::read_dir(&destination).unwrap().count(),
-            destination_entries
-        );
-        assert_eq!(
-            fs::read_to_string(source.join("kept.txt")).unwrap(),
-            "kept\n"
-        );
-        assert_eq!(
-            fs::read_to_string(destination.join("kept.txt")).unwrap(),
-            "kept\n"
-        );
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), destination_entries);
+        assert_eq!(fs::read_to_string(source.join("kept.txt")).unwrap(), "kept\n");
+        assert_eq!(fs::read_to_string(destination.join("kept.txt")).unwrap(), "kept\n");
     }
 
     #[test]
@@ -708,17 +591,9 @@ mod tests {
         let destination = temp.path().join("destination");
         fs::create_dir_all(source.join("nested")).unwrap();
         fs::write(source.join("nested/tool.sh"), "#!/bin/sh\n").unwrap();
-        fs::set_permissions(
-            source.join("nested/tool.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        fs::set_permissions(source.join("nested/tool.sh"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(source.join("nested/private.txt"), "quiet\n").unwrap();
-        fs::set_permissions(
-            source.join("nested/private.txt"),
-            fs::Permissions::from_mode(0o600),
-        )
-        .unwrap();
+        fs::set_permissions(source.join("nested/private.txt"), fs::Permissions::from_mode(0o600)).unwrap();
         fs::write(source.join("nested/inner.txt"), "inner\n").unwrap();
         fs::write(source.join(".env"), "SECRET=1\n").unwrap();
         symlink("tool.sh", source.join("nested/link")).unwrap();
@@ -733,53 +608,25 @@ mod tests {
         clone_tree(&source, &destination).expect("clone tree");
 
         let nested = destination.join("nested");
-        assert_eq!(
-            fs::metadata(&nested).unwrap().permissions().mode() & 0o7777,
-            0o555
-        );
+        assert_eq!(fs::metadata(&nested).unwrap().permissions().mode() & 0o7777, 0o555);
         // Restore writable modes so the tempdir cleanup can descend.
         fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
 
         let tool = nested.join("tool.sh");
         assert_eq!(fs::read_to_string(&tool).unwrap(), "#!/bin/sh\n");
-        assert_eq!(
-            fs::metadata(&tool).unwrap().permissions().mode() & 0o7777,
-            0o755
-        );
-        assert_eq!(
-            fs::metadata(nested.join("private.txt"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o7777,
-            0o600
-        );
-        assert_eq!(
-            fs::read_to_string(nested.join("inner.txt")).unwrap(),
-            "inner\n"
-        );
-        assert_eq!(
-            fs::read_to_string(destination.join(".env")).unwrap(),
-            "SECRET=1\n"
-        );
-        assert_eq!(
-            fs::read_link(nested.join("link")).unwrap(),
-            Path::new("tool.sh")
-        );
+        assert_eq!(fs::metadata(&tool).unwrap().permissions().mode() & 0o7777, 0o755);
+        assert_eq!(fs::metadata(nested.join("private.txt")).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert_eq!(fs::read_to_string(nested.join("inner.txt")).unwrap(), "inner\n");
+        assert_eq!(fs::read_to_string(destination.join(".env")).unwrap(), "SECRET=1\n");
+        assert_eq!(fs::read_link(nested.join("link")).unwrap(), Path::new("tool.sh"));
         assert_eq!(
             fs::metadata(&tool).unwrap().modified().unwrap(),
-            fs::metadata(source.join("nested/tool.sh"))
-                .unwrap()
-                .modified()
-                .unwrap()
+            fs::metadata(source.join("nested/tool.sh")).unwrap().modified().unwrap()
         );
         // Sharing is copy-on-write: later edits never couple the trees.
         fs::write(&tool, "destination edit\n").unwrap();
-        assert_eq!(
-            fs::read_to_string(source.join("nested/tool.sh")).unwrap(),
-            "#!/bin/sh\n"
-        );
+        assert_eq!(fs::read_to_string(source.join("nested/tool.sh")).unwrap(), "#!/bin/sh\n");
     }
 
     #[test]
@@ -797,13 +644,7 @@ mod tests {
 
         let selected = temp.path().join("selected");
         clone_tree(&source, &selected).expect("first clone");
-        let nested_mode = |path: &Path| {
-            fs::metadata(path.join("nested"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o7777
-        };
+        let nested_mode = |path: &Path| fs::metadata(path.join("nested")).unwrap().permissions().mode() & 0o7777;
         assert_eq!(nested_mode(&selected), 0o555);
         assert_eq!(nested_mode(&source), 0o555);
 
@@ -815,10 +656,7 @@ mod tests {
         clone_tree(&source, &selected).expect("second clone");
         assert_eq!(nested_mode(&selected), 0o555);
         assert_eq!(nested_mode(&source), 0o555);
-        assert_eq!(
-            fs::read_to_string(selected.join("nested/inner.txt")).unwrap(),
-            "inner\n"
-        );
+        assert_eq!(fs::read_to_string(selected.join("nested/inner.txt")).unwrap(), "inner\n");
 
         // Restore writable modes so the tempdir cleanup can descend.
         fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
@@ -830,21 +668,14 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let source = temp.path().join("source");
         fs::create_dir_all(source.join("vendor/pkg/.git")).unwrap();
-        fs::write(
-            source.join("vendor/pkg/.git/HEAD"),
-            "ref: refs/heads/main\n",
-        )
-        .unwrap();
+        fs::write(source.join("vendor/pkg/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
         symlink("../..", source.join("vendor/pkg/.jj")).unwrap();
         let destination = temp.path().join("destination");
 
         let error = clone_tree(&source, &destination).unwrap_err();
         assert!(error.to_string().contains("administrative"), "{error:#}");
         assert!(!destination.exists());
-        assert_eq!(
-            fs::read_to_string(source.join("vendor/pkg/.git/HEAD")).unwrap(),
-            "ref: refs/heads/main\n"
-        );
+        assert_eq!(fs::read_to_string(source.join("vendor/pkg/.git/HEAD")).unwrap(), "ref: refs/heads/main\n");
     }
 
     #[test]
@@ -865,10 +696,7 @@ mod tests {
         fs::write(destination.join("preexisting.txt"), "untouched\n").unwrap();
         let error = clone_tree(&real, &destination).unwrap_err();
         assert!(error.to_string().contains("failed to create"), "{error:#}");
-        assert_eq!(
-            fs::read_to_string(destination.join("preexisting.txt")).unwrap(),
-            "untouched\n"
-        );
+        assert_eq!(fs::read_to_string(destination.join("preexisting.txt")).unwrap(), "untouched\n");
     }
 
     #[test]
@@ -889,11 +717,7 @@ mod tests {
         let root = temp.path().join("root");
         fs::create_dir_all(root.join("nested/deeper")).unwrap();
         fs::write(root.join("nested/deeper/file.txt"), "content\n").unwrap();
-        fs::set_permissions(
-            root.join("nested/deeper/file.txt"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        fs::set_permissions(root.join("nested/deeper/file.txt"), fs::Permissions::from_mode(0o755)).unwrap();
         symlink("deeper", root.join("nested/link")).unwrap();
         symlink("../nested/deeper/file.txt", root.join("plain-link")).unwrap();
 
@@ -979,22 +803,13 @@ mod tests {
         // Kernel mount IDs resolve, agree within one filesystem, and separate
         // distinct filesystems such as procfs.
         assert!(imp::linux_mount_id(&parent).unwrap() > 0);
-        assert_eq!(
-            imp::linux_mount_id(&parent).unwrap(),
-            imp::linux_mount_id(&file).unwrap()
-        );
-        assert_ne!(
-            imp::linux_mount_id(&parent).unwrap(),
-            imp::linux_mount_id(Path::new("/proc")).unwrap()
-        );
+        assert_eq!(imp::linux_mount_id(&parent).unwrap(), imp::linux_mount_id(&file).unwrap());
+        assert_ne!(imp::linux_mount_id(&parent).unwrap(), imp::linux_mount_id(Path::new("/proc")).unwrap());
 
         // A child on another mounted filesystem fails closed, whichever stage
         // of the comparison rejects it.
         let error = validate_same_mount(&parent, Path::new("/proc")).unwrap_err();
-        assert!(
-            error.to_string().contains("mounted filesystem boundary"),
-            "{error:#}"
-        );
+        assert!(error.to_string().contains("mounted filesystem boundary"), "{error:#}");
 
         // Nested trees pass: every node is compared only against its parent,
         // so the tree's own root being a mount stays acceptable.
@@ -1048,10 +863,7 @@ mod tests {
         symlink(&target, &link).unwrap();
         remove_path(&link).expect("remove symlink");
         assert!(!link.exists());
-        assert_eq!(
-            fs::read_to_string(target.join("inner.txt")).unwrap(),
-            "kept\n"
-        );
+        assert_eq!(fs::read_to_string(target.join("inner.txt")).unwrap(), "kept\n");
 
         // A real tree is removed entirely while its parent survives.
         let tree = temp.path().join("tree");
@@ -1076,14 +888,8 @@ mod tests {
         let error = remove_path(&tree).unwrap_err();
         assert!(error.to_string().contains("administrative"), "{error:#}");
         assert_eq!(fs::read_to_string(tree.join("keep.txt")).unwrap(), "kept\n");
-        assert_eq!(
-            fs::read_to_string(tree.join("sub/file.txt")).unwrap(),
-            "kept\n"
-        );
-        assert_eq!(
-            fs::read_to_string(tree.join("sub/.jj/marker")).unwrap(),
-            "kept\n"
-        );
+        assert_eq!(fs::read_to_string(tree.join("sub/file.txt")).unwrap(), "kept\n");
+        assert_eq!(fs::read_to_string(tree.join("sub/.jj/marker")).unwrap(), "kept\n");
 
         // A special entry aborts the removal before anything is deleted.
         let special = temp.path().join("special");
@@ -1092,10 +898,7 @@ mod tests {
         UnixListener::bind(special.join("socket")).unwrap();
         let error = remove_path(&special).unwrap_err();
         assert!(error.to_string().contains("special"), "{error:#}");
-        assert_eq!(
-            fs::read_to_string(special.join("keep.txt")).unwrap(),
-            "kept\n"
-        );
+        assert_eq!(fs::read_to_string(special.join("keep.txt")).unwrap(), "kept\n");
 
         // Administrative names are never selected for removal, even directly.
         let administrative = temp.path().join("administrative");
@@ -1103,10 +906,7 @@ mod tests {
         fs::write(administrative.join(".jj/marker"), "kept\n").unwrap();
         let error = remove_path(&administrative.join(".jj")).unwrap_err();
         assert!(error.to_string().contains("administrative"), "{error:#}");
-        assert_eq!(
-            fs::read_to_string(administrative.join(".jj/marker")).unwrap(),
-            "kept\n"
-        );
+        assert_eq!(fs::read_to_string(administrative.join(".jj/marker")).unwrap(), "kept\n");
         fs::write(administrative.join(".git"), "gitdir: elsewhere\n").unwrap();
         let error = remove_path(&administrative.join(".git")).unwrap_err();
         assert!(error.to_string().contains("administrative"), "{error:#}");

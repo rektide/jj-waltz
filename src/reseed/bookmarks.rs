@@ -36,10 +36,7 @@ impl Guard {
             Self::Required(proof) => {
                 let name = serde_json::to_string(&proof.name).expect("JSON string");
                 match &proof.remote {
-                    Some(remote) => format!(
-                        "{name}@{}",
-                        serde_json::to_string(remote).expect("JSON string")
-                    ),
+                    Some(remote) => format!("{name}@{}", serde_json::to_string(remote).expect("JSON string")),
                     None => name,
                 }
             }
@@ -60,26 +57,15 @@ impl Guard {
 
     pub(super) fn describe(&self) -> String {
         match self {
-            Self::AllowUnbookmarked => {
-                "bookmark requirement explicitly bypassed (--allow-unbookmarked)".into()
-            }
-            Self::Required(proof) => format!(
-                "bookmark {:?} covers work tip {}",
-                proof.label(),
-                proof.work_tip
-            ),
+            Self::AllowUnbookmarked => "bookmark requirement explicitly bypassed (--allow-unbookmarked)".into(),
+            Self::Required(proof) => format!("bookmark {:?} covers work tip {}", proof.label(), proof.work_tip),
         }
     }
 
     /// A frozen required reference must still cover the ORIGINAL work tip. A
     /// forward move is fine; deletion, conflict or a move off that lineage is not.
     /// This is snapshot-free, including when a target is partially refilled.
-    pub(super) fn verify(
-        &self,
-        client: &JjClient,
-        operation: &str,
-        references: &[BookmarkRef],
-    ) -> Result<()> {
+    pub(super) fn verify(&self, client: &JjClient, operation: &str, references: &[BookmarkRef]) -> Result<()> {
         let Self::Required(proof) = self else {
             return Ok(());
         };
@@ -88,8 +74,7 @@ impl Guard {
             .find(|reference| reference.name == proof.name && reference.remote == proof.remote);
         let target = reference.and_then(BookmarkRef::normal_target);
         if let Some(target) = target
-            && (target == proof.target
-                || client.is_ancestor_at(operation, &proof.work_tip, target)?)
+            && (target == proof.target || client.is_ancestor_at(operation, &proof.work_tip, target)?)
         {
             return Ok(());
         }
@@ -115,11 +100,7 @@ fn work_tip(target: &CommitFacts) -> &str {
 }
 
 impl Coverage {
-    pub(super) fn capture(
-        client: &JjClient,
-        operation: &str,
-        commits: &BTreeSet<String>,
-    ) -> Result<Self> {
+    pub(super) fn capture(client: &JjClient, operation: &str, commits: &BTreeSet<String>) -> Result<Self> {
         let mut capture = Self {
             tips: BTreeMap::new(),
             proofs: BTreeMap::new(),
@@ -129,20 +110,15 @@ impl Coverage {
         }
         for chunk in commits.iter().cloned().collect::<Vec<_>>().chunks(128) {
             for facts in client.commit_facts_many_at(operation, &union(chunk)?)? {
-                capture
-                    .tips
-                    .insert(facts.commit_id.clone(), work_tip(&facts).to_owned());
+                capture.tips.insert(facts.commit_id.clone(), work_tip(&facts).to_owned());
             }
         }
         if capture.tips.len() != commits.len() {
             bail!("bookmark preflight could not resolve every frozen target commit");
         }
         let mut references = client.bookmark_refs_at(operation)?;
-        references
-            .retain(|reference| !reference.name.is_empty() && reference.normal_target().is_some());
-        references.sort_by(|a, b| {
-            (a.remote.is_some(), &a.name, &a.remote).cmp(&(b.remote.is_some(), &b.name, &b.remote))
-        });
+        references.retain(|reference| !reference.name.is_empty() && reference.normal_target().is_some());
+        references.sort_by(|a, b| (a.remote.is_some(), &a.name, &a.remote).cmp(&(b.remote.is_some(), &b.name, &b.remote)));
         let mut targets = Vec::new();
         let mut seen = BTreeSet::new();
         for reference in references {
@@ -183,10 +159,7 @@ impl Coverage {
                 .join(" ++ \"\\t\" ++ ");
             let template = format!("json(commit_id) ++ \"\\t\" ++ {checks} ++ \"\\n\"");
             for tips in remaining.iter().cloned().collect::<Vec<_>>().chunks(128) {
-                let output = client.run_at(
-                    operation,
-                    ["log", "--no-graph", "-r", &union(tips)?, "-T", &template],
-                )?;
+                let output = client.run_at(operation, ["log", "--no-graph", "-r", &union(tips)?, "-T", &template])?;
                 for line in output.stdout()?.lines() {
                     let fields = line.split('\t').collect::<Vec<_>>();
                     if fields.len() != targets.len() + 1 {
@@ -212,10 +185,7 @@ impl Coverage {
     }
 
     pub(super) fn require(&self, commit: &str) -> Result<Guard> {
-        let tip = self
-            .tips
-            .get(commit)
-            .context("missing frozen work tip in bookmark preflight")?;
+        let tip = self.tips.get(commit).context("missing frozen work tip in bookmark preflight")?;
         match self.proofs.get(tip) {
             Some(proof) => Ok(Guard::Required(proof.clone())),
             None => bail!(
@@ -228,21 +198,12 @@ impl Coverage {
 fn union(ids: &[String]) -> Result<String> {
     Ok(format!(
         "({})",
-        ids.iter()
-            .map(|id| commit_id_revset(id))
-            .collect::<Result<Vec<_>>>()?
-            .join(" | ")
+        ids.iter().map(|id| commit_id_revset(id)).collect::<Result<Vec<_>>>()?.join(" | ")
     ))
 }
 
-pub(super) fn verify_batch<'a>(
-    client: &JjClient,
-    guards: impl IntoIterator<Item = &'a Guard>,
-) -> Result<()> {
-    let guards = guards
-        .into_iter()
-        .filter(|guard| matches!(guard, Guard::Required(_)))
-        .collect::<Vec<_>>();
+pub(super) fn verify_batch<'a>(client: &JjClient, guards: impl IntoIterator<Item = &'a Guard>) -> Result<()> {
+    let guards = guards.into_iter().filter(|guard| matches!(guard, Guard::Required(_))).collect::<Vec<_>>();
     if guards.is_empty() {
         return Ok(());
     }
@@ -277,9 +238,7 @@ mod tests {
             added: vec![tip],
             removed: Vec::new(),
         };
-        guard
-            .verify(&client, "unused", std::slice::from_ref(&reference))
-            .unwrap();
+        guard.verify(&client, "unused", std::slice::from_ref(&reference)).unwrap();
         for invalid in [
             BookmarkRef {
                 present: false,

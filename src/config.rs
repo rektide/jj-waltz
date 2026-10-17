@@ -91,10 +91,8 @@ impl Config {
             return Ok(Self::default());
         }
 
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let raw: RawConfig = toml::from_str(&contents)
-            .with_context(|| format!("failed to parse {}", path.display()))?;
+        let contents = fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let raw: RawConfig = toml::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))?;
 
         Ok(raw.into())
     }
@@ -112,9 +110,7 @@ impl From<RawConfig> for Config {
             workspace: WorkspaceConfig {
                 create_bookmark: workspace.create_bookmark,
                 colocate: workspace.colocate,
-                bookmark_template: workspace
-                    .bookmark_template
-                    .unwrap_or(defaults.workspace.bookmark_template),
+                bookmark_template: workspace.bookmark_template.unwrap_or(defaults.workspace.bookmark_template),
                 copy_on_write: workspace.copy_on_write,
             },
             trunk: TrunkConfig {
@@ -162,28 +158,16 @@ mod tests {
             ("copy_ignored = []", Some(Vec::new())),
             (
                 "copy_ignored = ['**/target', '**/node_modules', '**/dist/', '**/build/']",
-                Some(vec![
-                    "**/target".into(),
-                    "**/node_modules".into(),
-                    "**/dist/".into(),
-                    "**/build/".into(),
-                ]),
+                Some(vec!["**/target".into(), "**/node_modules".into(), "**/dist/".into(), "**/build/".into()]),
             ),
         ] {
-            assert_eq!(
-                Config::from(toml::from_str::<RawConfig>(text).unwrap()).copy_ignored,
-                expected
-            );
+            assert_eq!(Config::from(toml::from_str::<RawConfig>(text).unwrap()).copy_ignored, expected);
         }
     }
 
     #[test]
     fn bare_command_is_explicitly_configurable() {
-        for (value, expected) in [
-            ("ui", DefaultCommand::Ui),
-            ("list", DefaultCommand::List),
-            ("help", DefaultCommand::Help),
-        ] {
+        for (value, expected) in [("ui", DefaultCommand::Ui), ("list", DefaultCommand::List), ("help", DefaultCommand::Help)] {
             let raw: RawConfig = toml::from_str(&format!("default_command = {value:?}")).unwrap();
             assert_eq!(Config::from(raw).default_command, expected);
         }
@@ -245,9 +229,6 @@ mod tests {
 
     #[test]
     fn template_replaces_workspace_token() {
-        assert_eq!(
-            bookmark_from_template("wip/{workspace}", "feature-a"),
-            "wip/feature-a"
-        );
+        assert_eq!(bookmark_from_template("wip/{workspace}", "feature-a"), "wip/feature-a");
     }
 }

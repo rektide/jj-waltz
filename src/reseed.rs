@@ -75,9 +75,7 @@ pub struct ReseedSelectionMiss {
 
 impl ReseedReport {
     pub fn has_failures(&self) -> bool {
-        self.targets
-            .iter()
-            .any(|target| target.status == ReseedStatus::Failed)
+        self.targets.iter().any(|target| target.status == ReseedStatus::Failed)
     }
 }
 
@@ -100,10 +98,7 @@ pub fn run(request: ReseedRequest) -> Result<ReseedReport> {
 }
 
 /// Emit selection diagnostics before planning, including when planning later fails.
-pub fn run_with_diagnostics(
-    request: ReseedRequest,
-    diagnostic: impl FnMut(&str),
-) -> Result<ReseedReport> {
+pub fn run_with_diagnostics(request: ReseedRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
     run_internal(request, false, diagnostic)
 }
 
@@ -111,10 +106,7 @@ pub fn prepare(request: PrepareRequest) -> Result<ReseedReport> {
     prepare_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))
 }
 
-pub fn prepare_with_diagnostics(
-    request: PrepareRequest,
-    diagnostic: impl FnMut(&str),
-) -> Result<ReseedReport> {
+pub fn prepare_with_diagnostics(request: PrepareRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
     run_internal(
         ReseedRequest {
             source: request.source,
@@ -129,11 +121,7 @@ pub fn prepare_with_diagnostics(
     )
 }
 
-fn run_internal(
-    request: ReseedRequest,
-    source_only: bool,
-    diagnostic: impl FnMut(&str),
-) -> Result<ReseedReport> {
+fn run_internal(request: ReseedRequest, source_only: bool, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
     #[cfg(unix)]
     {
         let mut diagnostic = diagnostic;

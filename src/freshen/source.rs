@@ -33,12 +33,7 @@ pub struct SourceSelection {
 impl SourceSelection {
     /// The caller must first snapshot real source work and verify disk bytes.
     /// All queries here are read-only against `operation`, including previews.
-    pub fn select(
-        client: &JjClient,
-        operation: &str,
-        source_at: Option<&str>,
-        remote: Option<&str>,
-    ) -> Result<Self> {
+    pub fn select(client: &JjClient, operation: &str, source_at: Option<&str>, remote: Option<&str>) -> Result<Self> {
         if remote == Some("") {
             bail!("freshen.remote must not be empty");
         }
@@ -52,10 +47,7 @@ impl SourceSelection {
         let refs = client.bookmark_refs_at(operation)?;
         let remotes = refs
             .iter()
-            .filter(|r| {
-                r.remote.as_deref().is_some_and(|r| r != "git")
-                    && remote.is_none_or(|remote| r.remote.as_deref() == Some(remote))
-            })
+            .filter(|r| r.remote.as_deref().is_some_and(|r| r != "git") && remote.is_none_or(|remote| r.remote.as_deref() == Some(remote)))
             .collect::<Vec<_>>();
 
         let (kind, selected, old_goal) = if let Some(expression) = source_at {
@@ -67,14 +59,9 @@ impl SourceSelection {
             let goal = match resolved.as_slice() {
                 [goal] => goal.commit_id.clone(),
                 [] => {
-                    return Self::missing(
-                        client, operation, source, base, &refs, expression, remote,
-                    );
+                    return Self::missing(client, operation, source, base, &refs, expression, remote);
                 }
-                _ => bail!(
-                    "explicit --source-at resolved to {} revisions; expected exactly one",
-                    resolved.len()
-                ),
+                _ => bail!("explicit --source-at resolved to {} revisions; expected exactly one", resolved.len()),
             };
             // Preserve the name in an explicit remote/local symbol even if
             // several refs share its tip. Arbitrary revsets can identify a
@@ -87,11 +74,7 @@ impl SourceSelection {
                     remote_symbol_matches(expression, &r.name, remote)
                 })
                 .collect::<Vec<_>>();
-            if !named_remote.is_empty()
-                && named_remote
-                    .iter()
-                    .any(|r| remote.is_some_and(|remote| r.remote.as_deref() != Some(remote)))
-            {
+            if !named_remote.is_empty() && named_remote.iter().any(|r| remote.is_some_and(|remote| r.remote.as_deref() != Some(remote))) {
                 bail!("explicit --source-at selects a different remote than freshen.remote");
             }
             let named = if named_remote.is_empty() {
@@ -104,19 +87,11 @@ impl SourceSelection {
                 named_remote
             };
             let candidates = if named.is_empty() {
-                remotes
-                    .iter()
-                    .copied()
-                    .filter(|r| r.normal_target() == Some(goal.as_str()))
-                    .collect()
+                remotes.iter().copied().filter(|r| r.normal_target() == Some(goal.as_str())).collect()
             } else {
                 named
             };
-            (
-                SelectionKind::Explicit,
-                unique(candidates, "explicit source goal")?,
-                goal,
-            )
+            (SelectionKind::Explicit, unique(candidates, "explicit source goal")?, goal)
         } else {
             let mut tracked = Vec::new();
             for r in remotes.iter().copied().filter(|r| r.tracked) {
@@ -127,15 +102,7 @@ impl SourceSelection {
                     continue;
                 }
                 let local = local_ref(&refs, &r.name);
-                if local.is_none_or(|r| !r.present)
-                    || has_descendant_target(
-                        client,
-                        operation,
-                        local.expect("present local"),
-                        &base,
-                    )?
-                    || r.conflicted
-                {
+                if local.is_none_or(|r| !r.present) || has_descendant_target(client, operation, local.expect("present local"), &base)? || r.conflicted {
                     tracked.push(r);
                 }
             }
@@ -157,48 +124,20 @@ impl SourceSelection {
         };
 
         let old_remote = normal(selected, "selected remote")?.to_owned();
-        require_ancestor(
-            client,
-            operation,
-            &base,
-            &old_remote,
-            "source contains unpublished work",
-        )?;
-        require_ancestor(
-            client,
-            operation,
-            &base,
-            &old_goal,
-            "source goal would leave source work behind",
-        )?;
-        require_ancestor(
-            client,
-            operation,
-            &old_goal,
-            &old_remote,
-            "source goal is not published on the selected remote",
-        )?;
+        require_ancestor(client, operation, &base, &old_remote, "source contains unpublished work")?;
+        require_ancestor(client, operation, &base, &old_goal, "source goal would leave source work behind")?;
+        require_ancestor(client, operation, &old_goal, &old_remote, "source goal is not published on the selected remote")?;
         // Only a tracked relationship gives the same-named local bookmark any
         // authority here. Untracked remote refs can coexist with unrelated locals.
         let old_local = if selected.tracked {
-            let local = local_ref(&refs, &selected.name)
-                .context("selected tracked local bookmark is deleted; restore it explicitly")?;
+            let local = local_ref(&refs, &selected.name).context("selected tracked local bookmark is deleted; restore it explicitly")?;
             let target = normal(local, "selected tracked local bookmark")?;
-            require_ancestor(
-                client,
-                operation,
-                target,
-                &old_remote,
-                "tracked local bookmark contains unpublished work",
-            )?;
+            require_ancestor(client, operation, target, &old_remote, "tracked local bookmark contains unpublished work")?;
             Some(target.to_owned())
         } else {
             None
         };
-        require_sound(
-            &client.commit_facts_at(operation, &commit_id_revset(&old_goal)?)?,
-            "source goal",
-        )?;
+        require_sound(&client.commit_facts_at(operation, &commit_id_revset(&old_goal)?)?, "source goal")?;
         Ok(Self {
             kind,
             operation: operation.to_owned(),
@@ -231,13 +170,8 @@ impl SourceSelection {
         }
         // A deleted/conflicted recorded ref is NOT a new line. Keep all existing
         // reference guards rather than treating deletion as permission to reset.
-        if refs
-            .iter()
-            .any(|r| r.name == name && r.remote.as_deref() == Some(remote))
-        {
-            bail!(
-                "requested remote bookmark is already recorded but unresolved or deleted; resolve it explicitly before freshening"
-            );
+        if refs.iter().any(|r| r.name == name && r.remote.as_deref() == Some(remote)) {
+            bail!("requested remote bookmark is already recorded but unresolved or deleted; resolve it explicitly before freshening");
         }
         if !client.has_git_remote_at(operation, remote)? {
             bail!(
@@ -278,10 +212,7 @@ impl SourceSelection {
                     "requested remote bookmark is still absent after fetch; source advancement refused"
                 }
             })?;
-        if self
-            .tracked
-            .is_some_and(|tracked| selected.tracked != tracked)
-        {
+        if self.tracked.is_some_and(|tracked| selected.tracked != tracked) {
             bail!("selected remote tracking relationship changed during fetch");
         }
         let fetched = normal(selected, "fetched remote bookmark")?;
@@ -295,17 +226,10 @@ impl SourceSelection {
                 "selected remote did not fast-forward (rewind or sideways move)",
             )?;
         }
-        require_ancestor(
-            client,
-            operation,
-            &self.base,
-            fetched,
-            "source base is not published on the fetched remote",
-        )?;
+        require_ancestor(client, operation, &self.base, fetched, "source base is not published on the fetched remote")?;
         if selected.tracked {
             let local = normal(
-                local_ref(&refs, &self.name)
-                    .context("tracked local bookmark disappeared during fetch")?,
+                local_ref(&refs, &self.name).context("tracked local bookmark disappeared during fetch")?,
                 "fetched tracked local bookmark",
             )?;
             if let Some(old_local) = &self.old_local {
@@ -338,24 +262,9 @@ impl SourceSelection {
                 "explicit source goal moved backwards or sideways during fetch",
             )?;
         }
-        require_ancestor(
-            client,
-            operation,
-            &self.base,
-            &goal,
-            "source goal would leave source work behind",
-        )?;
-        require_ancestor(
-            client,
-            operation,
-            &goal,
-            fetched,
-            "source goal is not published on the fetched remote",
-        )?;
-        require_sound(
-            &client.commit_facts_at(operation, &commit_id_revset(&goal)?)?,
-            "fetched source goal",
-        )?;
+        require_ancestor(client, operation, &self.base, &goal, "source goal would leave source work behind")?;
+        require_ancestor(client, operation, &goal, fetched, "source goal is not published on the fetched remote")?;
+        require_sound(&client.commit_facts_at(operation, &commit_id_revset(&goal)?)?, "fetched source goal")?;
         Ok(goal)
     }
 
@@ -365,9 +274,7 @@ impl SourceSelection {
     /// Disk bytes still need the coordinator's separate filesystem proof.
     pub fn verify_source_at(&self, client: &JjClient, operation: &str) -> Result<CommitFacts> {
         let current = client.commit_facts_at(operation, "@")?;
-        let normalized_published = self.base == self.source.commit_id
-            && current.ordinary_empty_child()
-            && current.parents[0] == self.source.commit_id;
+        let normalized_published = self.base == self.source.commit_id && current.ordinary_empty_child() && current.parents[0] == self.source.commit_id;
         if current != self.source && !normalized_published {
             bail!("source changed during fetch; source advancement refused");
         }
@@ -382,19 +289,12 @@ fn missing_remote_symbol(expression: &str) -> Option<(&str, &str)> {
     let (name, remote) = expression.split_once('@')?;
     let simple = |value: &str| {
         !value.is_empty()
-            && value
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'))
+            && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'))
             && value.split('/').all(|part| {
-                !part.is_empty()
-                    && !part.starts_with(['.', '-'])
-                    && !part.ends_with(['.', '-'])
-                    && !part.ends_with(".lock")
-                    && !part.contains("..")
+                !part.is_empty() && !part.starts_with(['.', '-']) && !part.ends_with(['.', '-']) && !part.ends_with(".lock") && !part.contains("..")
             })
     };
-    (simple(name) && simple(remote) && !remote.contains('/') && remote != "git")
-        .then_some((name, remote))
+    (simple(name) && simple(remote) && !remote.contains('/') && remote != "git").then_some((name, remote))
 }
 
 fn require_sound(facts: &CommitFacts, role: &str) -> Result<()> {
@@ -409,12 +309,9 @@ fn local_ref<'a>(refs: &'a [BookmarkRef], name: &str) -> Option<&'a BookmarkRef>
 }
 
 fn normal<'a>(reference: &'a BookmarkRef, role: &str) -> Result<&'a str> {
-    reference.normal_target().with_context(|| {
-        format!(
-            "{role} {:?} is conflicted or deleted; resolve it explicitly",
-            reference.name
-        )
-    })
+    reference
+        .normal_target()
+        .with_context(|| format!("{role} {:?} is conflicted or deleted; resolve it explicitly", reference.name))
 }
 
 fn unique<'a>(candidates: Vec<&'a BookmarkRef>, tier: &str) -> Result<&'a BookmarkRef> {
@@ -432,12 +329,7 @@ fn unique<'a>(candidates: Vec<&'a BookmarkRef>, tier: &str) -> Result<&'a Bookma
     }
 }
 
-fn has_descendant_target(
-    client: &JjClient,
-    operation: &str,
-    reference: &BookmarkRef,
-    base: &str,
-) -> Result<bool> {
+fn has_descendant_target(client: &JjClient, operation: &str, reference: &BookmarkRef, base: &str) -> Result<bool> {
     for id in reference.added.iter().chain(&reference.removed) {
         if client.is_ancestor_at(operation, base, id)? {
             return Ok(true);
@@ -446,13 +338,7 @@ fn has_descendant_target(
     Ok(false)
 }
 
-fn require_ancestor(
-    client: &JjClient,
-    operation: &str,
-    ancestor: &str,
-    descendant: &str,
-    reason: &str,
-) -> Result<()> {
+fn require_ancestor(client: &JjClient, operation: &str, ancestor: &str, descendant: &str, reason: &str) -> Result<()> {
     if !client.is_ancestor_at(operation, ancestor, descendant)? {
         bail!("{reason}: {ancestor} is not an ancestor of {descendant}");
     }
@@ -464,17 +350,9 @@ fn local_symbol_matches(expression: &str, name: &str) -> bool {
 }
 
 fn remote_symbol_matches(expression: &str, name: &str, remote: &str) -> bool {
-    [
-        name.to_owned(),
-        serde_json::to_string(name).expect("string JSON"),
-    ]
-    .iter()
-    .any(|name| {
-        [
-            remote.to_owned(),
-            serde_json::to_string(remote).expect("string JSON"),
-        ]
-        .iter()
-        .any(|remote| expression == format!("{name}@{remote}"))
+    [name.to_owned(), serde_json::to_string(name).expect("string JSON")].iter().any(|name| {
+        [remote.to_owned(), serde_json::to_string(remote).expect("string JSON")]
+            .iter()
+            .any(|remote| expression == format!("{name}@{remote}"))
     })
 }

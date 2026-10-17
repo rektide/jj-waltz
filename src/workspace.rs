@@ -102,25 +102,14 @@ impl WorkspaceInventory {
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [name] => {
-                        entries
-                            .iter_mut()
-                            .find(|entry| entry.name == *name)
-                            .expect("candidate came from entries")
-                            .root = Some(current_root.clone());
+                        entries.iter_mut().find(|entry| entry.name == *name).expect("candidate came from entries").root = Some(current_root.clone());
                         name.clone()
                     }
-                    _ => bail!(
-                        "could not determine current workspace for root {}",
-                        current_root.display()
-                    ),
+                    _ => bail!("could not determine current workspace for root {}", current_root.display()),
                 }
             }
             [name] => name.clone(),
-            _ => bail!(
-                "multiple workspaces match current root {}: {}",
-                current_root.display(),
-                matches.join(", ")
-            ),
+            _ => bail!("multiple workspaces match current root {}: {}", current_root.display(), matches.join(", ")),
         };
 
         for entry in &mut entries {
@@ -129,33 +118,26 @@ impl WorkspaceInventory {
 
         // Placement follows JJ repository-storage ownership, not Git colocation or a
         // naming convention. The owner can still exist after its workspace is forgotten.
-        let repository =
-            crate::context::repository_path(&current_root).map_err(anyhow::Error::msg)?;
+        let repository = crate::context::repository_path(&current_root).map_err(anyhow::Error::msg)?;
         let primary_root = repository
             .parent()
             .filter(|parent| parent.file_name().is_some_and(|name| name == ".jj"))
             .and_then(Path::parent)
-            .filter(|root| {
-                root.join(".jj/repo").is_dir()
-                    && root.join(".jj/repo").canonicalize().ok().as_ref() == Some(&repository)
-            })
+            .filter(|root| root.join(".jj/repo").is_dir() && root.join(".jj/repo").canonicalize().ok().as_ref() == Some(&repository))
             .map(Path::to_path_buf);
-        let default = names
-            .iter()
-            .find(|name| *name == "default")
-            .cloned()
-            .or_else(|| {
-                primary_root.as_deref().and_then(|primary| {
-                    entries
-                        .iter()
-                        .find(|entry| {
-                            entry.root.as_deref().is_some_and(|root| {
-                                canonicalize_dir(root).ok().as_deref() == Some(primary)
-                            })
-                        })
-                        .map(|entry| entry.name.clone())
-                })
-            });
+        let default = names.iter().find(|name| *name == "default").cloned().or_else(|| {
+            primary_root.as_deref().and_then(|primary| {
+                entries
+                    .iter()
+                    .find(|entry| {
+                        entry
+                            .root
+                            .as_deref()
+                            .is_some_and(|root| canonicalize_dir(root).ok().as_deref() == Some(primary))
+                    })
+                    .map(|entry| entry.name.clone())
+            })
+        });
 
         let (previous, previous_error) = read_previous_workspace(&current_root, &names)?;
 
@@ -185,36 +167,26 @@ impl WorkspaceInventory {
     /// The physical JJ store owner, never a workspace merely named `default`.
     /// Recheck the real directory and repository pointer before trusting local policy.
     pub(crate) fn primary_policy_root(&self) -> Result<&Path> {
-        let primary = self.primary_root.as_deref().context(
-            "cannot verify primary checkout for ignored-copy policy; use --copy-ignored or --no-copy-ignored",
-        )?;
+        let primary = self
+            .primary_root
+            .as_deref()
+            .context("cannot verify primary checkout for ignored-copy policy; use --copy-ignored or --no-copy-ignored")?;
         let pointer = primary.join(".jj/repo");
-        let repository =
-            crate::context::repository_path(&self.current_root).map_err(anyhow::Error::msg)?;
-        if !fs::symlink_metadata(primary)?.is_dir()
-            || !fs::symlink_metadata(&pointer)?.is_dir()
-            || pointer.canonicalize()? != repository
-        {
+        let repository = crate::context::repository_path(&self.current_root).map_err(anyhow::Error::msg)?;
+        if !fs::symlink_metadata(primary)?.is_dir() || !fs::symlink_metadata(&pointer)?.is_dir() || pointer.canonicalize()? != repository {
             bail!("primary policy owner no longer owns the JJ repository");
         }
         Ok(primary)
     }
 
     pub fn previous_name(&self) -> Result<&str> {
-        self.previous.as_deref().ok_or_else(|| {
-            anyhow!(
-                "{}",
-                self.previous_error
-                    .as_deref()
-                    .unwrap_or("no previous workspace recorded")
-            )
-        })
+        self.previous
+            .as_deref()
+            .ok_or_else(|| anyhow!("{}", self.previous_error.as_deref().unwrap_or("no previous workspace recorded")))
     }
 
     pub fn default_name(&self) -> Result<&str> {
-        self.default
-            .as_deref()
-            .ok_or_else(|| anyhow!("could not determine default workspace"))
+        self.default.as_deref().ok_or_else(|| anyhow!("could not determine default workspace"))
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -294,9 +266,7 @@ fn workspace_root_by_name_direct(name: &str) -> Result<Option<PathBuf>> {
         message
     };
     let missing_checkout = message.contains("Cannot resolve absolute workspace path")
-        && (message.contains("No such file or directory")
-            || message.contains("os error 2")
-            || message.contains("os error 3"))
+        && (message.contains("No such file or directory") || message.contains("os error 2") || message.contains("os error 3"))
         || message.contains("Workspace has no recorded path");
     if missing_checkout {
         Ok(None)
@@ -310,19 +280,12 @@ pub fn workspace_root_current() -> Result<PathBuf> {
     Ok(PathBuf::from(output.trimmed_stdout()?))
 }
 
-pub fn switch_workspace(
-    inventory: &WorkspaceInventory,
-    target: &str,
-    options: &SwitchOptions,
-) -> Result<SwitchResult> {
+pub fn switch_workspace(inventory: &WorkspaceInventory, target: &str, options: &SwitchOptions) -> Result<SwitchResult> {
     let current_name = inventory.current_name().to_owned();
     let current_root = inventory.current_root().to_path_buf();
     let current_dir = env::current_dir().context("failed to determine current directory")?;
     let relative_subdir = if options.preserve_subdir {
-        current_dir
-            .strip_prefix(&current_root)
-            .ok()
-            .map(Path::to_path_buf)
+        current_dir.strip_prefix(&current_root).ok().map(Path::to_path_buf)
     } else {
         None
     };
@@ -344,19 +307,12 @@ pub fn switch_workspace(
     })
 }
 
-pub fn switch_to_created_workspace(
-    inventory: &WorkspaceInventory,
-    created: &AddResult,
-    options: &SwitchOptions,
-) -> Result<SwitchResult> {
+pub fn switch_to_created_workspace(inventory: &WorkspaceInventory, created: &AddResult, options: &SwitchOptions) -> Result<SwitchResult> {
     let current_name = inventory.current_name().to_owned();
     let current_root = inventory.current_root().to_path_buf();
     let current_dir = env::current_dir().context("failed to determine current directory")?;
     let relative_subdir = if options.preserve_subdir {
-        current_dir
-            .strip_prefix(&current_root)
-            .ok()
-            .map(Path::to_path_buf)
+        current_dir.strip_prefix(&current_root).ok().map(Path::to_path_buf)
     } else {
         None
     };
@@ -373,19 +329,10 @@ pub fn switch_to_created_workspace(
 }
 
 pub fn record_switch(result: &SwitchResult) -> Result<()> {
-    remember_previous_workspace(
-        &result.from_workspace,
-        &result.from_path,
-        &result.workspace,
-        &result.path,
-    )
+    remember_previous_workspace(&result.from_workspace, &result.from_path, &result.workspace, &result.path)
 }
 
-pub fn add_workspace(
-    inventory: &WorkspaceInventory,
-    target: &str,
-    options: &AddOptions,
-) -> Result<AddResult> {
+pub fn add_workspace(inventory: &WorkspaceInventory, target: &str, options: &AddOptions) -> Result<AddResult> {
     let name = inventory.resolve(target)?;
     if inventory.contains(&name) {
         bail!("workspace already exists: {name}")
@@ -399,11 +346,7 @@ pub fn path_for_workspace(token: &str) -> Result<PathBuf> {
     inventory.root(&name)
 }
 
-pub fn plan_remove_workspace(
-    inventory: &WorkspaceInventory,
-    token: Option<&str>,
-    delete_dir: bool,
-) -> Result<RemovalPlan> {
+pub fn plan_remove_workspace(inventory: &WorkspaceInventory, token: Option<&str>, delete_dir: bool) -> Result<RemovalPlan> {
     let name = match token {
         Some(value) => inventory.resolve(value)?,
         None => inventory.current_name().to_owned(),
@@ -420,12 +363,7 @@ pub fn plan_remove_workspace(
 
     let store = metadata_store()?;
     let managed_metadata = store.get(&name)?;
-    crate::ownership::ensure_removal_allowed(
-        &JjClient::current()?,
-        &name,
-        Some(&path),
-        managed_metadata.as_ref(),
-    )?;
+    crate::ownership::ensure_removal_allowed(&JjClient::current()?, &name, Some(&path), managed_metadata.as_ref())?;
     let bookmarks = match &managed_metadata {
         Some(metadata) => bookmarks_for_managed_workspace(metadata)?,
         None => bookmarks_for_workspace(&name, &path)?,
@@ -441,37 +379,19 @@ pub fn plan_remove_workspace(
     })
 }
 
-pub fn execute_remove_workspace(
-    plan: RemovalPlan,
-    delete_bookmarks: bool,
-) -> Result<RemovalResult> {
+pub fn execute_remove_workspace(plan: RemovalPlan, delete_bookmarks: bool) -> Result<RemovalResult> {
     let client = JjClient::current()?;
     let current_metadata = metadata_store()?.get(&plan.workspace)?;
-    crate::ownership::ensure_removal_allowed(
-        &client,
-        &plan.workspace,
-        Some(&plan.path),
-        current_metadata.as_ref(),
-    )?;
+    crate::ownership::ensure_removal_allowed(&client, &plan.workspace, Some(&plan.path), current_metadata.as_ref())?;
     if current_metadata != plan.managed_metadata {
         bail!("workspace metadata changed during removal; review it again")
     }
     let deleted_dir = plan.delete_dir && plan.path.is_dir();
     let native_removal = deleted_dir && client.supports_workspace_removal()?;
     if native_removal {
-        crate::ownership::remove_workspace(
-            &client,
-            &plan.workspace,
-            &plan.path,
-            current_metadata.as_ref(),
-        )?;
+        crate::ownership::remove_workspace(&client, &plan.workspace, &plan.path, current_metadata.as_ref())?;
     } else {
-        crate::ownership::forget_workspace(
-            &client,
-            &plan.workspace,
-            Some(&plan.path),
-            current_metadata.as_ref(),
-        )?;
+        crate::ownership::forget_workspace(&client, &plan.workspace, Some(&plan.path), current_metadata.as_ref())?;
     }
 
     let mut deleted_bookmarks = Vec::new();
@@ -488,10 +408,7 @@ pub fn execute_remove_workspace(
     }
 
     if let Some(metadata) = &plan.managed_metadata {
-        let store = plan
-            .managed_store
-            .as_ref()
-            .expect("managed metadata plan retains its store");
+        let store = plan.managed_store.as_ref().expect("managed metadata plan retains its store");
         let removed = store.remove_if_matches(metadata).with_context(|| {
             format!(
                 "{}; managed workspace metadata cleanup failed",
@@ -546,10 +463,7 @@ fn partial_removal_progress(workspace: &str, deleted_bookmarks: &[String]) -> St
     match deleted_bookmarks {
         [] => {}
         [bookmark] => progress.push_str(&format!(" and bookmark {bookmark} was deleted")),
-        bookmarks => progress.push_str(&format!(
-            " and bookmarks {} were deleted",
-            bookmarks.join(", ")
-        )),
+        bookmarks => progress.push_str(&format!(" and bookmarks {} were deleted", bookmarks.join(", "))),
     }
     progress
 }
@@ -558,17 +472,11 @@ fn remove_workspace_directory(path: &Path) -> io::Result<()> {
     remove_workspace_directory_with(path, |path| fs::remove_dir_all(path))
 }
 
-fn remove_workspace_directory_with(
-    path: &Path,
-    mut remove: impl FnMut(&Path) -> io::Result<()>,
-) -> io::Result<()> {
+fn remove_workspace_directory_with(path: &Path, mut remove: impl FnMut(&Path) -> io::Result<()>) -> io::Result<()> {
     for attempt in 1..=REMOVE_DIRECTORY_ATTEMPTS {
         match remove(path) {
             Ok(()) => return Ok(()),
-            Err(error)
-                if error.kind() == io::ErrorKind::DirectoryNotEmpty
-                    && attempt < REMOVE_DIRECTORY_ATTEMPTS =>
-            {
+            Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty && attempt < REMOVE_DIRECTORY_ATTEMPTS => {
                 thread::sleep(REMOVE_DIRECTORY_RETRY_DELAY);
             }
             Err(error) => return Err(error),
@@ -577,11 +485,7 @@ fn remove_workspace_directory_with(
     unreachable!("directory removal loop always returns")
 }
 
-fn add_workspace_by_name_with_inventory(
-    name: &str,
-    options: &AddOptions,
-    inventory: &WorkspaceInventory,
-) -> Result<AddResult> {
+fn add_workspace_by_name_with_inventory(name: &str, options: &AddOptions, inventory: &WorkspaceInventory) -> Result<AddResult> {
     validate_workspace_name(name)?;
     let path = match &options.destination {
         Some(path) => path.clone(),
@@ -589,12 +493,7 @@ fn add_workspace_by_name_with_inventory(
     };
     require_absent_workspace_path(&path)?;
 
-    let mut args = vec![
-        "workspace".to_owned(),
-        "add".to_owned(),
-        "--name".to_owned(),
-        name.to_owned(),
-    ];
+    let mut args = vec!["workspace".to_owned(), "add".to_owned(), "--name".to_owned(), name.to_owned()];
 
     args.push("--revision".to_owned());
     args.push(options.base_commit_id.clone());
@@ -615,11 +514,7 @@ fn add_workspace_by_name_with_inventory(
     if options.colocate {
         client.require_workspace_colocation()?;
         args.push("--colocate".to_owned());
-    } else if client
-        .run(["workspace", "add", "--help"])?
-        .stdout()?
-        .contains("--no-colocate")
-    {
+    } else if client.run(["workspace", "add", "--help"])?.stdout()?.contains("--no-colocate") {
         args.push("--no-colocate".to_owned());
     }
     let previous_registrations = if options.colocate {
@@ -631,12 +526,7 @@ fn add_workspace_by_name_with_inventory(
     if added.is_err()
         && !client
             .workspace_names()
-            .with_context(|| {
-                format!(
-                    "cannot verify add outcome; checkout retained at {} for inspection",
-                    path.display()
-                )
-            })?
+            .with_context(|| format!("cannot verify add outcome; checkout retained at {} for inspection", path.display()))?
             .iter()
             .any(|candidate| candidate == name)
     {
@@ -658,8 +548,7 @@ fn add_workspace_by_name_with_inventory(
         None
     };
     if let Err(error) = added {
-        let cleanup =
-            rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
+        let cleanup = rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
         if let Some(cleanup) = cleanup {
             bail!("{error}; cleanup also failed: {cleanup}")
         }
@@ -675,11 +564,8 @@ fn add_workspace_by_name_with_inventory(
                 rollback_workspace_parts(name, &path, None, None)?;
                 let mut fallback = options.clone();
                 fallback.clone_from = None;
-                let warning = format!(
-                    "copy-on-write is unavailable for workspace {name}, using ordinary JJ workspace creation: {reason}"
-                );
-                let mut result = add_workspace_by_name_with_inventory(name, &fallback, inventory)
-                    .with_context(|| warning.clone())?;
+                let warning = format!("copy-on-write is unavailable for workspace {name}, using ordinary JJ workspace creation: {reason}");
+                let mut result = add_workspace_by_name_with_inventory(name, &fallback, inventory).with_context(|| warning.clone())?;
                 result.warning = Some(warning);
                 return Ok(result);
             }
@@ -691,8 +577,7 @@ fn add_workspace_by_name_with_inventory(
     let creation_operation_id = match client.operation_id() {
         Ok(operation_id) => operation_id,
         Err(error) => {
-            let cleanup =
-                rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
+            let cleanup = rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
             if let Some(cleanup) = cleanup {
                 bail!("{error}; cleanup also failed: {cleanup}")
             }
@@ -702,21 +587,16 @@ fn add_workspace_by_name_with_inventory(
 
     if let Some(bookmark) = &options.bookmark {
         if let Err(error) = JjClient::new(&path).run(["bookmark", "create", bookmark, "-r", "@"]) {
-            let cleanup =
-                rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
+            let cleanup = rollback_workspace_parts(name, &path, None, owned_git_worktree.as_ref()).err();
             if let Some(cleanup) = cleanup {
                 bail!("{error}; cleanup also failed: {cleanup}")
             }
             bail!(error)
         }
         if let Err(error) = fs::write(workspace_bookmark_file(&path), format!("{bookmark}\n")) {
-            let cleanup =
-                rollback_workspace_parts(name, &path, Some(bookmark), owned_git_worktree.as_ref())
-                    .err();
+            let cleanup = rollback_workspace_parts(name, &path, Some(bookmark), owned_git_worktree.as_ref()).err();
             if let Some(cleanup) = cleanup {
-                bail!(
-                    "failed to record workspace bookmark: {error}; cleanup also failed: {cleanup}"
-                )
+                bail!("failed to record workspace bookmark: {error}; cleanup also failed: {cleanup}")
             }
             bail!("failed to record workspace bookmark: {error}")
         }
@@ -746,12 +626,8 @@ fn materialize_clone(source_root: &Path, path: &Path) -> Result<Option<&'static 
         return Ok(Some("the target uses Watchman"));
     }
     let files = JjClient::new(source_root).tracked_files()?;
-    cow::clone_files(source_root, &files, path).with_context(|| {
-        format!(
-            "failed to clone files from {}; retry with --no-cow for a full checkout",
-            source_root.display()
-        )
-    })?;
+    cow::clone_files(source_root, &files, path)
+        .with_context(|| format!("failed to clone files from {}; retry with --no-cow for a full checkout", source_root.display()))?;
     if !adopt_source_tree_state(&client, source_root, path)? {
         return Ok(Some("JJ could not reuse the source working-copy state"));
     }
@@ -777,12 +653,7 @@ fn adopt_source_tree_state(client: &JjClient, source_root: &Path, path: &Path) -
     Ok(false)
 }
 
-fn rollback_failed_add(
-    error: impl Into<anyhow::Error>,
-    name: &str,
-    path: &Path,
-    bookmark: Option<&str>,
-) -> anyhow::Error {
+fn rollback_failed_add(error: impl Into<anyhow::Error>, name: &str, path: &Path, bookmark: Option<&str>) -> anyhow::Error {
     let error = error.into();
     match rollback_workspace_parts(name, path, bookmark, None) {
         Ok(()) => error,
@@ -798,11 +669,7 @@ fn require_absent_workspace_path(path: &Path) -> Result<()> {
     }
 }
 
-pub(crate) fn preflight_add_workspace(
-    inventory: &WorkspaceInventory,
-    name: &str,
-    destination: Option<&Path>,
-) -> Result<()> {
+pub(crate) fn preflight_add_workspace(inventory: &WorkspaceInventory, name: &str, destination: Option<&Path>) -> Result<()> {
     validate_workspace_name(name)?;
     if inventory.contains(name) {
         bail!("workspace already exists: {name}")
@@ -816,18 +683,10 @@ pub(crate) fn preflight_add_workspace(
 }
 
 pub fn rollback_added_workspace(result: &AddResult) -> Result<()> {
-    rollback_workspace_parts(
-        &result.workspace,
-        &result.path,
-        result.bookmark.as_deref(),
-        result.owned_git_worktree.as_ref(),
-    )
+    rollback_workspace_parts(&result.workspace, &result.path, result.bookmark.as_deref(), result.owned_git_worktree.as_ref())
 }
 
-pub(crate) fn rollback_added_workspace_with_payload(
-    result: &AddResult,
-    roots: &[PathBuf],
-) -> Result<()> {
+pub(crate) fn rollback_added_workspace_with_payload(result: &AddResult, roots: &[PathBuf]) -> Result<()> {
     rollback_workspace_parts_with_payload(
         &result.workspace,
         &result.path,
@@ -837,12 +696,7 @@ pub(crate) fn rollback_added_workspace_with_payload(
     )
 }
 
-fn rollback_workspace_parts(
-    name: &str,
-    path: &Path,
-    bookmark: Option<&str>,
-    owner: Option<&crate::ownership::OwnedGitWorktree>,
-) -> Result<()> {
+fn rollback_workspace_parts(name: &str, path: &Path, bookmark: Option<&str>, owner: Option<&crate::ownership::OwnedGitWorktree>) -> Result<()> {
     rollback_workspace_parts_with_payload(name, path, bookmark, owner, &[])
 }
 
@@ -863,10 +717,7 @@ fn rollback_workspace_parts_with_payload(
         #[cfg(unix)]
         crate::cow::payload::confined_parents(path, root)?;
         if let Err(error) = cow::remove_path(&path.join(root)) {
-            errors.push(format!(
-                "remove private payload {}: {error:#}",
-                root.display()
-            ));
+            errors.push(format!("remove private payload {}: {error:#}", root.display()));
         }
     }
     if let Some(bookmark) = bookmark
@@ -879,11 +730,7 @@ fn rollback_workspace_parts_with_payload(
     {
         errors.push(format!("delete directory {}: {error}", path.display()));
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        bail!(errors.join("; "))
-    }
+    if errors.is_empty() { Ok(()) } else { bail!(errors.join("; ")) }
 }
 
 pub fn prune_missing_workspaces() -> Result<Vec<String>> {
@@ -895,25 +742,12 @@ pub fn prune_missing_workspaces() -> Result<Vec<String>> {
             Some(path) if path.is_dir() => {}
             _ => {
                 let metadata = store.get(&entry.name)?;
-                crate::ownership::ensure_removal_allowed(
-                    &JjClient::current()?,
-                    &entry.name,
-                    entry.root.as_deref(),
-                    metadata.as_ref(),
-                )?;
-                crate::ownership::forget_workspace(
-                    &JjClient::current()?,
-                    &entry.name,
-                    entry.root.as_deref(),
-                    metadata.as_ref(),
-                )?;
+                crate::ownership::ensure_removal_allowed(&JjClient::current()?, &entry.name, entry.root.as_deref(), metadata.as_ref())?;
+                crate::ownership::forget_workspace(&JjClient::current()?, &entry.name, entry.root.as_deref(), metadata.as_ref())?;
                 if let Some(metadata) = metadata
                     && !store.remove_if_matches(&metadata)?
                 {
-                    bail!(
-                        "workspace metadata changed during prune and was retained: {}",
-                        metadata.workspace_name
-                    )
+                    bail!("workspace metadata changed during prune and was retained: {}", metadata.workspace_name)
                 }
                 removed.push(entry.name);
             }
@@ -948,32 +782,18 @@ pub fn completion_workspace_candidates() -> Result<Vec<(String, String)>> {
     Ok(candidates)
 }
 
-fn remember_previous_workspace(
-    from_name: &str,
-    from_root: &Path,
-    to_name: &str,
-    to_root: &Path,
-) -> Result<()> {
+fn remember_previous_workspace(from_name: &str, from_root: &Path, to_name: &str, to_root: &Path) -> Result<()> {
     if from_name == to_name {
         return Ok(());
     }
 
-    let mut updates = vec![(
-        workspace_state_file(from_root),
-        format!("{to_name}\n").into_bytes(),
-    )];
+    let mut updates = vec![(workspace_state_file(from_root), format!("{to_name}\n").into_bytes())];
     let to_state_dir = to_root.join(".jj");
     if to_state_dir.is_dir() {
-        updates.push((
-            workspace_state_file(to_root),
-            format!("{from_name}\n").into_bytes(),
-        ));
+        updates.push((workspace_state_file(to_root), format!("{from_name}\n").into_bytes()));
     }
 
-    let originals = updates
-        .iter()
-        .map(|(path, _)| read_optional_file(path))
-        .collect::<Result<Vec<_>>>()?;
+    let originals = updates.iter().map(|(path, _)| read_optional_file(path)).collect::<Result<Vec<_>>>()?;
     for (index, (path, contents)) in updates.iter().enumerate() {
         if let Err(error) = fs::write(path, contents) {
             let rollback_errors = updates[..=index]
@@ -984,9 +804,7 @@ fn remember_previous_workspace(
                 .map(|error| error.to_string())
                 .collect::<Vec<_>>();
             if rollback_errors.is_empty() {
-                return Err(error).with_context(|| {
-                    format!("failed to record workspace state at {}", path.display())
-                });
+                return Err(error).with_context(|| format!("failed to record workspace state at {}", path.display()));
             }
             bail!(
                 "failed to record workspace state at {}: {error}; state rollback also failed: {}",
@@ -1003,20 +821,17 @@ fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(path) {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error)
-            .with_context(|| format!("failed to inspect workspace state {}", path.display())),
+        Err(error) => Err(error).with_context(|| format!("failed to inspect workspace state {}", path.display())),
     }
 }
 
 fn restore_file(path: &Path, contents: Option<&[u8]>) -> Result<()> {
     match contents {
-        Some(contents) => fs::write(path, contents)
-            .with_context(|| format!("failed to restore workspace state {}", path.display())),
+        Some(contents) => fs::write(path, contents).with_context(|| format!("failed to restore workspace state {}", path.display())),
         None => match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error)
-                .with_context(|| format!("failed to remove workspace state {}", path.display())),
+            Err(error) => Err(error).with_context(|| format!("failed to remove workspace state {}", path.display())),
         },
     }
 }
@@ -1035,37 +850,26 @@ pub(crate) fn legacy_workspace_bookmark(root: &Path) -> Result<Option<String>> {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to read workspace bookmark {}", path.display()));
+            return Err(error).with_context(|| format!("failed to read workspace bookmark {}", path.display()));
         }
     };
-    let names = contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let names = contents.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
     match names.as_slice() {
         [name] => Ok(Some((*name).to_owned())),
         _ => bail!("workspace bookmark record is invalid: {}", path.display()),
     }
 }
 
-pub(crate) fn workspace_dir_for_name(
-    name: &str,
-    inventory: &WorkspaceInventory,
-) -> Result<PathBuf> {
-    let default_root = inventory.primary_root.clone().context(
-        "cannot choose a workspace destination without a verified primary checkout; use --path",
-    )?;
+pub(crate) fn workspace_dir_for_name(name: &str, inventory: &WorkspaceInventory) -> Result<PathBuf> {
+    let default_root = inventory
+        .primary_root
+        .clone()
+        .context("cannot choose a workspace destination without a verified primary checkout; use --path")?;
     if inventory.default.as_deref() == Some(name) {
         Ok(default_root)
     } else {
-        let parent = default_root
-            .parent()
-            .ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
-        let base_name = default_root
-            .file_name()
-            .ok_or_else(|| anyhow!("workspace root has no valid basename"))?;
+        let parent = default_root.parent().ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
+        let base_name = default_root.file_name().ok_or_else(|| anyhow!("workspace root has no valid basename"))?;
         Ok(parent.join(format!("{}.{name}", base_name.to_string_lossy())))
     }
 }
@@ -1085,25 +889,15 @@ pub(crate) fn normalize_destination(path: &Path) -> Result<PathBuf> {
                 return Ok(root);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                missing.push(
-                    ancestor
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid destination path"))?,
-                );
-                ancestor = ancestor
-                    .parent()
-                    .ok_or_else(|| anyhow!("invalid destination path"))?;
+                missing.push(ancestor.file_name().ok_or_else(|| anyhow!("invalid destination path"))?);
+                ancestor = ancestor.parent().ok_or_else(|| anyhow!("invalid destination path"))?;
             }
             Err(error) => return Err(error).context("cannot resolve destination path"),
         }
     }
 }
 
-pub(crate) fn name_for_destination(
-    inventory: &WorkspaceInventory,
-    explicit_name: Option<&str>,
-    destination: &Path,
-) -> Result<String> {
+pub(crate) fn name_for_destination(inventory: &WorkspaceInventory, explicit_name: Option<&str>, destination: &Path) -> Result<String> {
     let registered = inventory.entries().iter().find(|entry| {
         entry
             .root
@@ -1115,7 +909,9 @@ pub(crate) fn name_for_destination(
         None => match registered {
             Some(entry) => entry.name.clone(),
             None => {
-                let primary = inventory.primary_root.as_deref()
+                let primary = inventory
+                    .primary_root
+                    .as_deref()
                     .context("cannot infer a workspace name without a verified primary checkout; provide NAME")?;
                 let repo = primary
                     .file_name()
@@ -1137,28 +933,19 @@ pub(crate) fn name_for_destination(
     if let Some(entry) = registered
         && entry.name != name
     {
-        bail!(
-            "destination is registered as workspace {}, not {name}",
-            entry.name
-        )
+        bail!("destination is registered as workspace {}, not {name}", entry.name)
     }
     if inventory.contains(&name) {
         let root = normalize_destination(&inventory.root(&name)?)?;
         if root != destination {
-            bail!(
-                "workspace {name} is already registered at {}, not {}",
-                root.display(),
-                destination.display()
-            )
+            bail!("workspace {name} is already registered at {}, not {}", root.display(), destination.display())
         }
     }
     Ok(name)
 }
 
 pub(crate) fn workspace_base_root(current_root: &Path, current_name: &str) -> Result<PathBuf> {
-    let parent = current_root
-        .parent()
-        .ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
+    let parent = current_root.parent().ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
     let mut base = current_root
         .file_name()
         .and_then(|name| name.to_str())
@@ -1180,10 +967,7 @@ pub(crate) fn workspace_base_root(current_root: &Path, current_name: &str) -> Re
     Ok(parent.join(base))
 }
 
-fn read_previous_workspace(
-    root: &Path,
-    names: &[String],
-) -> Result<(Option<String>, Option<String>)> {
+fn read_previous_workspace(root: &Path, names: &[String]) -> Result<(Option<String>, Option<String>)> {
     let state_path = workspace_state_file(root);
     let contents = match fs::read_to_string(&state_path) {
         Ok(contents) => contents,
@@ -1191,27 +975,15 @@ fn read_previous_workspace(
             return Ok((None, Some("no previous workspace recorded".to_owned())));
         }
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to read workspace state {}", state_path.display())
-            });
+            return Err(error).with_context(|| format!("failed to read workspace state {}", state_path.display()));
         }
     };
-    let recorded = contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let recorded = contents.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
     if recorded.is_empty() {
         return Ok((None, Some("no previous workspace recorded".to_owned())));
     }
     if recorded.len() != 1 {
-        return Ok((
-            None,
-            Some(format!(
-                "previous workspace record is invalid: {}",
-                state_path.display()
-            )),
-        ));
+        return Ok((None, Some(format!("previous workspace record is invalid: {}", state_path.display()))));
     }
     if names.iter().any(|name| name == recorded[0]) {
         Ok((Some(recorded[0].to_owned()), None))
@@ -1254,27 +1026,15 @@ fn bookmarks_for_workspace(name: &str, root: &Path) -> Result<Vec<String>> {
     let bookmark_path = workspace_bookmark_file(root);
     let recorded = match fs::read_to_string(&bookmark_path) {
         Ok(contents) => {
-            let names = contents
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .collect::<Vec<_>>();
+            let names = contents.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
             if names.len() != 1 {
-                bail!(
-                    "workspace bookmark record is invalid: {}",
-                    bookmark_path.display()
-                )
+                bail!("workspace bookmark record is invalid: {}", bookmark_path.display())
             }
             Some(names[0].to_owned())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to read workspace bookmark {}",
-                    bookmark_path.display()
-                )
-            });
+            return Err(error).with_context(|| format!("failed to read workspace bookmark {}", bookmark_path.display()));
         }
     };
     let client = JjClient::current()?;
@@ -1284,10 +1044,7 @@ fn bookmarks_for_workspace(name: &str, root: &Path) -> Result<Vec<String>> {
         None => client.local_bookmark_names_for_workspace_at(&operation_id, name)?,
     };
     if let Some(recorded) = recorded {
-        return Ok(candidates
-            .into_iter()
-            .filter(|candidate| candidate == &recorded)
-            .collect());
+        return Ok(candidates.into_iter().filter(|candidate| candidate == &recorded).collect());
     }
     let suffix = format!("/{name}");
     Ok(candidates
@@ -1315,8 +1072,7 @@ fn metadata_store() -> Result<WorkspaceMetadataStore> {
 }
 
 fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
-    path.canonicalize()
-        .with_context(|| format!("failed to resolve {}", path.display()))
+    path.canonicalize().with_context(|| format!("failed to resolve {}", path.display()))
 }
 
 #[cfg(test)]

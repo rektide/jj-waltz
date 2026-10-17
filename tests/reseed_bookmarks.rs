@@ -19,11 +19,7 @@ fn ok(output: Output) -> String {
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 fn text(output: &Output) -> String {
-    format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
+    format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
 }
 
 impl Fixture {
@@ -40,26 +36,16 @@ impl Fixture {
             _temp: temp,
         };
         fs::create_dir(&f.config).unwrap();
-        f.jj(
-            f._temp.path(),
-            &["git", "init", "--no-colocate", f.source.to_str().unwrap()],
-        );
+        f.jj(f._temp.path(), &["git", "init", "--no-colocate", f.source.to_str().unwrap()]);
         fs::write(f.source.join("file"), b"baseline\n").unwrap();
-        fs::write(
-            f.source.join(".gitignore"),
-            b"cache/\n.env\n.jwreseed.local.toml\n",
-        )
-        .unwrap();
+        fs::write(f.source.join(".gitignore"), b"cache/\n.env\n.jwreseed.local.toml\n").unwrap();
         f.jj(&f.source, &["status"]);
         f.base = f.id(&f.source, "@");
         f.workspace("a", &f.a, &f.base);
         f.workspace("b", &f.b, &f.base);
         let probe = f._temp.path().join("cow-probe");
         if let Err(error) = reflink_copy::reflink(f.source.join("file"), &probe) {
-            assert!(
-                std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
-                "real CoW required: {error}"
-            );
+            assert!(std::env::var_os("JW_TEST_REQUIRE_COW").is_none(), "real CoW required: {error}");
             return None;
         }
         Some(f)
@@ -79,73 +65,29 @@ impl Fixture {
         ok(self.command("jj", root).args(args).output().unwrap())
     }
     fn id(&self, root: &Path, rev: &str) -> String {
-        self.jj(
-            root,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                rev,
-                "-T",
-                "commit_id",
-            ],
-        )
+        self.jj(root, &["--ignore-working-copy", "log", "--no-graph", "-r", rev, "-T", "commit_id"])
     }
     fn workspace(&self, name: &str, root: &Path, rev: &str) {
-        self.jj(
-            &self.source,
-            &[
-                "workspace",
-                "add",
-                "--name",
-                name,
-                "-r",
-                rev,
-                root.to_str().unwrap(),
-            ],
-        );
+        self.jj(&self.source, &["workspace", "add", "--name", name, "-r", rev, root.to_str().unwrap()]);
     }
     fn bookmark(&self, root: &Path, name: &str, rev: &str) {
-        self.jj(
-            root,
-            &[
-                "--ignore-working-copy",
-                "bookmark",
-                "create",
-                "-r",
-                rev,
-                "--",
-                name,
-            ],
-        );
+        self.jj(root, &["--ignore-working-copy", "bookmark", "create", "-r", rev, "--", name]);
     }
     fn reseed(&self, names: &[&str], args: &[&str]) -> Output {
-        self.command(
-            assert_cmd::cargo::cargo_bin!("jw").to_str().unwrap(),
-            &self.source,
-        )
-        .arg("reseed")
-        .args(names)
-        .args(["--source-at", &self.base])
-        .args(args)
-        .output()
-        .unwrap()
+        self.command(assert_cmd::cargo::cargo_bin!("jw").to_str().unwrap(), &self.source)
+            .arg("reseed")
+            .args(names)
+            .args(["--source-at", &self.base])
+            .args(args)
+            .output()
+            .unwrap()
     }
     fn records(&self, suffix: &str) -> Vec<serde_json::Value> {
-        let config = PathBuf::from(self.jj(
-            &self.source,
-            &["--ignore-working-copy", "config", "path", "--repo"],
-        ));
+        let config = PathBuf::from(self.jj(&self.source, &["--ignore-working-copy", "config", "path", "--repo"]));
         fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .ends_with(suffix)
-            })
+            .filter(|path| path.file_name().unwrap().to_string_lossy().ends_with(suffix))
             .map(|path| serde_json::from_slice(&fs::read(path).unwrap()).unwrap())
             .collect()
     }
@@ -178,10 +120,7 @@ fn default_guard_blocks_unbookmarked_keep_and_reset_without_refilling_a_valid_pe
             }
             assert_eq!(fs::read(f.a.join("file")).unwrap(), b"unfinished work\n");
             assert_eq!(fs::metadata(f.b.join("file")).unwrap().ino(), peer_inode);
-            assert_eq!(
-                f.jj(&f.b, &["--ignore-working-copy", "sparse", "list"]),
-                "."
-            );
+            assert_eq!(f.jj(&f.b, &["--ignore-working-copy", "sparse", "list"]), ".");
             assert!(f.records(".pending.json").is_empty());
         }
     }
@@ -193,10 +132,7 @@ fn existing_named_change_follows_normal_dirty_snapshots_and_guard_never_creates_
     f.bookmark(&f.a, "feature", "@");
     fs::write(f.a.join("file"), b"named unfinished work\n").unwrap();
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(
-        preview.contains("bookmark \"feature\" covers work tip"),
-        "{preview}"
-    );
+    assert!(preview.contains("bookmark \"feature\" covers work tip"), "{preview}");
     let preserved = f.id(&f.a, "@");
     assert_eq!(f.id(&f.a, "feature"), preserved);
     ok(f.reseed(&["a"], &[]));
@@ -205,16 +141,7 @@ fn existing_named_change_follows_normal_dirty_snapshots_and_guard_never_creates_
     assert_eq!(fs::read(f.a.join("file")).unwrap(), b"baseline\n");
     assert_eq!(f.id(&f.a, "feature"), preserved);
     assert_eq!(
-        f.jj(
-            &f.source,
-            &[
-                "--ignore-working-copy",
-                "bookmark",
-                "list",
-                "-T",
-                "name ++ \"\\n\""
-            ]
-        ),
+        f.jj(&f.source, &["--ignore-working-copy", "bookmark", "list", "-T", "name ++ \"\\n\""]),
         "feature"
     );
     assert!(f.records(".receipt.json").is_empty());
@@ -230,18 +157,12 @@ fn descendant_refs_cover_scratch_parents_but_described_empty_changes_and_merges_
     f.workspace("descendant", &descendant, &work);
     f.bookmark(&descendant, "descendant", "@");
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(
-        preview.contains(&format!("bookmark \"descendant\" covers work tip {work}")),
-        "{preview}"
-    );
+    assert!(preview.contains(&format!("bookmark \"descendant\" covers work tip {work}")), "{preview}");
     f.jj(&f.a, &["new"]);
     let scratch = f.id(&f.a, "@");
     assert_ne!(scratch, work);
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(
-        preview.contains(&format!("covers work tip {work}")),
-        "{preview}"
-    );
+    assert!(preview.contains(&format!("covers work tip {work}")), "{preview}");
     ok(f.reseed(&["a"], &[]));
     f.jj(&f.a, &["describe", "-m", "intentional empty checkpoint"]);
     let checkpoint = f.id(&f.a, "@");
@@ -273,18 +194,12 @@ fn explicit_opt_out_never_bypasses_other_safety_checks() {
         let mut preview_args = args.clone();
         preview_args.push("--dry-run");
         let preview = ok(f.reseed(&["a"], &preview_args));
-        assert!(
-            preview.contains("bookmark requirement explicitly bypassed"),
-            "{preview}"
-        );
+        assert!(preview.contains("bookmark requirement explicitly bypassed"), "{preview}");
         ok(f.reseed(&["a"], &args));
     }
     assert!(f.records(".receipt.json").is_empty());
     f.jj(&f.a, &["sparse", "set", "--clear", "--add", "file"]);
-    for args in [
-        &["--allow-unbookmarked"][..],
-        &["--allow-unbookmarked", "--dry-run"][..],
-    ] {
+    for args in [&["--allow-unbookmarked"][..], &["--allow-unbookmarked", "--dry-run"][..]] {
         let output = f.reseed(&["a"], args);
         assert!(!output.status.success());
         assert!(text(&output).contains("full sparse patterns"));
@@ -304,57 +219,20 @@ fn actual_remote_bookmark_counts_without_a_local_ref_and_removal_stops_coverage(
     let backend = f.jj(&f.source, &["--ignore-working-copy", "git", "root"]);
     // Seed an owned bare remote from JJ's actual Git objects, without any push.
     ok(f.command("git", &f.source)
-        .args([
-            "--git-dir",
-            &backend,
-            "update-ref",
-            "refs/heads/saved",
-            &work,
-        ])
+        .args(["--git-dir", &backend, "update-ref", "refs/heads/saved", &work])
         .output()
         .unwrap());
     let remote = f._temp.path().join("remote.git");
+    ok(f.command("git", &f.source).args(["clone", "--bare", &backend]).arg(&remote).output().unwrap());
     ok(f.command("git", &f.source)
-        .args(["clone", "--bare", &backend])
-        .arg(&remote)
+        .args(["--git-dir", &backend, "update-ref", "-d", "refs/heads/saved"])
         .output()
         .unwrap());
-    ok(f.command("git", &f.source)
-        .args([
-            "--git-dir",
-            &backend,
-            "update-ref",
-            "-d",
-            "refs/heads/saved",
-        ])
-        .output()
-        .unwrap());
-    f.jj(
-        &f.source,
-        &["git", "remote", "add", "backup", remote.to_str().unwrap()],
-    );
-    f.jj(
-        &f.source,
-        &["git", "fetch", "--remote", "backup", "--branch", "saved"],
-    );
-    assert_eq!(
-        f.jj(
-            &f.source,
-            &[
-                "--ignore-working-copy",
-                "bookmark",
-                "list",
-                "-T",
-                "name ++ \"\\n\""
-            ]
-        ),
-        ""
-    );
+    f.jj(&f.source, &["git", "remote", "add", "backup", remote.to_str().unwrap()]);
+    f.jj(&f.source, &["git", "fetch", "--remote", "backup", "--branch", "saved"]);
+    assert_eq!(f.jj(&f.source, &["--ignore-working-copy", "bookmark", "list", "-T", "name ++ \"\\n\""]), "");
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(
-        preview.contains(&format!("bookmark \"saved@backup\" covers work tip {work}")),
-        "{preview}"
-    );
+    assert!(preview.contains(&format!("bookmark \"saved@backup\" covers work tip {work}")), "{preview}");
     ok(f.reseed(&["a"], &[]));
     f.jj(&f.source, &["git", "remote", "remove", "backup"]);
     let blocked = f.reseed(&["a"], &["--dry-run"]);

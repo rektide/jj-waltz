@@ -47,10 +47,7 @@ fn jj_operation_id(repo: &Path, config: &Path) -> String {
 }
 
 fn jj_available() -> bool {
-    Command::new("jj")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    Command::new("jj").arg("--version").output().is_ok_and(|output| output.status.success())
 }
 
 #[test]
@@ -127,12 +124,7 @@ fn context_finds_primary_jj_checkout_for_linked_git_worktree() {
     assert_eq!(value["jj"]["workspace_root"], Value::Null);
     assert_eq!(
         value["jj"]["primary_checkout"].as_str(),
-        Some(
-            fs::canonicalize(&repo)
-                .expect("canonical repo")
-                .to_str()
-                .unwrap(),
-        )
+        Some(fs::canonicalize(&repo).expect("canonical repo").to_str().unwrap(),)
     );
 }
 
@@ -152,9 +144,7 @@ fn workspace_command_explains_git_only_checkout() {
             .output()
             .expect("run jw");
         assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("Git checkout without a JJ workspace")
-        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Git checkout without a JJ workspace"));
     }
 }
 
@@ -174,13 +164,7 @@ fn context_reports_bare_git_topology() {
     assert_eq!(value["git"]["git_dir"].as_str(), root.to_str());
     assert_eq!(value["git"]["common_dir"].as_str(), root.to_str());
     assert!(value["git"]["checkout_root"].is_null());
-    assert!(
-        value["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["code"] == "bare_repository")
-    );
+    assert!(value["diagnostics"].as_array().unwrap().iter().any(|d| d["code"] == "bare_repository"));
 }
 
 #[test]
@@ -220,22 +204,8 @@ fn context_preserves_whitespace_paths_and_jj_associations() {
         let linked = base.join(format!("linked{suffix}"));
         run("jj", &base, &["git", "init", repo.to_str().unwrap()]);
         run("git", &repo, &["commit", "--allow-empty", "-m", "initial"]);
-        run(
-            "jj",
-            &repo,
-            &[
-                "workspace",
-                "add",
-                "--name",
-                "secondary",
-                secondary.to_str().unwrap(),
-            ],
-        );
-        run(
-            "git",
-            &repo,
-            &["worktree", "add", "--detach", linked.to_str().unwrap()],
-        );
+        run("jj", &repo, &["workspace", "add", "--name", "secondary", secondary.to_str().unwrap()]);
+        run("git", &repo, &["worktree", "add", "--detach", linked.to_str().unwrap()]);
         for path in [&repo, &secondary, &linked] {
             let output = Command::cargo_bin("jw")
                 .unwrap()
@@ -251,17 +221,11 @@ fn context_preserves_whitespace_paths_and_jj_associations() {
                 assert_eq!(value["git"]["linked_worktree"], true);
             } else {
                 assert_eq!(value["jj"]["workspace_root"].as_str(), path.to_str());
-                assert_eq!(
-                    value["jj"]["repository_path"].as_str(),
-                    repo.join(".jj/repo").to_str()
-                );
+                assert_eq!(value["jj"]["repository_path"].as_str(), repo.join(".jj/repo").to_str());
             }
             if path != &secondary {
                 assert_eq!(value["git"]["checkout_root"].as_str(), path.to_str());
-                assert_eq!(
-                    value["git"]["common_dir"].as_str(),
-                    repo.join(".git").to_str()
-                );
+                assert_eq!(value["git"]["common_dir"].as_str(), repo.join(".git").to_str());
             }
         }
     }
@@ -284,8 +248,5 @@ fn explicit_nested_path_ignores_git_discovery_ceiling() {
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["git"]["checkout_root"].as_str(), root.to_str());
-    assert_eq!(
-        value["git"]["common_dir"].as_str(),
-        root.join(".git").to_str()
-    );
+    assert_eq!(value["git"]["common_dir"].as_str(), root.join(".git").to_str());
 }

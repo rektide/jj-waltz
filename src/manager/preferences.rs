@@ -32,22 +32,15 @@ fn load(path: &Path) -> Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).context("failed to read UI preferences"),
     };
-    let preferences: Preferences =
-        serde_json::from_slice(&data).context("invalid UI preferences")?;
+    let preferences: Preferences = serde_json::from_slice(&data).context("invalid UI preferences")?;
     Ok(preferences.delete_bookmarks)
 }
 
 fn save(path: &Path, delete_bookmarks: bool) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("UI preferences have no parent directory")?;
+    let parent = path.parent().context("UI preferences have no parent directory")?;
     fs::create_dir_all(parent).context("failed to create UI state directory")?;
     // Serialize writers, and replace a complete document instead of truncating live state.
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(parent.join("ui.lock"))?;
+    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).open(parent.join("ui.lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
     crate::metadata::write_json_atomic(path, &Preferences { delete_bookmarks })
 }

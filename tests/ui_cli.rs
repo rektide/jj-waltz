@@ -10,9 +10,7 @@ fn nonterminal_bare_invocation_shows_help_without_discovering_repository() {
         .current_dir(temp.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Open the interactive workspace manager",
-        ));
+        .stdout(predicate::str::contains("Open the interactive workspace manager"));
 }
 
 #[test]

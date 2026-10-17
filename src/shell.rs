@@ -18,9 +18,7 @@ pub fn complete_if_requested<F>(factory: F)
 where
     F: Fn() -> Command,
 {
-    CompleteEnv::with_factory(factory)
-        .var(COMPLETION_ENV)
-        .complete();
+    CompleteEnv::with_factory(factory).var(COMPLETION_ENV).complete();
 }
 
 pub fn write_completions(shell: Shell, out: &mut dyn Write) -> Result<()> {
@@ -33,8 +31,7 @@ pub fn write_completions(shell: Shell, out: &mut dyn Write) -> Result<()> {
     adapter
         .write_registration(COMPLETION_ENV, "jw", "jw", "jw", out)
         .with_context(|| format!("failed to write {shell_name} completions"))?;
-    out.flush()
-        .context("failed to flush generated completions")?;
+    out.flush().context("failed to flush generated completions")?;
     Ok(())
 }
 
@@ -54,18 +51,11 @@ fn switch_commands() -> impl Iterator<Item = &'static str> {
 }
 
 fn quoted_switch_commands(separator: &str) -> String {
-    switch_commands()
-        .map(|command| format!("'{command}'"))
-        .collect::<Vec<_>>()
-        .join(separator)
+    switch_commands().map(|command| format!("'{command}'")).collect::<Vec<_>>().join(separator)
 }
 
 fn quoted_passthrough_args(separator: &str) -> String {
-    PASSTHROUGH_ARGS
-        .iter()
-        .map(|arg| format!("'{arg}'"))
-        .collect::<Vec<_>>()
-        .join(separator)
+    PASSTHROUGH_ARGS.iter().map(|arg| format!("'{arg}'")).collect::<Vec<_>>().join(separator)
 }
 
 fn fish_init() -> String {
@@ -280,16 +270,10 @@ mod tests {
         for shell in Shell::value_variants() {
             let script = init_script(*shell).expect("generate init script");
             for command in switch_commands() {
-                assert!(
-                    script.contains(&format!("'{command}'")),
-                    "{shell} init omits switch command {command}"
-                );
+                assert!(script.contains(&format!("'{command}'")), "{shell} init omits switch command {command}");
             }
             for arg in PASSTHROUGH_ARGS {
-                assert!(
-                    script.contains(arg),
-                    "{shell} init omits passthrough argument {arg}"
-                );
+                assert!(script.contains(arg), "{shell} init omits passthrough argument {arg}");
             }
         }
     }
@@ -300,10 +284,7 @@ mod tests {
             let mut script = Vec::new();
             write_completions(*shell, &mut script).expect("generate completions");
             let script = String::from_utf8(script).expect("completion script is UTF-8");
-            assert!(
-                script.contains(COMPLETION_ENV),
-                "{shell} completion does not call Clap completion engine"
-            );
+            assert!(script.contains(COMPLETION_ENV), "{shell} completion does not call Clap completion engine");
         }
     }
 }

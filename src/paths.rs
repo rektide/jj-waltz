@@ -52,24 +52,12 @@ fn ordinary_windows_name(name: &std::ffi::OsStr) -> bool {
     if name.ends_with(['.', ' ']) || name.chars().any(|c| c < ' ' || "<>:\"/|?*".contains(c)) {
         return false;
     }
-    let stem = name
-        .split('.')
-        .next()
-        .unwrap_or(name)
-        .trim_end()
-        .to_ascii_uppercase();
-    !matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) && !stem
-        .strip_prefix("COM")
-        .or_else(|| stem.strip_prefix("LPT"))
-        .is_some_and(|suffix| {
-            matches!(
-                suffix,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-            )
-        })
+    let stem = name.split('.').next().unwrap_or(name).trim_end().to_ascii_uppercase();
+    !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        && !stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
 }
 
 #[cfg(all(test, windows))]
@@ -86,10 +74,7 @@ mod tests {
             (r"\\server\share\repo", r"\\server\share\repo"),
             (r"\\?\Volume{volume}\repo", r"\\?\Volume{volume}\repo"),
         ] {
-            assert_eq!(
-                external_command_path(Path::new(input)).as_ref(),
-                Path::new(expected)
-            );
+            assert_eq!(external_command_path(Path::new(input)).as_ref(), Path::new(expected));
         }
     }
 

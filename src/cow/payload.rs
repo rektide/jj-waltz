@@ -17,13 +17,7 @@ pub(crate) struct IgnoreRules {
     pub(crate) directory: tempfile::TempDir,
 }
 impl IgnoreRules {
-    pub(crate) fn new(
-        client: &JjClient,
-        operation: &str,
-        commit: &str,
-        entries: &[Entry],
-        retain_untracked: bool,
-    ) -> Result<Self> {
+    pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry], retain_untracked: bool) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         checked_git(directory.path(), ["init", "--quiet", "--template="])?;
         fs::create_dir_all(directory.path().join(".git/info"))?;
@@ -32,34 +26,19 @@ impl IgnoreRules {
         // semantics; tracked files are subsequently overridden by the desired tree.
         let old_commit = client.resolve_one_at(operation, "@")?.commit_id;
         let old_entries = self::entries(client, operation, &old_commit)?;
-        for item in if retain_untracked {
-            stamp(client.cwd())?
-        } else {
-            Vec::new()
-        } {
-            if item.path.file_name().is_some_and(|n| n == ".gitignore")
-                && !entries
-                    .iter()
-                    .chain(&old_entries)
-                    .any(|e| e.path == item.path)
-            {
+        for item in if retain_untracked { stamp(client.cwd())? } else { Vec::new() } {
+            if item.path.file_name().is_some_and(|n| n == ".gitignore") && !entries.iter().chain(&old_entries).any(|e| e.path == item.path) {
                 let path = client.cwd().join(&item.path);
                 if fs::symlink_metadata(&path)?.is_file() {
                     ignores.insert(item.path, fs::read(path)?);
                 }
             }
         }
-        for entry in entries
-            .iter()
-            .filter(|e| e.path.file_name().is_some_and(|n| n == ".gitignore"))
-        {
+        for entry in entries.iter().filter(|e| e.path.file_name().is_some_and(|n| n == ".gitignore")) {
             if entry.kind != "file" {
                 bail!("symlinked ignore files cannot be verified safely");
             }
-            ignores.insert(
-                entry.path.clone(),
-                file_bytes(client, operation, commit, &entry.path)?,
-            );
+            ignores.insert(entry.path.clone(), file_bytes(client, operation, commit, &entry.path)?);
         }
         for (path, bytes) in ignores {
             let path = directory.path().join(path);
@@ -76,17 +55,10 @@ impl IgnoreRules {
         if let Some(backend) = &backend {
             command.arg("--git-dir").arg(backend);
         }
-        let output = command
-            .args(["config", "--path", "--get", "core.excludesFile"])
-            .output()?;
+        let output = command.args(["config", "--path", "--get", "core.excludesFile"]).output()?;
         let exclude = if output.status.success() {
-            let path =
-                PathBuf::from(std::str::from_utf8(&output.stdout)?.trim_end_matches(['\r', '\n']));
-            if path.is_absolute() {
-                Some(path)
-            } else {
-                Some(client.cwd().join(path))
-            }
+            let path = PathBuf::from(std::str::from_utf8(&output.stdout)?.trim_end_matches(['\r', '\n']));
+            if path.is_absolute() { Some(path) } else { Some(client.cwd().join(path)) }
         } else if output.status.code() == Some(1) {
             std::env::var_os("XDG_CONFIG_HOME")
                 .filter(|s| !s.is_empty())
@@ -94,20 +66,14 @@ impl IgnoreRules {
                 .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".config")))
                 .map(|p| p.join("git/ignore"))
         } else {
-            bail!(
-                "cannot read Git excludes configuration: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            bail!("cannot read Git excludes configuration: {}", String::from_utf8_lossy(&output.stderr));
         };
         let global = directory.path().join(".git/jw-global-exclude");
         fs::write(&global, read_optional(exclude.as_deref())?)?;
         let global = global.to_str().context("ignore probe path not UTF-8")?;
         checked_git(directory.path(), ["config", "core.excludesFile", global])?;
         let info = backend.as_ref().map(|p| p.join("info/exclude"));
-        fs::write(
-            directory.path().join(".git/info/exclude"),
-            read_optional(info.as_deref())?,
-        )?;
+        fs::write(directory.path().join(".git/info/exclude"), read_optional(info.as_deref())?)?;
         Ok(Self { directory })
     }
     pub(crate) fn require_ignored(&self, path: &Path) -> Result<()> {
@@ -118,10 +84,7 @@ impl IgnoreRules {
     }
     fn check(&self, path: &Path, directory: bool) -> Result<()> {
         if !self.is_ignored(path, directory)? {
-            bail!(
-                "selected path is not ignored under the frozen desired rules: {}",
-                path.display()
-            );
+            bail!("selected path is not ignored under the frozen desired rules: {}", path.display());
         }
         Ok(())
     }
@@ -136,11 +99,7 @@ impl IgnoreRules {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        let mut input = path
-            .to_str()
-            .context("ignored path not UTF-8")?
-            .as_bytes()
-            .to_vec();
+        let mut input = path.to_str().context("ignored path not UTF-8")?.as_bytes().to_vec();
         if directory {
             input.push(b'/');
         }
@@ -149,10 +108,7 @@ impl IgnoreRules {
         let output = child.wait_with_output()?;
         if output.status.success() && output.stdout == input {
             Ok(true)
-        } else if output.status.code() == Some(1)
-            && output.stdout.is_empty()
-            && output.stderr.is_empty()
-        {
+        } else if output.status.code() == Some(1) && output.stdout.is_empty() && output.stderr.is_empty() {
             Ok(false)
         } else {
             bail!(
@@ -206,10 +162,7 @@ where
 {
     let output = isolated_git(root).args(args).output()?;
     if !output.status.success() {
-        bail!(
-            "ignore-rule probe failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        bail!("ignore-rule probe failed: {}", String::from_utf8_lossy(&output.stderr));
     }
     Ok(())
 }
@@ -281,29 +234,17 @@ pub(crate) fn entries(client: &JjClient, operation: &str, commit: &str) -> Resul
         };
         relative(&entry.path)?;
         if !matches!(entry.kind.as_str(), "file" | "symlink") {
-            bail!(
-                "unsupported tracked entry {} ({})",
-                entry.path.display(),
-                entry.kind
-            );
+            bail!("unsupported tracked entry {} ({})", entry.path.display(), entry.kind);
         }
         entries.push(entry);
     }
     Ok(entries)
 }
 
-pub(crate) fn file_bytes(
-    client: &JjClient,
-    operation: &str,
-    commit: &str,
-    path: &Path,
-) -> Result<Vec<u8>> {
+pub(crate) fn file_bytes(client: &JjClient, operation: &str, commit: &str, path: &Path) -> Result<Vec<u8>> {
     // Filesets are expressions, not literal paths. `file:` with a JSON-quoted
     // string preserves newlines, spaces, quotes and names resembling selectors.
-    let fileset = format!(
-        "file:{}",
-        serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?
-    );
+    let fileset = format!("file:{}", serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?);
     let output = client.run_at(operation, ["file", "show", "-r", commit, &fileset])?;
     let diagnostics = output.stderr();
     if !diagnostics.is_empty() {
@@ -333,9 +274,7 @@ pub(crate) fn stamp(root: &Path) -> Result<Vec<Stamp>> {
         children.sort_by_key(|c| c.file_name());
         for child in children {
             let path = child.path();
-            if path.parent() == Some(root)
-                && [".jj", ".git"].iter().any(|n| child.file_name() == *n)
-            {
+            if path.parent() == Some(root) && [".jj", ".git"].iter().any(|n| child.file_name() == *n) {
                 continue;
             }
             let m = fs::symlink_metadata(&path)?;
@@ -411,9 +350,5 @@ pub(crate) fn payload_digest(root: &Path, paths: &[PathBuf]) -> Result<String> {
         cow::validate_tree(&root.join(path))?;
         visit(root, path, &mut hash)?;
     }
-    Ok(hash
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }

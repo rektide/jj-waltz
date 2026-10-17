@@ -25,11 +25,7 @@ fn success(output: Output) -> String {
 }
 
 fn failure(output: Output, message: &str) {
-    assert!(
-        !output.status.success(),
-        "unexpected success: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    assert!(!output.status.success(), "unexpected success: {}", String::from_utf8_lossy(&output.stdout));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains(message),
         "expected {message:?}: {}",
@@ -39,23 +35,14 @@ fn failure(output: Output, message: &str) {
 
 impl Repo {
     fn new() -> Option<Self> {
-        let scratch = std::env::current_dir()
-            .unwrap()
-            .join(".test-agent/creation-ignored");
+        let scratch = std::env::current_dir().unwrap().join(".test-agent/creation-ignored");
         fs::create_dir_all(&scratch).unwrap();
         Self::in_directory(&scratch)
     }
 
     fn in_directory(directory: &Path) -> Option<Self> {
-        if !Command::new("jj")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success())
-        {
-            assert!(
-                std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
-                "JJ required"
-            );
+        if !Command::new("jj").arg("--version").output().is_ok_and(|o| o.status.success()) {
+            assert!(std::env::var_os("JW_TEST_REQUIRE_COW").is_none(), "JJ required");
             return None;
         }
         let temp = tempfile::tempdir_in(directory).unwrap();
@@ -68,10 +55,7 @@ impl Repo {
             config,
             base: String::new(),
         };
-        repo.jj_at(
-            repo.temp.path(),
-            &["git", "init", "--no-colocate", repo.root.to_str().unwrap()],
-        );
+        repo.jj_at(repo.temp.path(), &["git", "init", "--no-colocate", repo.root.to_str().unwrap()]);
         fs::write(
             repo.root.join(".gitignore"),
             "cache/\nnode_modules/\ntarget/\n.jwreseed.local.toml\n.jwlinks.local.toml\n.env\n",
@@ -97,21 +81,11 @@ impl Repo {
     }
 
     fn jw(&self, cwd: &Path, args: &[&str]) -> Output {
-        self.command(Path::new(assert_cmd::cargo::cargo_bin!("jw")), cwd)
-            .args(args)
-            .output()
-            .unwrap()
+        self.command(Path::new(assert_cmd::cargo::cargo_bin!("jw")), cwd).args(args).output().unwrap()
     }
 
     fn jj_at(&self, cwd: &Path, args: &[&str]) -> String {
-        success(
-            self.command(Path::new("jj"), cwd)
-                .args(args)
-                .output()
-                .unwrap(),
-        )
-        .trim()
-        .to_owned()
+        success(self.command(Path::new("jj"), cwd).args(args).output().unwrap()).trim().to_owned()
     }
 
     fn id(&self, cwd: &Path) -> String {
@@ -152,24 +126,15 @@ impl Repo {
                 true
             }
             Err(error) => {
-                assert!(
-                    std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
-                    "real CoW required: {error}"
-                );
-                assert!(
-                    matches!(error.raw_os_error(), Some(18 | 22 | 38 | 95)),
-                    "{error}"
-                );
+                assert!(std::env::var_os("JW_TEST_REQUIRE_COW").is_none(), "real CoW required: {error}");
+                assert!(matches!(error.raw_os_error(), Some(18 | 22 | 38 | 95)), "{error}");
                 false
             }
         }
     }
 
     fn absent(&self, name: &str, path: &Path) {
-        assert!(
-            !path.exists(),
-            "owned failed destination retained: {path:?}"
-        );
+        assert!(!path.exists(), "owned failed destination retained: {path:?}");
         let names = self.jj_at(&self.root, &["workspace", "list", "-T", "name ++ \"\\n\""]);
         assert!(!names.lines().any(|n| n == name), "{names}");
         assert!(
@@ -181,8 +146,7 @@ impl Repo {
         let records = self.root.join(".jj/repo/jj-waltz/workspaces");
         if records.is_dir() {
             for record in fs::read_dir(records).unwrap() {
-                let value: serde_json::Value =
-                    serde_json::from_slice(&fs::read(record.unwrap().path()).unwrap()).unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&fs::read(record.unwrap().path()).unwrap()).unwrap();
                 assert_ne!(value["metadata"]["workspace_name"].as_str(), Some(name));
             }
         }
@@ -221,10 +185,7 @@ fn nested_payload_destination_is_rejected_before_creating_any_workspace() {
         assert_eq!(repo.operation_id(), operation);
         repo.absent(name, &destination);
     }
-    assert_eq!(
-        fs::read(repo.root.join("cache/data")).unwrap(),
-        vec![b'p'; 128 * 1024]
-    );
+    assert_eq!(fs::read(repo.root.join("cache/data")).unwrap(), vec![b'p'; 128 * 1024]);
 }
 
 #[test]
@@ -249,10 +210,7 @@ fn nested_creation_still_works_when_payload_copying_is_disabled_or_matches_nothi
             args.push("--no-copy-ignored");
         }
         success(repo.jw(&repo.root, &args));
-        assert_eq!(
-            fs::read(destination.join("tracked")).unwrap(),
-            vec![b't'; 128 * 1024]
-        );
+        assert_eq!(fs::read(destination.join("tracked")).unwrap(), vec![b't'; 128 * 1024]);
         assert!(!destination.join("cache").exists());
         assert!(repo.root.join("cache/data").is_file());
     }
@@ -287,24 +245,12 @@ fn creation_source_assertion_accepts_equal_trees_without_selecting_the_target_pa
                 args.extend(["--at", "root()"]);
             }
             success(repo.jw(repo.temp.path(), &args));
-            let parent = repo.jj_at(
-                &destination,
-                &["log", "--no-graph", "-r", "parents(@)", "-T", "commit_id"],
-            );
+            let parent = repo.jj_at(&destination, &["log", "--no-graph", "-r", "parents(@)", "-T", "commit_id"]);
             if explicit_at {
-                assert_eq!(
-                    parent,
-                    repo.jj_at(
-                        &repo.root,
-                        &["log", "--no-graph", "-r", "root()", "-T", "commit_id"]
-                    )
-                );
+                assert_eq!(parent, repo.jj_at(&repo.root, &["log", "--no-graph", "-r", "root()", "-T", "commit_id"]));
                 assert!(!destination.join("tracked").exists());
             } else {
-                assert_eq!(
-                    parent, source,
-                    "assertion must not replace source @ as parent"
-                );
+                assert_eq!(parent, source, "assertion must not replace source @ as parent");
                 assert!(destination.join("tracked").is_file());
             }
         }
@@ -317,10 +263,7 @@ fn creation_source_assertion_snapshots_dirty_donor_even_with_explicit_target_at(
         let Some(repo) = Repo::new() else { return };
         fs::write(repo.root.join("tracked"), "unsnapshotted donor\n").unwrap();
         for (assertion, message) in [
-            (
-                repo.base.as_str(),
-                "source tracked tree does not match --source-at",
-            ),
+            (repo.base.as_str(), "source tracked tree does not match --source-at"),
             ("all()", "must resolve to exactly one revision"),
         ] {
             failure(
@@ -342,32 +285,14 @@ fn creation_source_assertion_snapshots_dirty_donor_even_with_explicit_target_at(
             );
             repo.absent("rejected", &repo.temp.path().join("repo.rejected"));
         }
-        assert_ne!(
-            repo.id(&repo.root),
-            repo.base,
-            "assertion must snapshot first"
-        );
-        success(repo.jw(
-            &repo.root,
-            &[
-                command,
-                "accepted",
-                "--source-at",
-                "@",
-                "--at",
-                &repo.base,
-                "--no-cow",
-            ],
-        ));
+        assert_ne!(repo.id(&repo.root), repo.base, "assertion must snapshot first");
+        success(repo.jw(&repo.root, &[command, "accepted", "--source-at", "@", "--at", &repo.base, "--no-cow"]));
         assert_eq!(
             fs::read(repo.temp.path().join("repo.accepted/tracked")).unwrap(),
             vec![b't'; 128 * 1024],
             "explicit target --at stays independent of the asserted dirty donor"
         );
-        assert_eq!(
-            fs::read(repo.root.join("tracked")).unwrap(),
-            b"unsnapshotted donor\n"
-        );
+        assert_eq!(fs::read(repo.root.join("tracked")).unwrap(), b"unsnapshotted donor\n");
     }
 }
 
@@ -382,31 +307,19 @@ fn global_selection_is_private_nested_and_independent_of_tracked_checkout_mode()
     fs::write(repo.root.join("build/tracked"), "not ignored\n").unwrap();
     repo.payload(&repo.root, "build/packages/a/node_modules/deep/target");
     repo.payload(&repo.root, "packages/b/target");
-    symlink(
-        "deep/target/data",
-        repo.root.join("build/packages/a/node_modules/link"),
-    )
-    .unwrap();
+    symlink("deep/target/data", repo.root.join("build/packages/a/node_modules/link")).unwrap();
     fs::write(repo.root.join(".env"), "not selected").unwrap();
     let result = repo.jw(&repo.root, &["add", "private", "--no-cow"]);
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("not ignored under frozen source rules")
-    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("not ignored under frozen source rules"));
     let output = success(result);
     assert!(output.contains("private"));
     let target = repo.temp.path().join("repo.private");
-    assert_eq!(
-        fs::read(target.join("build/tracked")).unwrap(),
-        b"not ignored\n"
-    );
+    assert_eq!(fs::read(target.join("build/tracked")).unwrap(), b"not ignored\n");
     assert!(!target.join(".env").exists());
     let relative = "build/packages/a/node_modules/deep/target/data";
     let donor = repo.root.join(relative);
     let copy = target.join(relative);
-    assert_ne!(
-        fs::metadata(&donor).unwrap().ino(),
-        fs::metadata(&copy).unwrap().ino()
-    );
+    assert_ne!(fs::metadata(&donor).unwrap().ino(), fs::metadata(&copy).unwrap().ino());
     assert_shared_extents(&donor, &copy);
     assert!(
         !fs::symlink_metadata(target.join("build/packages/a/node_modules"))
@@ -434,18 +347,14 @@ fn primary_local_policy_does_not_select_a_donor_or_trust_a_default_named_workspa
     let donor = repo.temp.path().join("unrelated-default");
     repo.jj_at(
         &repo.root,
-        &[
-            "workspace",
-            "add",
-            "--name",
-            "default",
-            "--revision",
-            &repo.base,
-            donor.to_str().unwrap(),
-        ],
+        &["workspace", "add", "--name", "default", "--revision", &repo.base, donor.to_str().unwrap()],
     );
     repo.global("copy_ignored=['**/target/']\n");
-    fs::write(repo.root.join(".jwreseed.local.toml"), "copy_ignored=['cache/']\nsource='/unusable'\nsource_at='absent-ref'\n[freshen]\ncommand=['never-run']\n").unwrap();
+    fs::write(
+        repo.root.join(".jwreseed.local.toml"),
+        "copy_ignored=['cache/']\nsource='/unusable'\nsource_at='absent-ref'\n[freshen]\ncommand=['never-run']\n",
+    )
+    .unwrap();
     fs::write(donor.join(".jwreseed.local.toml"), "copy_ignored=[]\n").unwrap();
     repo.payload(&donor, "cache");
     repo.payload(&donor, "target");
@@ -466,32 +375,13 @@ fn primary_local_policy_does_not_select_a_donor_or_trust_a_default_named_workspa
             "--no-links",
         ],
     ));
-    assert_eq!(
-        fs::read(chosen.join("tracked")).unwrap(),
-        b"dirty donor tracked bytes\n"
-    );
-    assert_eq!(
-        fs::read(chosen.join("cache/data")).unwrap(),
-        vec![b'd'; 128 * 1024]
-    );
+    assert_eq!(fs::read(chosen.join("tracked")).unwrap(), b"dirty donor tracked bytes\n");
+    assert_eq!(fs::read(chosen.join("cache/data")).unwrap(), vec![b'd'; 128 * 1024]);
     assert!(!chosen.join("target").exists());
-    success(repo.jw(
-        &donor,
-        &["add", "cli", "--copy-ignored", "target/", "--no-links"],
-    ));
+    success(repo.jw(&donor, &["add", "cli", "--copy-ignored", "target/", "--no-links"]));
     assert!(repo.temp.path().join("repo.cli/target/data").exists());
     assert!(!repo.temp.path().join("repo.cli/cache").exists());
-    success(repo.jw(
-        &donor,
-        &[
-            "s",
-            "disabled",
-            "--copy-ignored",
-            "cache",
-            "--no-copy-ignored",
-            "--no-links",
-        ],
-    ));
+    success(repo.jw(&donor, &["s", "disabled", "--copy-ignored", "cache", "--no-copy-ignored", "--no-links"]));
     assert!(!repo.temp.path().join("repo.disabled/cache").exists());
     fs::write(repo.root.join(".jwreseed.local.toml"), "copy_ignored=[]\n").unwrap();
     success(repo.jw(&donor, &["add", "empty", "--no-links"]));
@@ -511,20 +401,9 @@ fn existing_switch_does_not_refill_or_even_compile_creation_policy() {
     let before = repo.id(&target);
     success(repo.jw(
         &repo.root,
-        &[
-            "s",
-            "existing",
-            "--copy-ignored",
-            "also/[invalid]",
-            "--source-at",
-            "absent-ref",
-            "--no-links",
-        ],
+        &["s", "existing", "--copy-ignored", "also/[invalid]", "--source-at", "absent-ref", "--no-links"],
     ));
-    assert_eq!(
-        fs::read(target.join("cache/data")).unwrap(),
-        b"target private state"
-    );
+    assert_eq!(fs::read(target.join("cache/data")).unwrap(), b"target private state");
     assert_eq!(repo.id(&target), before);
 }
 
@@ -539,26 +418,11 @@ fn exact_target_base_must_ignore_payload_and_have_no_tracked_overlap() {
     repo.jj_at(&repo.root, &["new", &repo.base]);
     repo.payload(&repo.root, "cache");
     for (name, base, message) in [
-        (
-            "nonignored",
-            nonignored,
-            "not ignored in the desired target tree",
-        ),
+        ("nonignored", nonignored, "not ignored in the desired target tree"),
         ("tracked", tracked, "overlaps the desired target tree"),
     ] {
         failure(
-            repo.jw(
-                &repo.root,
-                &[
-                    "add",
-                    name,
-                    "--at",
-                    &base,
-                    "--copy-ignored",
-                    "cache",
-                    "--no-cow",
-                ],
-            ),
+            repo.jw(&repo.root, &["add", name, "--at", &base, "--copy-ignored", "cache", "--no-cow"]),
             message,
         );
         repo.absent(name, &repo.temp.path().join(format!("repo.{name}")));
@@ -566,36 +430,12 @@ fn exact_target_base_must_ignore_payload_and_have_no_tracked_overlap() {
     }
     if repo.cow() {
         fs::write(repo.root.join("tracked"), "donor-only dirty state\n").unwrap();
-        success(repo.jw(
-            &repo.root,
-            &[
-                "add",
-                "exact",
-                "--at",
-                &repo.base,
-                "--source-at",
-                "@",
-                "--copy-ignored",
-                "cache",
-            ],
-        ));
+        success(repo.jw(&repo.root, &["add", "exact", "--at", &repo.base, "--source-at", "@", "--copy-ignored", "cache"]));
         let target = repo.temp.path().join("repo.exact");
-        assert_eq!(
-            repo.jj_at(
-                &target,
-                &["log", "--no-graph", "-r", "parents(@)", "-T", "commit_id"]
-            ),
-            repo.base
-        );
+        assert_eq!(repo.jj_at(&target, &["log", "--no-graph", "-r", "parents(@)", "-T", "commit_id"]), repo.base);
         assert!(target.join("cache/data").is_file());
-        assert_eq!(
-            fs::read(target.join("tracked")).unwrap(),
-            vec![b't'; 128 * 1024]
-        );
-        assert_eq!(
-            fs::read(repo.root.join("tracked")).unwrap(),
-            b"donor-only dirty state\n"
-        );
+        assert_eq!(fs::read(target.join("tracked")).unwrap(), vec![b't'; 128 * 1024]);
+        assert_eq!(fs::read(repo.root.join("tracked")).unwrap(), b"donor-only dirty state\n");
     }
 }
 
@@ -612,10 +452,7 @@ fn links_cannot_substitute_or_enter_private_payload_and_local_self_override_work
     for source in ["cache", "cache/new-child"] {
         fs::write(
             repo.root.join(".jwlinks.toml"),
-            format!(
-                "[[link]]\nsource={source:?}\ntarget={:?}\n",
-                repo.root.join("cache")
-            ),
+            format!("[[link]]\nsource={source:?}\ntarget={:?}\n", repo.root.join("cache")),
         )
         .unwrap();
         failure(
@@ -626,10 +463,7 @@ fn links_cannot_substitute_or_enter_private_payload_and_local_self_override_work
     }
     fs::write(
         repo.root.join(".jwlinks.toml"),
-        format!(
-            "[[link]]\nsource='cache'\ntarget={:?}\n",
-            repo.root.join("cache")
-        ),
+        format!("[[link]]\nsource='cache'\ntarget={:?}\n", repo.root.join("cache")),
     )
     .unwrap();
     fs::write(
@@ -637,17 +471,9 @@ fn links_cannot_substitute_or_enter_private_payload_and_local_self_override_work
         "[[link]]\nsource='cache'\ntarget='cache'\nrequired=true\n",
     )
     .unwrap();
-    success(repo.jw(
-        &repo.root,
-        &["add", "private-link", "--copy-ignored", "cache"],
-    ));
+    success(repo.jw(&repo.root, &["add", "private-link", "--copy-ignored", "cache"]));
     let target = repo.temp.path().join("repo.private-link");
-    assert!(
-        !fs::symlink_metadata(target.join("cache"))
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+    assert!(!fs::symlink_metadata(target.join("cache")).unwrap().file_type().is_symlink());
     assert_shared_extents(&repo.root.join("cache/data"), &target.join("cache/data"));
     assert_eq!(fs::read(unrelated.join("keep")).unwrap(), b"keep");
 }
@@ -659,44 +485,20 @@ fn post_payload_failure_rolls_back_readonly_owned_content_only() {
         return;
     }
     repo.payload(&repo.root, "cache/readonly");
-    fs::set_permissions(
-        repo.root.join("cache/readonly"),
-        fs::Permissions::from_mode(0o555),
-    )
-    .unwrap();
+    fs::set_permissions(repo.root.join("cache/readonly"), fs::Permissions::from_mode(0o555)).unwrap();
     fs::write(
         repo.root.join(".jwlinks.toml"),
         "[[link]]\nsource='.env'\ntarget='../missing-env'\nrequired=true\n",
     )
     .unwrap();
     failure(
-        repo.jw(
-            &repo.root,
-            &[
-                "add",
-                "rollback",
-                "--bookmark",
-                "rollback",
-                "--copy-ignored",
-                "cache",
-            ],
-        ),
+        repo.jw(&repo.root, &["add", "rollback", "--bookmark", "rollback", "--copy-ignored", "cache"]),
         "required link target is missing",
     );
     repo.absent("rollback", &repo.temp.path().join("repo.rollback"));
     assert!(repo.root.join("cache/readonly/data").is_file());
-    assert_eq!(
-        fs::metadata(repo.root.join("cache/readonly"))
-            .unwrap()
-            .mode()
-            & 0o777,
-        0o555
-    );
-    fs::set_permissions(
-        repo.root.join("cache/readonly"),
-        fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    assert_eq!(fs::metadata(repo.root.join("cache/readonly")).unwrap().mode() & 0o777, 0o555);
+    fs::set_permissions(repo.root.join("cache/readonly"), fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 #[cfg(target_os = "linux")]
@@ -718,10 +520,7 @@ fn missing_payload_needs_no_clone_support_but_real_payload_has_no_fallback() {
     success(repo.jw(&repo.root, &["add", "missing", "--no-cow"]));
     repo.payload(&repo.root, "cache");
     failure(
-        repo.jw(
-            &repo.root,
-            &["s", "unsupported", "--no-cow", "--copy-ignored", "cache"],
-        ),
+        repo.jw(&repo.root, &["s", "unsupported", "--no-cow", "--copy-ignored", "cache"]),
         "real reflinks are required",
     );
     repo.absent("unsupported", &repo.temp.path().join("repo.unsupported"));
@@ -772,10 +571,7 @@ fn assert_shared_extents(source: &Path, target: &Path) {
     }
     let source = extent(source);
     let target = extent(target);
-    assert_eq!(
-        source.physical, target.physical,
-        "payload must actually share extents"
-    );
+    assert_eq!(source.physical, target.physical, "payload must actually share extents");
     assert_ne!(source.flags & 0x2000, 0, "{source:?}");
     assert_ne!(target.flags & 0x2000, 0, "{target:?}");
 }

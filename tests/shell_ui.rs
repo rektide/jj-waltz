@@ -55,20 +55,10 @@ fn mock_path(temp: &TempDir) -> (PathBuf, PathBuf) {
 fn path_env(bin: &Path) -> String {
     let mut paths = vec![bin.to_path_buf()];
     paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
-    env::join_paths(paths)
-        .expect("join PATH")
-        .to_string_lossy()
-        .into_owned()
+    env::join_paths(paths).expect("join PATH").to_string_lossy().into_owned()
 }
 
-fn run_shell(
-    shell: &str,
-    init: &str,
-    command: &str,
-    temp: &TempDir,
-    target: Option<&Path>,
-    status: Option<i32>,
-) -> Output {
+fn run_shell(shell: &str, init: &str, command: &str, temp: &TempDir, target: Option<&Path>, status: Option<i32>) -> Output {
     let (bin, log) = mock_path(temp);
     let start = temp.path().join("start");
     fs::create_dir_all(&start).expect("create start directory");
@@ -124,11 +114,7 @@ fn assert_target(shell: &str, command: &str) {
         Some(&target),
         None,
     );
-    assert!(
-        output.status.success(),
-        "{shell} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success(), "{shell} failed: {}", String::from_utf8_lossy(&output.stderr));
     let actual = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
     assert_eq!(
         fs::canonicalize(actual).expect("canonicalize actual"),
@@ -136,15 +122,8 @@ fn assert_target(shell: &str, command: &str) {
         "{shell} did not change directory"
     );
     let log = fs::read_to_string(temp.path().join("jw-ui.log")).expect("read mock log");
-    let expected = if command == "jw" {
-        "--ui-path"
-    } else {
-        "--ui-path ui"
-    };
-    assert!(
-        log.lines().any(|line| line == expected),
-        "{shell} invoked the UI with {log:?}"
-    );
+    let expected = if command == "jw" { "--ui-path" } else { "--ui-path ui" };
+    assert!(log.lines().any(|line| line == expected), "{shell} invoked the UI with {log:?}");
 }
 
 #[test]
@@ -168,20 +147,11 @@ fn available_adapters_keep_cancellation_and_failure_in_the_caller() {
         let start = temp.path().join("start");
         fs::create_dir(&start).expect("create start directory");
         let init = shell_init(shell);
-        let output = run_shell(
-            shell,
-            &init,
-            &format!("jw\n{}", print_working_directory(shell)),
-            &temp,
-            None,
-            None,
-        );
+        let output = run_shell(shell, &init, &format!("jw\n{}", print_working_directory(shell)), &temp, None, None);
         assert!(output.status.success(), "{shell} cancellation failed");
         assert_eq!(
             String::from_utf8_lossy(&output.stdout).trim(),
-            fs::canonicalize(&start)
-                .expect("canonicalize start")
-                .to_string_lossy(),
+            fs::canonicalize(&start).expect("canonicalize start").to_string_lossy(),
             "{shell} changed directory after cancellation"
         );
 

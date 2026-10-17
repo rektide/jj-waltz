@@ -82,10 +82,7 @@ impl CreationPolicy {
         self
     }
 
-    fn ignored_policy(
-        &self,
-        inventory: &workspace::WorkspaceInventory,
-    ) -> Result<cow::ignored::Policy> {
+    fn ignored_policy(&self, inventory: &workspace::WorkspaceInventory) -> Result<cow::ignored::Policy> {
         let local = if self.no_copy_ignored || self.copy_ignored.is_some() {
             None
         } else {
@@ -119,9 +116,10 @@ impl CreationPolicy {
         if allow_explicit && let Some(bookmark) = &self.explicit_bookmark {
             return Some(bookmark.clone());
         }
-        self.config.workspace.create_bookmark.then(|| {
-            config::bookmark_from_template(&self.config.workspace.bookmark_template, workspace)
-        })
+        self.config
+            .workspace
+            .create_bookmark
+            .then(|| config::bookmark_from_template(&self.config.workspace.bookmark_template, workspace))
     }
 }
 
@@ -135,17 +133,8 @@ enum CreationMode {
 }
 
 impl CreationMode {
-    fn resolve(
-        cli_cow: Option<bool>,
-        cli_colocate: Option<bool>,
-        config_cow: Option<bool>,
-        config_colocate: Option<bool>,
-    ) -> Result<Self> {
-        let conflict = || {
-            anyhow!(
-                "colocation and copy-on-write cannot be combined; use --no-cow or --no-colocate"
-            )
-        };
+    fn resolve(cli_cow: Option<bool>, cli_colocate: Option<bool>, config_cow: Option<bool>, config_colocate: Option<bool>) -> Result<Self> {
+        let conflict = || anyhow!("colocation and copy-on-write cannot be combined; use --no-cow or --no-colocate");
         match (cli_cow, cli_colocate) {
             (Some(true), Some(true)) => return Err(conflict()),
             (_, Some(true)) => return Ok(Self::Colocated),
@@ -159,11 +148,7 @@ impl CreationMode {
             }
             return Ok(Self::Colocated);
         }
-        Ok(if cow.unwrap_or(true) {
-            Self::CopyOnWrite
-        } else {
-            Self::JjOnly
-        })
+        Ok(if cow.unwrap_or(true) { Self::CopyOnWrite } else { Self::JjOnly })
     }
 }
 
@@ -258,10 +243,7 @@ impl PendingWorkspace {
 
 pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOutcome> {
     let mut inventory = workspace::WorkspaceInventory::load()?;
-    let resolved_names = names
-        .iter()
-        .map(|name| inventory.resolve(name))
-        .collect::<Result<Vec<_>>>()?;
+    let resolved_names = names.iter().map(|name| inventory.resolve(name)).collect::<Result<Vec<_>>>()?;
     let plans = resolved_names
         .into_iter()
         .map(|name| {
@@ -281,18 +263,11 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
     }
     let client = JjClient::current()?;
     let mode = policy.preflight_creation_mode(&client)?;
-    let resolved = resolve_creation_base(
-        &client,
-        policy.at_revset.as_deref(),
-        policy.source_at.as_deref(),
-    )?;
+    let resolved = resolve_creation_base(&client, policy.at_revset.as_deref(), policy.source_at.as_deref())?;
     let base = &resolved.revision;
     let store = metadata_store(&client)?;
     preflight_creations(&inventory, &store, &plans)?;
-    let config_root = policy
-        .apply_links
-        .then(|| inventory.root(inventory.default_name()?))
-        .transpose()?;
+    let config_root = policy.apply_links.then(|| inventory.root(inventory.default_name()?)).transpose()?;
     let mut checkout = plan_checkout(mode, &inventory, &plans)?;
     checkout.ignored = IgnoredPlan::prepare(
         &inventory,
@@ -324,11 +299,7 @@ pub fn add_workspaces(names: &[String], policy: &CreationPolicy) -> Result<AddOu
         .warning
         .into_iter()
         .chain(checkout.ignored.diagnostics)
-        .chain(
-            pending
-                .iter()
-                .filter_map(|created| created.result.warning.clone()),
-        )
+        .chain(pending.iter().filter_map(|created| created.result.warning.clone()))
         .collect();
     Ok(AddOutcome {
         created: pending.into_iter().map(PendingWorkspace::finish).collect(),
@@ -345,32 +316,16 @@ pub fn switch_existing_workspace(name: &str, policy: &CreationPolicy) -> Result<
     switch_workspaces_with_creation(&[name.to_owned()], policy, false)
 }
 
-fn switch_workspaces_with_creation(
-    names: &[String],
-    policy: &CreationPolicy,
-    allow_create: bool,
-) -> Result<SwitchOutcome> {
-    let (final_name, intermediate_names) = names
-        .split_last()
-        .ok_or_else(|| anyhow!("at least one workspace name is required"))?;
+fn switch_workspaces_with_creation(names: &[String], policy: &CreationPolicy, allow_create: bool) -> Result<SwitchOutcome> {
+    let (final_name, intermediate_names) = names.split_last().ok_or_else(|| anyhow!("at least one workspace name is required"))?;
     let mut inventory = workspace::WorkspaceInventory::load()?;
 
     // Resolve every token and validate every creation before mutating repository state.
-    let resolved_intermediate = intermediate_names
-        .iter()
-        .map(|name| inventory.resolve(name))
-        .collect::<Result<Vec<_>>>()?;
+    let resolved_intermediate = intermediate_names.iter().map(|name| inventory.resolve(name)).collect::<Result<Vec<_>>>()?;
     let resolved_final = inventory.resolve(final_name)?;
-    let existing = inventory
-        .entries()
-        .iter()
-        .map(|entry| entry.name.clone())
-        .collect::<HashSet<_>>();
+    let existing = inventory.entries().iter().map(|entry| entry.name.clone()).collect::<HashSet<_>>();
     if !allow_create {
-        for name in resolved_intermediate
-            .iter()
-            .chain(std::iter::once(&resolved_final))
-        {
+        for name in resolved_intermediate.iter().chain(std::iter::once(&resolved_final)) {
             if !existing.contains(name) || !inventory.root(name)?.is_dir() {
                 bail!("selected workspace `{name}` no longer exists; reopen the manager")
             }
@@ -398,11 +353,7 @@ fn switch_workspaces_with_creation(
     } else {
         None
     };
-    let all_plans = intermediate_plans
-        .iter()
-        .chain(final_plan.iter())
-        .cloned()
-        .collect::<Vec<_>>();
+    let all_plans = intermediate_plans.iter().chain(final_plan.iter()).cloned().collect::<Vec<_>>();
     let client = JjClient::current()?;
     let mode = if all_plans.is_empty() {
         CreationMode::JjOnly
@@ -412,11 +363,7 @@ fn switch_workspaces_with_creation(
     let resolved = if all_plans.is_empty() {
         None
     } else {
-        Some(resolve_creation_base(
-            &client,
-            policy.at_revset.as_deref(),
-            policy.source_at.as_deref(),
-        )?)
+        Some(resolve_creation_base(&client, policy.at_revset.as_deref(), policy.source_at.as_deref())?)
     };
     let base = resolved.as_ref().map(|resolved| &resolved.revision);
     let store = if all_plans.is_empty() {
@@ -426,10 +373,7 @@ fn switch_workspaces_with_creation(
         preflight_creations(&inventory, &store, &all_plans)?;
         Some(store)
     };
-    let config_root = policy
-        .apply_links
-        .then(|| inventory.root(inventory.default_name()?))
-        .transpose()?;
+    let config_root = policy.apply_links.then(|| inventory.root(inventory.default_name()?)).transpose()?;
     let mut checkout = plan_checkout(mode, &inventory, &all_plans)?;
     if let Some(base) = base {
         checkout.ignored = IgnoredPlan::prepare(
@@ -482,13 +426,7 @@ fn switch_workspaces_with_creation(
     };
 
     let result = if let Some(created) = &final_created {
-        match workspace::switch_to_created_workspace(
-            &inventory,
-            &created.result,
-            &SwitchOptions {
-                preserve_subdir: true,
-            },
-        ) {
+        match workspace::switch_to_created_workspace(&inventory, &created.result, &SwitchOptions { preserve_subdir: true }) {
             Ok(result) => result,
             Err(error) => {
                 let created = final_created.take().expect("created workspace exists");
@@ -497,13 +435,7 @@ fn switch_workspaces_with_creation(
             }
         }
     } else {
-        match workspace::switch_workspace(
-            &inventory,
-            &resolved_final,
-            &SwitchOptions {
-                preserve_subdir: true,
-            },
-        ) {
+        match workspace::switch_workspace(&inventory, &resolved_final, &SwitchOptions { preserve_subdir: true }) {
             Ok(result) => result,
             Err(error) => return Err(rollback_after(error, store.as_ref(), &mut intermediate)),
         }
@@ -544,10 +476,7 @@ fn switch_workspaces_with_creation(
         None => existing_links.map(LinkApplication::into_report),
     };
     Ok(SwitchOutcome {
-        intermediate: intermediate
-            .into_iter()
-            .map(PendingWorkspace::finish)
-            .collect(),
+        intermediate: intermediate.into_iter().map(PendingWorkspace::finish).collect(),
         result,
         links,
         warnings,
@@ -565,11 +494,7 @@ pub fn adopt_workspace(request: &AdoptionRequest) -> Result<AdoptionResult> {
     adopt_workspace_with_store(request, &client, &store)
 }
 
-fn adopt_workspace_with_store(
-    request: &AdoptionRequest,
-    client: &JjClient,
-    store: &WorkspaceMetadataStore,
-) -> Result<AdoptionResult> {
+fn adopt_workspace_with_store(request: &AdoptionRequest, client: &JjClient, store: &WorkspaceMetadataStore) -> Result<AdoptionResult> {
     if request.bookmark.is_some() && request.no_bookmark {
         bail!("--bookmark and --no-bookmark cannot be used together")
     }
@@ -583,12 +508,7 @@ fn adopt_workspace_with_store(
         .context("failed to resolve the workspace working-copy revision during adoption")?;
     let base = client
         .resolve_one_at(&operation_id, &request.base_revset)
-        .with_context(|| {
-            format!(
-                "adoption base {:?} must resolve to exactly one revision",
-                request.base_revset
-            )
-        })?;
+        .with_context(|| format!("adoption base {:?} must resolve to exactly one revision", request.base_revset))?;
     let bookmark = if request.no_bookmark {
         None
     } else {
@@ -602,9 +522,7 @@ fn adopt_workspace_with_store(
             .local_bookmark_names_at(&operation_id)
             .context("failed to verify the adoption bookmark at the captured operation")?;
         if !bookmarks.contains(bookmark) {
-            bail!(
-                "associated bookmark `{bookmark}` does not exist locally; create it first or adopt without a bookmark association"
-            )
+            bail!("associated bookmark `{bookmark}` does not exist locally; create it first or adopt without a bookmark association")
         }
     }
     let metadata = ManagedWorkspaceMetadata {
@@ -618,10 +536,7 @@ fn adopt_workspace_with_store(
         owned_git_worktree: None,
     };
     store.insert(&metadata)?;
-    Ok(AdoptionResult {
-        metadata,
-        current_revision,
-    })
+    Ok(AdoptionResult { metadata, current_revision })
 }
 
 /// Repair the mutable base and bookmark intent in one existing metadata record.
@@ -635,18 +550,12 @@ pub fn repair_workspace(request: &RepairRequest) -> Result<RepairResult> {
     repair_workspace_with_store(request, &client, &store)
 }
 
-fn repair_workspace_with_store(
-    request: &RepairRequest,
-    client: &JjClient,
-    store: &WorkspaceMetadataStore,
-) -> Result<RepairResult> {
+fn repair_workspace_with_store(request: &RepairRequest, client: &JjClient, store: &WorkspaceMetadataStore) -> Result<RepairResult> {
     validate_repair_request(request)?;
 
     // Capture one operation and use it for every JJ validation below. In particular, do not
     // resolve the base or bookmarks against a later operation after the workspace query.
-    let validation_operation_id = client
-        .operation_id()
-        .context("failed to capture the JJ operation for metadata repair")?;
+    let validation_operation_id = client.operation_id().context("failed to capture the JJ operation for metadata repair")?;
     let workspace_facts = client
         .workspace_target_facts_at(&validation_operation_id)
         .context("failed to inspect JJ workspaces for metadata repair")?;
@@ -662,12 +571,7 @@ fn repair_workspace_with_store(
     })?;
     let base = client
         .resolve_one_at(&validation_operation_id, &request.base_revset)
-        .with_context(|| {
-            format!(
-                "repair base {:?} must resolve to exactly one revision",
-                request.base_revset
-            )
-        })?;
+        .with_context(|| format!("repair base {:?} must resolve to exactly one revision", request.base_revset))?;
     let associated_bookmark = match &request.bookmark {
         BookmarkIntent::None => None,
         BookmarkIntent::Associate(bookmark) => {
@@ -675,9 +579,7 @@ fn repair_workspace_with_store(
                 .local_bookmark_names_at(&validation_operation_id)
                 .context("failed to verify the repair bookmark at the captured operation")?;
             if !bookmarks.contains(bookmark) {
-                bail!(
-                    "associated bookmark `{bookmark}` does not exist locally; create it first or repair without a bookmark association"
-                )
+                bail!("associated bookmark `{bookmark}` does not exist locally; create it first or repair without a bookmark association")
             }
             Some(bookmark.clone())
         }
@@ -694,10 +596,7 @@ fn repair_workspace_with_store(
         owned_git_worktree: previous.owned_git_worktree.clone(),
     };
     if !store.replace_if_matches(&previous, &replacement)? {
-        bail!(
-            "workspace metadata changed during repair and was retained: {}",
-            request.workspace_name
-        )
+        bail!("workspace metadata changed during repair and was retained: {}", request.workspace_name)
     }
 
     Ok(RepairResult {
@@ -728,11 +627,7 @@ fn validate_repair_request(request: &RepairRequest) -> Result<()> {
     Ok(())
 }
 
-fn preflight_creations(
-    inventory: &workspace::WorkspaceInventory,
-    store: &WorkspaceMetadataStore,
-    plans: &[PlannedWorkspace],
-) -> Result<()> {
+fn preflight_creations(inventory: &workspace::WorkspaceInventory, store: &WorkspaceMetadataStore, plans: &[PlannedWorkspace]) -> Result<()> {
     let mut names = HashSet::new();
     for plan in plans {
         if !names.insert(plan.name.as_str()) {
@@ -753,45 +648,25 @@ struct CreationBase {
     asserted_source: Option<String>,
 }
 
-fn resolve_creation_base(
-    client: &JjClient,
-    at_revset: Option<&str>,
-    source_at: Option<&str>,
-) -> Result<CreationBase> {
+fn resolve_creation_base(client: &JjClient, at_revset: Option<&str>, source_at: Option<&str>) -> Result<CreationBase> {
     if at_revset.is_none() || source_at.is_some() {
         // operation_id()/resolve_one_at() deliberately do not snapshot. Refresh the
         // selected source before freezing implicit @ or an opt-in donor assertion.
         // Explicit target-only --at retains its existing snapshot-free resolution.
-        client
-            .run(["status"])
-            .context("failed to snapshot source checkout before creation")?;
+        client.run(["status"]).context("failed to snapshot source checkout before creation")?;
     }
     let operation_id = client.operation_id()?;
     let asserted_source = if let Some(revset) = source_at {
         let source = client.resolve_one_at(&operation_id, "@")?;
         let assertion = client
             .resolve_one_at(&operation_id, revset)
-            .with_context(|| {
-                format!("--source-at {revset:?} must resolve to exactly one revision")
-            })?;
+            .with_context(|| format!("--source-at {revset:?} must resolve to exactly one revision"))?;
         if !client
-            .run_at(
-                &operation_id,
-                [
-                    "diff",
-                    "--from",
-                    &source.commit_id,
-                    "--to",
-                    &assertion.commit_id,
-                    "--summary",
-                ],
-            )?
+            .run_at(&operation_id, ["diff", "--from", &source.commit_id, "--to", &assertion.commit_id, "--summary"])?
             .stdout()?
             .is_empty()
         {
-            bail!(
-                "source tracked tree does not match --source-at; prepare the donor before creation"
-            );
+            bail!("source tracked tree does not match --source-at; prepare the donor before creation");
         }
         Some(source.commit_id)
     } else {
@@ -805,21 +680,14 @@ fn resolve_creation_base(
             .resolve_one_at(&operation_id, "@")
             .context("cannot resolve the source working-copy commit after snapshot"),
     }?;
-    Ok(CreationBase {
-        revision,
-        asserted_source,
-    })
+    Ok(CreationBase { revision, asserted_source })
 }
 
 /// Decide whether new workspaces clone files from the current checkout.
 ///
 /// Cloning falls back to ordinary JJ workspace creation with a warning when the filesystem
 /// cannot clone.
-fn plan_checkout(
-    mode: CreationMode,
-    inventory: &workspace::WorkspaceInventory,
-    plans: &[PlannedWorkspace],
-) -> Result<CheckoutPlan> {
+fn plan_checkout(mode: CreationMode, inventory: &workspace::WorkspaceInventory, plans: &[PlannedWorkspace]) -> Result<CheckoutPlan> {
     let Some(first) = plans.first().filter(|_| mode == CreationMode::CopyOnWrite) else {
         return Ok(CheckoutPlan::default());
     };
@@ -828,25 +696,19 @@ fn plan_checkout(
         Some(path) => path.clone(),
         None => workspace::workspace_dir_for_name(&first.name, inventory)?,
     };
-    let destination_parent = destination
-        .parent()
-        .ok_or_else(|| anyhow!("workspace path has no parent directory"))?;
-    Ok(
-        match cow::unsupported_reason(source_root, destination_parent) {
-            Some(reason) => CheckoutPlan {
-                clone_from: None,
-                warning: Some(format!(
-                    "copy-on-write is unavailable, using ordinary JJ workspace creation: {reason}"
-                )),
-                ..CheckoutPlan::default()
-            },
-            None => CheckoutPlan {
-                clone_from: Some(source_root.to_path_buf()),
-                warning: None,
-                ..CheckoutPlan::default()
-            },
+    let destination_parent = destination.parent().ok_or_else(|| anyhow!("workspace path has no parent directory"))?;
+    Ok(match cow::unsupported_reason(source_root, destination_parent) {
+        Some(reason) => CheckoutPlan {
+            clone_from: None,
+            warning: Some(format!("copy-on-write is unavailable, using ordinary JJ workspace creation: {reason}")),
+            ..CheckoutPlan::default()
         },
-    )
+        None => CheckoutPlan {
+            clone_from: Some(source_root.to_path_buf()),
+            warning: None,
+            ..CheckoutPlan::default()
+        },
+    })
 }
 
 fn create_workspace(
@@ -906,10 +768,7 @@ fn create_workspace(
                 links: None,
                 private_payload: checkout.ignored.roots().to_vec(),
             };
-            Err(with_cleanup_error(
-                error,
-                rollback_pending(store, pending).err(),
-            ))
+            Err(with_cleanup_error(error, rollback_pending(store, pending).err()))
         }
     }
 }
@@ -939,9 +798,7 @@ fn rollback_links_after(error: Error, application: Option<LinkApplication>) -> E
     };
     match application.rollback() {
         Ok(()) => error,
-        Err(rollback_error) => error.context(format!(
-            "workspace link cleanup also failed: {rollback_error:#}"
-        )),
+        Err(rollback_error) => error.context(format!("workspace link cleanup also failed: {rollback_error:#}")),
     }
 }
 
@@ -956,10 +813,7 @@ fn rollback_pending(store: &WorkspaceMetadataStore, pending: PendingWorkspace) -
         errors.push(format!("remove workspace links: {error:#}"));
     }
 
-    match workspace::rollback_added_workspace_with_payload(
-        &pending.result,
-        &pending.private_payload,
-    ) {
+    match workspace::rollback_added_workspace_with_payload(&pending.result, &pending.private_payload) {
         Ok(()) => match store.remove_if_matches(&pending.metadata) {
             Ok(true) => {}
             Ok(false) => errors.push(format!(
@@ -968,23 +822,13 @@ fn rollback_pending(store: &WorkspaceMetadataStore, pending: PendingWorkspace) -
             )),
             Err(error) => errors.push(format!("remove workspace metadata: {error:#}")),
         },
-        Err(error) => errors.push(format!(
-            "remove workspace: {error:#}; metadata retained for repair"
-        )),
+        Err(error) => errors.push(format!("remove workspace: {error:#}; metadata retained for repair")),
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        bail!(errors.join("; "))
-    }
+    if errors.is_empty() { Ok(()) } else { bail!(errors.join("; ")) }
 }
 
-fn rollback_after(
-    error: Error,
-    store: Option<&WorkspaceMetadataStore>,
-    pending: &mut Vec<PendingWorkspace>,
-) -> Error {
+fn rollback_after(error: Error, store: Option<&WorkspaceMetadataStore>, pending: &mut Vec<PendingWorkspace>) -> Error {
     let Some(store) = store else {
         debug_assert!(pending.is_empty());
         return error;
@@ -998,10 +842,7 @@ fn rollback_after(
     if cleanup_errors.is_empty() {
         error
     } else {
-        error.context(format!(
-            "workspace cleanup also failed: {}",
-            cleanup_errors.join("; ")
-        ))
+        error.context(format!("workspace cleanup also failed: {}", cleanup_errors.join("; ")))
     }
 }
 
@@ -1034,37 +875,22 @@ mod tests {
             (Some(false), None, Some(true), Some(true), Colocated),
             (Some(false), Some(false), Some(true), Some(true), JjOnly),
         ] {
-            assert_eq!(
-                CreationMode::resolve(cli_cow, cli_colocate, config_cow, config_colocate).unwrap(),
-                expected
-            );
+            assert_eq!(CreationMode::resolve(cli_cow, cli_colocate, config_cow, config_colocate).unwrap(), expected);
         }
         assert!(CreationMode::resolve(Some(true), Some(true), None, None).is_err());
         assert!(CreationMode::resolve(None, None, Some(true), Some(true)).is_err());
     }
 
     fn run_jj(cwd: &Path, args: &[&str]) -> String {
-        let output = Command::new("jj")
-            .current_dir(cwd)
-            .args(args)
-            .output()
-            .expect("execute jj");
-        assert!(
-            output.status.success(),
-            "jj {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let output = Command::new("jj").current_dir(cwd).args(args).output().expect("execute jj");
+        assert!(output.status.success(), "jj {:?} failed: {}", args, String::from_utf8_lossy(&output.stderr));
         String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
     fn test_repo() -> (TempDir, PathBuf) {
         let tempdir = tempfile::tempdir().expect("create temp directory");
         let root = tempdir.path().join("repo");
-        run_jj(
-            tempdir.path(),
-            &["git", "init", root.to_str().expect("UTF-8 test path")],
-        );
+        run_jj(tempdir.path(), &["git", "init", root.to_str().expect("UTF-8 test path")]);
         run_jj(&root, &["describe", "-m", "base"]);
         run_jj(&root, &["new"]);
         (tempdir, root)
@@ -1084,11 +910,7 @@ mod tests {
             let error = switch_existing_workspace("selected", &policy).unwrap_err();
             assert!(error.to_string().contains("no longer exists"));
             assert!(!path.exists());
-            assert!(
-                !workspace::WorkspaceInventory::load()
-                    .unwrap()
-                    .contains("selected")
-            );
+            assert!(!workspace::WorkspaceInventory::load().unwrap().contains("selected"));
             return;
         }
         if Command::new("jj").arg("--version").output().is_err() {
@@ -1096,22 +918,9 @@ mod tests {
         }
         let (temp, root) = test_repo();
         let path = temp.path().join("selected");
-        run_jj(
-            &root,
-            &[
-                "workspace",
-                "add",
-                path.to_str().unwrap(),
-                "--name",
-                "selected",
-            ],
-        );
+        run_jj(&root, &["workspace", "add", path.to_str().unwrap(), "--name", "selected"]);
         let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "lifecycle::tests::manager_switch_does_not_recreate_removed_selection",
-                "--nocapture",
-            ])
+            .args(["--exact", "lifecycle::tests::manager_switch_does_not_recreate_removed_selection", "--nocapture"])
             .current_dir(&root)
             .env(CHILD, "1")
             .env("XDG_CONFIG_HOME", temp.path().join("config"))
@@ -1155,10 +964,7 @@ mod tests {
         let mut parents = Vec::new();
         for index in 0..6 {
             run_jj(&root, &["new", "root()", "-m", &format!("parent {index}")]);
-            parents.push(run_jj(
-                &root,
-                &["log", "-r", "@", "--no-graph", "-T", "commit_id"],
-            ));
+            parents.push(run_jj(&root, &["log", "-r", "@", "--no-graph", "-T", "commit_id"]));
         }
         let mut args = vec!["new"];
         args.extend(parents.iter().map(String::as_str));
@@ -1167,9 +973,7 @@ mod tests {
         let client = JjClient::new(&root);
         assert_eq!(
             resolve_creation_base(&client, None, None).unwrap().revision,
-            resolve_creation_base(&client, Some("@"), None)
-                .unwrap()
-                .revision
+            resolve_creation_base(&client, Some("@"), None).unwrap().revision
         );
     }
 
@@ -1180,18 +984,14 @@ mod tests {
         }
         let (_tempdir, root) = test_repo();
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
 
         for token in ["@", "-", "^"] {
-            let error = repair_workspace_with_store(&repair_request(token, "@"), &client, &store)
-                .expect_err("routing token must be rejected");
+            let error = repair_workspace_with_store(&repair_request(token, "@"), &client, &store).expect_err("routing token must be rejected");
             assert!(error.to_string().contains("literal workspace name"));
         }
 
-        let error = repair_workspace_with_store(&repair_request("missing", "@"), &client, &store)
-            .expect_err("unknown workspace must be rejected");
+        let error = repair_workspace_with_store(&repair_request("missing", "@"), &client, &store).expect_err("unknown workspace must be rejected");
         assert!(error.to_string().contains("workspace does not exist"));
     }
 
@@ -1202,20 +1002,15 @@ mod tests {
         }
         let (_tempdir, root) = test_repo();
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
 
-        let error = repair_workspace_with_store(&repair_request("default", "@"), &client, &store)
-            .expect_err("unmanaged workspace must be rejected");
+        let error = repair_workspace_with_store(&repair_request("default", "@"), &client, &store).expect_err("unmanaged workspace must be rejected");
         assert!(error.to_string().contains("workspace is not managed"));
 
         let previous = repair_metadata("default");
         store.upsert(&previous).expect("insert managed metadata");
 
-        let error =
-            repair_workspace_with_store(&repair_request("default", "all()"), &client, &store)
-                .expect_err("ambiguous base must be rejected");
+        let error = repair_workspace_with_store(&repair_request("default", "all()"), &client, &store).expect_err("ambiguous base must be rejected");
         assert!(error.to_string().contains("exactly one revision"));
         assert_eq!(store.get("default").unwrap(), Some(previous.clone()));
 
@@ -1241,27 +1036,13 @@ mod tests {
         let (_tempdir, root) = test_repo();
         run_jj(&root, &["bookmark", "create", "stable", "-r", "@"]);
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
         let previous = repair_metadata("default");
         store.upsert(&previous).expect("insert managed metadata");
 
         let operation_before = client.operation_id().expect("operation before repair");
-        let bookmarks_before = client
-            .local_bookmark_names_at(&operation_before)
-            .expect("bookmarks before repair");
-        let commits_before = run_jj(
-            &root,
-            &[
-                "log",
-                "-r",
-                "all()",
-                "--no-graph",
-                "-T",
-                "commit_id ++ \"\\n\"",
-            ],
-        );
+        let bookmarks_before = client.local_bookmark_names_at(&operation_before).expect("bookmarks before repair");
+        let commits_before = run_jj(&root, &["log", "-r", "all()", "--no-graph", "-T", "commit_id ++ \"\\n\""]);
         let result = repair_workspace_with_store(
             &RepairRequest {
                 workspace_name: "default".to_owned(),
@@ -1273,42 +1054,18 @@ mod tests {
         )
         .expect("repair metadata");
         let operation_after = client.operation_id().expect("operation after repair");
-        let bookmarks_after = client
-            .local_bookmark_names_at(&operation_after)
-            .expect("bookmarks after repair");
-        let commits_after = run_jj(
-            &root,
-            &[
-                "log",
-                "-r",
-                "all()",
-                "--no-graph",
-                "-T",
-                "commit_id ++ \"\\n\"",
-            ],
-        );
+        let bookmarks_after = client.local_bookmark_names_at(&operation_after).expect("bookmarks after repair");
+        let commits_after = run_jj(&root, &["log", "-r", "all()", "--no-graph", "-T", "commit_id ++ \"\\n\""]);
 
         assert_eq!(result.previous, previous);
         assert_eq!(result.validation_operation_id, operation_before);
-        assert_eq!(
-            result.replacement.created_at_unix_ms,
-            previous.created_at_unix_ms
-        );
-        assert_eq!(
-            result.replacement.creation_operation_id,
-            previous.creation_operation_id
-        );
+        assert_eq!(result.replacement.created_at_unix_ms, previous.created_at_unix_ms);
+        assert_eq!(result.replacement.creation_operation_id, previous.creation_operation_id);
         assert_eq!(result.replacement.intended_remote, previous.intended_remote);
-        assert_eq!(
-            result.replacement.associated_bookmark.as_deref(),
-            Some("stable")
-        );
+        assert_eq!(result.replacement.associated_bookmark.as_deref(), Some("stable"));
         assert_eq!(
             result.replacement.creation_base_commit_id,
-            client
-                .resolve_one_at(&operation_before, "@")
-                .unwrap()
-                .commit_id
+            client.resolve_one_at(&operation_before, "@").unwrap().commit_id
         );
         assert_eq!(operation_after, operation_before);
         assert_eq!(bookmarks_after, bookmarks_before);
@@ -1323,38 +1080,21 @@ mod tests {
         }
         let (_tempdir, root) = test_repo();
         let path = root.parent().unwrap().join("repo.legacy");
-        run_jj(
-            &root,
-            &[
-                "workspace",
-                "add",
-                "--name",
-                "legacy",
-                "--revision",
-                "@",
-                path.to_str().unwrap(),
-            ],
-        );
+        run_jj(&root, &["workspace", "add", "--name", "legacy", "--revision", "@", path.to_str().unwrap()]);
         fs::remove_dir_all(&path).expect("remove legacy checkout");
 
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
         let previous = repair_metadata("legacy");
         store.upsert(&previous).expect("insert managed metadata");
         let operation_before = client.operation_id().expect("operation before repair");
-        let result = repair_workspace_with_store(&repair_request("legacy", "@"), &client, &store)
-            .expect("repair missing checkout metadata");
+        let result = repair_workspace_with_store(&repair_request("legacy", "@"), &client, &store).expect("repair missing checkout metadata");
 
         assert_eq!(result.validation_operation_id, operation_before);
         assert_eq!(result.replacement.associated_bookmark, None);
         assert_eq!(
             result.replacement.creation_base_commit_id,
-            client
-                .resolve_one_at(&operation_before, "@")
-                .unwrap()
-                .commit_id
+            client.resolve_one_at(&operation_before, "@").unwrap().commit_id
         );
     }
 
@@ -1366,9 +1106,7 @@ mod tests {
         let (_tempdir, root) = test_repo();
         fs::write(root.join(".jj/jw-bookmark"), "wip/legacy\n").expect("write legacy marker");
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
         let request = AdoptionRequest {
             workspace_name: "default".to_owned(),
             workspace_root: root.clone(),
@@ -1378,23 +1116,18 @@ mod tests {
         };
 
         let missing_before = client.operation_id().expect("operation before rejection");
-        let error = adopt_workspace_with_store(&request, &client, &store)
-            .expect_err("missing imported bookmark");
+        let error = adopt_workspace_with_store(&request, &client, &store).expect_err("missing imported bookmark");
         assert!(error.to_string().contains("does not exist locally"));
         assert_eq!(client.operation_id().unwrap(), missing_before);
         assert!(store.get("default").unwrap().is_none());
 
         run_jj(&root, &["bookmark", "create", "wip/legacy", "-r", "@"]);
         let before = client.operation_id().expect("operation before adoption");
-        let result =
-            adopt_workspace_with_store(&request, &client, &store).expect("adopt workspace");
+        let result = adopt_workspace_with_store(&request, &client, &store).expect("adopt workspace");
         let after = client.operation_id().expect("operation after adoption");
 
         assert_eq!(before, after);
-        assert_eq!(
-            result.metadata.associated_bookmark.as_deref(),
-            Some("wip/legacy")
-        );
+        assert_eq!(result.metadata.associated_bookmark.as_deref(), Some("wip/legacy"));
         assert!(
             adopt_workspace_with_store(
                 &AdoptionRequest {
@@ -1422,9 +1155,7 @@ mod tests {
         run_jj(&root, &["bookmark", "create", "explicit", "-r", "@"]);
         fs::write(root.join(".jj/jw-bookmark"), "one\ntwo\n").expect("write invalid marker");
         let client = JjClient::new(&root);
-        let store =
-            WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml"))
-                .expect("test metadata store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(root.join(".jj/repo/config.toml")).expect("test metadata store");
         let result = adopt_workspace_with_store(
             &AdoptionRequest {
                 workspace_name: "default".to_owned(),
@@ -1437,9 +1168,6 @@ mod tests {
             &store,
         )
         .expect("explicit bookmark bypasses legacy marker");
-        assert_eq!(
-            result.metadata.associated_bookmark.as_deref(),
-            Some("explicit")
-        );
+        assert_eq!(result.metadata.associated_bookmark.as_deref(), Some("explicit"));
     }
 }

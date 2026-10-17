@@ -2,9 +2,7 @@ use crate::config::{Config, DefaultCommand};
 use crate::context;
 use crate::doctor::DoctorEngine;
 use crate::jj::JjClient;
-use crate::lifecycle::{
-    self, AdoptionRequest, BookmarkIntent, CreatedWorkspace, CreationPolicy, RepairRequest,
-};
+use crate::lifecycle::{self, AdoptionRequest, BookmarkIntent, CreatedWorkspace, CreationPolicy, RepairRequest};
 use crate::links;
 use crate::observe::{ObservationEngine, RefreshMode, resolve_workspace_token};
 use crate::shell::{self, Shell};
@@ -69,9 +67,7 @@ enum Commands {
     Remove(RemoveCommand),
     #[command(about = "Forget missing workspaces")]
     Prune,
-    #[command(
-        about = "Reconcile an external workspace after its owner removed checkout and Git registration"
-    )]
+    #[command(about = "Reconcile an external workspace after its owner removed checkout and Git registration")]
     ReconcileExternal { name: String },
     #[command(about = "Print the current workspace root")]
     Root,
@@ -103,18 +99,9 @@ struct AddCommand {
     /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    #[arg(
-        long,
-        value_name = "REVSET",
-        help = "Create at one exact revset (default: snapshotted source @)"
-    )]
+    #[arg(long, value_name = "REVSET", help = "Create at one exact revset (default: snapshotted source @)")]
     at: Option<String>,
-    #[arg(
-        short,
-        long,
-        value_name = "BOOKMARK",
-        help = "Create a bookmark in a new workspace"
-    )]
+    #[arg(short, long, value_name = "BOOKMARK", help = "Create a bookmark in a new workspace")]
     bookmark: Option<String>,
     #[arg(
         long,
@@ -171,18 +158,9 @@ struct SwitchCommand {
     /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    #[arg(
-        long,
-        value_name = "REVSET",
-        help = "Create at one exact revset (default: snapshotted source @)"
-    )]
+    #[arg(long, value_name = "REVSET", help = "Create at one exact revset (default: snapshotted source @)")]
     at: Option<String>,
-    #[arg(
-        short,
-        long,
-        value_name = "BOOKMARK",
-        help = "Create a bookmark in a new workspace"
-    )]
+    #[arg(short, long, value_name = "BOOKMARK", help = "Create a bookmark in a new workspace")]
     bookmark: Option<String>,
     #[arg(
         long,
@@ -190,12 +168,7 @@ struct SwitchCommand {
         help = "Do not create a bookmark for a new workspace"
     )]
     no_bookmark: bool,
-    #[arg(
-        short = 'x',
-        long,
-        value_name = "COMMAND",
-        help = "Run a command after switching"
-    )]
+    #[arg(short = 'x', long, value_name = "COMMAND", help = "Run a command after switching")]
     execute: Option<String>,
     #[arg(long, hide = true, action = ArgAction::SetTrue)]
     print_path: bool,
@@ -334,11 +307,7 @@ struct AdoptCommand {
     name: String,
     #[arg(long, value_name = "REVSET", required = true)]
     base: String,
-    #[arg(
-        long,
-        value_name = "BOOKMARK",
-        help = "Record a bookmark association without creating or moving the bookmark"
-    )]
+    #[arg(long, value_name = "BOOKMARK", help = "Record a bookmark association without creating or moving the bookmark")]
     bookmark: Option<String>,
     #[arg(
         long,
@@ -487,13 +456,7 @@ struct ShellInitCommand {
 pub fn run() -> Result<()> {
     shell::complete_if_requested(Cli::command);
     let args = normalized_args();
-    if args.get(1).is_some_and(|a| a == "reseed")
-        && args
-            .iter()
-            .skip(2)
-            .take_while(|a| *a != "--")
-            .any(|a| a == "--freshen")
-    {
+    if args.get(1).is_some_and(|a| a == "reseed") && args.iter().skip(2).take_while(|a| *a != "--").any(|a| a == "--freshen") {
         bail!("reseed --freshen was removed; use `jw prepare` to prepare the source");
     }
     let cli = Cli::parse_from(args);
@@ -521,9 +484,7 @@ pub fn run() -> Result<()> {
             println!("Reconciled external workspace: {name}; commits and bookmarks retained");
             Ok(())
         }
-        Commands::Root => {
-            workspace::workspace_root_current().and_then(|root| print_line(root.display()))
-        }
+        Commands::Root => workspace::workspace_root_current().and_then(|root| print_line(root.display())),
         Commands::Current => workspace::current_workspace_name().and_then(print_line),
         Commands::Shell(cmd) => run_shell(cmd),
         Commands::Links(cmd) => run_links(cmd),
@@ -574,9 +535,7 @@ fn run_ui(shell_path: bool) -> Result<()> {
     let outcome = lifecycle::switch_existing_workspace(&name, &policy)?;
     print_switch_path(&outcome.result)?;
     if !shell_path {
-        eprintln!(
-            "The destination is printed above. Enable `jw shell init <shell>` to change your shell directory automatically."
-        );
+        eprintln!("The destination is printed above. Enable `jw shell init <shell>` to change your shell directory automatically.");
     }
     Ok(())
 }
@@ -625,8 +584,7 @@ fn run_prepare(cmd: PrepareCommand) -> Result<()> {
 }
 
 fn run_refill(request: crate::reseed::ReseedRequest) -> Result<()> {
-    let report =
-        crate::reseed::run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))?;
+    let report = crate::reseed::run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))?;
     print_refill_report(&report, "reseed")
 }
 
@@ -634,31 +592,21 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
     use crate::reseed::ReseedStatus;
     if report.dry_run {
         if command == "reseed" {
-            println!(
-                "Readiness check: JJ snapshots may record working-copy changes; no fetch, preparation, refill, checkout reset, or deletion is performed."
-            );
+            println!("Readiness check: JJ snapshots may record working-copy changes; no fetch, preparation, refill, checkout reset, or deletion is performed.");
         }
         for selected in &report.selections {
-            println!(
-                "SELECT {:?} {:?} via {}",
-                selected.name,
-                selected.root,
-                selected.origins.join(", ")
-            );
+            println!("SELECT {:?} {:?} via {}", selected.name, selected.root, selected.origins.join(", "));
         }
     }
     println!(
         "{}source: {} ({})",
         if report.dry_run { "Dry-run " } else { "" },
         report.source.display(),
-        report
-            .source_commit_id
-            .as_deref()
-            .unwrap_or(if command == "reseed" {
-                "source not verified"
-            } else {
-                "post-fetch exact commit unknown"
-            })
+        report.source_commit_id.as_deref().unwrap_or(if command == "reseed" {
+            "source not verified"
+        } else {
+            "post-fetch exact commit unknown"
+        })
     );
     if let Some(summary) = &report.preparation_summary {
         println!("{summary}");
@@ -685,9 +633,7 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
                     .join("; ")
             );
         }
-        bail!(
-            "{command} did not complete for every target; follow the reported recovery instructions before retrying"
-        )
+        bail!("{command} did not complete for every target; follow the reported recovery instructions before retrying")
     }
     Ok(())
 }
@@ -697,97 +643,32 @@ fn render_context_human(report: &context::ContextReport) -> String {
     writeln!(output, "path: {}", report.path.display()).expect("write string");
     writeln!(output, "git:").expect("write string");
     let git = &report.git;
-    writeln!(
-        output,
-        "  checkout root: {}",
-        display_optional_path(git.checkout_root.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  git dir: {}",
-        display_optional_path(git.git_dir.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  common dir: {}",
-        display_optional_path(git.common_dir.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  linked worktree: {}",
-        display_optional(git.linked_worktree.as_ref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  HEAD: {}",
-        git.head_commit.as_deref().unwrap_or("(unknown)")
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  ref: {}",
-        git.head_ref.as_deref().unwrap_or("(detached or unknown)")
-    )
-    .expect("write string");
+    writeln!(output, "  checkout root: {}", display_optional_path(git.checkout_root.as_deref())).expect("write string");
+    writeln!(output, "  git dir: {}", display_optional_path(git.git_dir.as_deref())).expect("write string");
+    writeln!(output, "  common dir: {}", display_optional_path(git.common_dir.as_deref())).expect("write string");
+    writeln!(output, "  linked worktree: {}", display_optional(git.linked_worktree.as_ref())).expect("write string");
+    writeln!(output, "  HEAD: {}", git.head_commit.as_deref().unwrap_or("(unknown)")).expect("write string");
+    writeln!(output, "  ref: {}", git.head_ref.as_deref().unwrap_or("(detached or unknown)")).expect("write string");
     let jj = &report.jj;
     writeln!(output, "jj:").expect("write string");
-    writeln!(
-        output,
-        "  workspace root: {}",
-        display_optional_path(jj.workspace_root.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  workspace name: {}",
-        jj.workspace_name.as_deref().unwrap_or("(unknown)")
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  repository: {}",
-        display_optional_path(jj.repository_path.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  Git backend: {}",
-        display_optional_path(jj.git_backend_dir.as_deref())
-    )
-    .expect("write string");
+    writeln!(output, "  workspace root: {}", display_optional_path(jj.workspace_root.as_deref())).expect("write string");
+    writeln!(output, "  workspace name: {}", jj.workspace_name.as_deref().unwrap_or("(unknown)")).expect("write string");
+    writeln!(output, "  repository: {}", display_optional_path(jj.repository_path.as_deref())).expect("write string");
+    writeln!(output, "  Git backend: {}", display_optional_path(jj.git_backend_dir.as_deref())).expect("write string");
     writeln!(
         output,
         "  Git backend common dir: {}",
         display_optional_path(jj.git_backend_common_dir.as_deref())
     )
     .expect("write string");
-    writeln!(
-        output,
-        "  primary checkout: {}",
-        display_optional_path(jj.primary_checkout.as_deref())
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "  primary workspace: {}",
-        jj.primary_workspace.as_deref().unwrap_or("(unknown)")
-    )
-    .expect("write string");
+    writeln!(output, "  primary checkout: {}", display_optional_path(jj.primary_checkout.as_deref())).expect("write string");
+    writeln!(output, "  primary workspace: {}", jj.primary_workspace.as_deref().unwrap_or("(unknown)")).expect("write string");
     if report.diagnostics.is_empty() {
         output.push_str("diagnostics: none\n");
     } else {
         output.push_str("diagnostics:\n");
         for diagnostic in &report.diagnostics {
-            writeln!(
-                output,
-                "  [{:?}] {}: {}",
-                diagnostic.severity, diagnostic.code, diagnostic.message
-            )
-            .expect("write string");
+            writeln!(output, "  [{:?}] {}: {}", diagnostic.severity, diagnostic.code, diagnostic.message).expect("write string");
         }
     }
     output
@@ -908,21 +789,13 @@ fn creation_location(
     if path.is_some() && names.len() > 1 {
         bail!("--path selects a single workspace; provide at most one NAME")
     }
-    let destination = path
-        .as_deref()
-        .map(workspace::normalize_destination)
-        .transpose()?;
+    let destination = path.as_deref().map(workspace::normalize_destination).transpose()?;
     if let Some(source) = source {
-        std::env::set_current_dir(&source)
-            .with_context(|| format!("cannot enter source checkout {}", source.display()))?;
+        std::env::set_current_dir(&source).with_context(|| format!("cannot enter source checkout {}", source.display()))?;
     }
     let names = if let Some(destination) = &destination {
         let inventory = workspace::WorkspaceInventory::load()?;
-        vec![workspace::name_for_destination(
-            &inventory,
-            names.first().map(String::as_str),
-            destination,
-        )?]
+        vec![workspace::name_for_destination(&inventory, names.first().map(String::as_str), destination)?]
     } else {
         names
     };
@@ -930,14 +803,8 @@ fn creation_location(
 }
 
 fn print_switch_path(result: &workspace::SwitchResult) -> Result<()> {
-    let path = result
-        .relative_subdir
-        .as_ref()
-        .map(|relative| result.path.join(relative));
-    let path = path
-        .as_ref()
-        .filter(|path| path.is_dir())
-        .unwrap_or(&result.path);
+    let path = result.relative_subdir.as_ref().map(|relative| result.path.join(relative));
+    let path = path.as_ref().filter(|path| path.is_dir()).unwrap_or(&result.path);
     print_line(path.display())
 }
 
@@ -991,8 +858,7 @@ fn run_list(cmd: ListCommand) -> Result<()> {
 
     let config = Config::load()?;
     validate_trunk_revset(&config.trunk.revset)?;
-    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?
-        .capture_list(cmd.refresh.unwrap_or(ListRefresh::Current).into())?;
+    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?.capture_list(cmd.refresh.unwrap_or(ListRefresh::Current).into())?;
     write_json(&envelope)
 }
 
@@ -1012,9 +878,7 @@ fn render_list_plain() -> Result<String> {
         let path = match entry.root.as_deref() {
             Some(path) => match std::fs::metadata(path) {
                 Ok(_) => path.display().to_string(),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    "(missing)".to_owned()
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => "(missing)".to_owned(),
                 Err(error) => return Err(error).context("cannot inspect listed workspace path"),
             },
             None => "(missing)".to_owned(),
@@ -1028,8 +892,7 @@ fn render_list_plain() -> Result<String> {
 fn run_status(cmd: StatusCommand) -> Result<()> {
     let config = Config::load()?;
     validate_trunk_revset(&config.trunk.revset)?;
-    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?
-        .capture_status(&cmd.workspace, cmd.refresh.into())?;
+    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?.capture_status(&cmd.workspace, cmd.refresh.into())?;
     match cmd.format {
         OutputFormat::Json => write_json(&envelope),
         OutputFormat::Plain => write_text(&render_status_plain(&envelope)),
@@ -1068,11 +931,7 @@ fn run_adopt(cmd: AdoptCommand) -> Result<()> {
         no_bookmark: cmd.no_bookmark,
     })?;
 
-    let bookmark = result
-        .metadata
-        .associated_bookmark
-        .as_deref()
-        .unwrap_or("(none)");
+    let bookmark = result.metadata.associated_bookmark.as_deref().unwrap_or("(none)");
     let output = format!(
         "Adopted workspace: {}\n  path: {}\n  creation base: {}\n  frozen operation: {}\n  current revision: {} ({})\n  bookmark: {}\n  stack analysis: deferred to milestone 1\n",
         result.metadata.workspace_name,
@@ -1097,16 +956,8 @@ fn run_repair(cmd: RepairCommand) -> Result<()> {
         base_revset: cmd.base,
         bookmark,
     })?;
-    let previous_bookmark = result
-        .previous
-        .associated_bookmark
-        .as_deref()
-        .unwrap_or("(none)");
-    let replacement_bookmark = result
-        .replacement
-        .associated_bookmark
-        .as_deref()
-        .unwrap_or("(none)");
+    let previous_bookmark = result.previous.associated_bookmark.as_deref().unwrap_or("(none)");
+    let replacement_bookmark = result.replacement.associated_bookmark.as_deref().unwrap_or("(none)");
     let output = format!(
         "Repaired workspace: {}\n  validation operation: {}\n  previous creation base: {}\n  creation base: {}\n  previous bookmark: {}\n  bookmark: {}\n",
         result.replacement.workspace_name,
@@ -1127,20 +978,14 @@ fn validate_trunk_revset(revset: &str) -> Result<()> {
 }
 
 fn render_status_plain(envelope: &SnapshotEnvelope) -> String {
-    let workspace = envelope
-        .workspaces
-        .first()
-        .expect("status envelope contains one workspace");
+    let workspace = envelope.workspaces.first().expect("status envelope contains one workspace");
     let mut output = String::new();
     writeln!(output, "workspace: {}", workspace.name).expect("write string");
     writeln!(output, "operation: {}", envelope.repository.operation_id).expect("write string");
     writeln!(
         output,
         "path: {}",
-        workspace
-            .path
-            .as_deref()
-            .map_or_else(|| "(missing)".into(), |path| path.display().to_string())
+        workspace.path.as_deref().map_or_else(|| "(missing)".into(), |path| path.display().to_string())
     )
     .expect("write string");
     writeln!(
@@ -1161,18 +1006,8 @@ fn render_status_plain(envelope: &SnapshotEnvelope) -> String {
         }
     )
     .expect("write string");
-    writeln!(
-        output,
-        "revision: {} ({}) {}",
-        workspace.commit_id, workspace.change_id, workspace.description
-    )
-    .expect("write string");
-    writeln!(
-        output,
-        "trunk: {} ({})",
-        envelope.repository.trunk.commit_id, envelope.repository.trunk.revset
-    )
-    .expect("write string");
+    writeln!(output, "revision: {} ({}) {}", workspace.commit_id, workspace.change_id, workspace.description).expect("write string");
+    writeln!(output, "trunk: {} ({})", envelope.repository.trunk.commit_id, envelope.repository.trunk.revset).expect("write string");
     if workspace.hazards.is_empty() {
         output.push_str("hazards: none\n");
     } else {
@@ -1187,11 +1022,7 @@ fn render_status_plain(envelope: &SnapshotEnvelope) -> String {
 fn describe_working_copy(status: WorkingCopyStatus) -> String {
     match status {
         WorkingCopyStatus::Empty => "empty".to_owned(),
-        WorkingCopyStatus::Modified {
-            files,
-            added,
-            removed,
-        } => format!("modified ({files} files, +{added}/-{removed})"),
+        WorkingCopyStatus::Modified { files, added, removed } => format!("modified ({files} files, +{added}/-{removed})"),
         WorkingCopyStatus::Conflicted { conflicts } => {
             format!("conflicted ({conflicts} files)")
         }
@@ -1225,16 +1056,11 @@ fn run_remove(cmd: RemoveCommand) -> Result<()> {
     let delete_dir = !cmd.keep_dir;
     let inventory = workspace::WorkspaceInventory::load()?;
     let plans = if cmd.names.is_empty() {
-        vec![workspace::plan_remove_workspace(
-            &inventory, None, delete_dir,
-        )?]
+        vec![workspace::plan_remove_workspace(&inventory, None, delete_dir)?]
     } else {
         cmd.names
             .iter()
-            .map(|name| {
-                workspace::plan_remove_workspace(&inventory, Some(name), delete_dir)
-                    .with_context(|| format!("failed to remove workspace {name}"))
-            })
+            .map(|name| workspace::plan_remove_workspace(&inventory, Some(name), delete_dir).with_context(|| format!("failed to remove workspace {name}")))
             .collect::<Result<Vec<_>>>()?
     };
 
@@ -1361,9 +1187,7 @@ fn complete_workspaces(current: &OsStr) -> Vec<CompletionCandidate> {
     candidates
         .into_iter()
         .filter(|(candidate, _)| candidate.starts_with(current.as_ref()))
-        .map(|(candidate, description)| {
-            CompletionCandidate::new(candidate).help(Some(description.into()))
-        })
+        .map(|(candidate, description)| CompletionCandidate::new(candidate).help(Some(description.into())))
         .collect()
 }
 
@@ -1404,16 +1228,7 @@ mod reseed_cli_tests {
 
     #[test]
     fn one_off_reseed_needs_no_group() {
-        let cli = Cli::try_parse_from([
-            "jw",
-            "reseed",
-            "feature",
-            "--from",
-            "/prepared",
-            "--source-at",
-            "dev@origin",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--from", "/prepared", "--source-at", "dev@origin"]).unwrap();
         let Some(Commands::Reseed(cmd)) = cli.command else {
             panic!("expected reseed command")
         };
@@ -1424,48 +1239,16 @@ mod reseed_cli_tests {
 
     #[test]
     fn reseed_rejects_resume_and_validates_group_miss_policy() {
-        for args in [
-            vec!["feature", "--resume"],
-            vec!["--group", "all", "--resume"],
-            vec!["--resume", "--dry-run"],
-        ] {
+        for args in [vec!["feature", "--resume"], vec!["--group", "all", "--resume"], vec!["--resume", "--dry-run"]] {
             assert!(Cli::try_parse_from(["jw", "reseed"].into_iter().chain(args)).is_err());
         }
-        assert!(
-            Cli::try_parse_from([
-                "jw",
-                "reseed",
-                "--group",
-                "workers",
-                "--on-unmatched",
-                "warn"
-            ])
-            .is_ok()
-        );
-        assert!(
-            Cli::try_parse_from([
-                "jw",
-                "reseed",
-                "--group",
-                "workers",
-                "--on-unmatched",
-                "ignore"
-            ])
-            .is_err()
-        );
+        assert!(Cli::try_parse_from(["jw", "reseed", "--group", "workers", "--on-unmatched", "warn"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "reseed", "--group", "workers", "--on-unmatched", "ignore"]).is_err());
     }
 
     #[test]
     fn reseed_no_copy_ignored_overrides_an_explicit_selection() {
-        let cli = Cli::try_parse_from([
-            "jw",
-            "reseed",
-            "feature",
-            "--copy-ignored",
-            "node_modules",
-            "--no-copy-ignored",
-        ])
-        .unwrap();
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--copy-ignored", "node_modules", "--no-copy-ignored"]).unwrap();
         let Some(Commands::Reseed(command)) = cli.command else {
             panic!("expected reseed");
         };

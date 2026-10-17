@@ -38,17 +38,11 @@ const POWERSHELL_EXECUTE_TEST_ARGS: &[&str] = &[
 ];
 
 fn jj_available() -> bool {
-    Command::new("jj")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    Command::new("jj").arg("--version").output().is_ok_and(|output| output.status.success())
 }
 
 fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    Command::new(command).arg("--version").output().is_ok_and(|output| output.status.success())
 }
 
 macro_rules! skip_without_jj {
@@ -67,13 +61,7 @@ fn explicit_destinations_infer_variants_from_primary_and_preserve_named_placemen
     repo.run_jj(["workspace", "rename", "primary"]);
     let parent = repo.default_root.parent().unwrap();
     let other_default = parent.join("unrelated-default");
-    repo.run_jj([
-        "workspace",
-        "add",
-        other_default.to_str().unwrap(),
-        "--name",
-        "default",
-    ]);
+    repo.run_jj(["workspace", "add", other_default.to_str().unwrap(), "--name", "default"]);
     repo.cmd()
         .args(["path", "default"])
         .assert()
@@ -104,10 +92,7 @@ fn explicit_destinations_infer_variants_from_primary_and_preserve_named_placemen
         .assert()
         .success()
         .stdout(predicate::str::contains("Created workspace: next"));
-    repo.cmd_at(&arbitrary)
-        .args(["add", "named"])
-        .assert()
-        .success();
+    repo.cmd_at(&arbitrary).args(["add", "named"]).assert().success();
     assert!(parent.join("repo.named").is_dir());
     assert_eq!(
         repo.jj_stdout(&arbitrary, &["workspace", "root", "--name", "myfix"]),
@@ -116,11 +101,7 @@ fn explicit_destinations_infer_variants_from_primary_and_preserve_named_placemen
 
     // Native registrations outrank basename inference, including explicitly named destinations.
     let custom = parent.join("unrelated-location");
-    repo.cmd()
-        .args(["add", "custom", "--path"])
-        .arg(&custom)
-        .assert()
-        .success();
+    repo.cmd().args(["add", "custom", "--path"]).arg(&custom).assert().success();
     let before = repo.operation_id();
     repo.cmd()
         .args(["s", "--path"])
@@ -138,11 +119,7 @@ fn explicit_destination_rejects_name_path_and_directory_collisions() {
     let repo = TestRepo::new().unwrap();
     let parent = repo.default_root.parent().unwrap();
     let fix = parent.join("repo-fix");
-    repo.cmd()
-        .args(["add", "--path"])
-        .arg(&fix)
-        .assert()
-        .success();
+    repo.cmd().args(["add", "--path"]).arg(&fix).assert().success();
     let before = repo.operation_id();
     for command in ["add", "s"] {
         repo.cmd()
@@ -192,27 +169,14 @@ fn explicit_source_uses_its_revision_and_caller_relative_destination() {
     repo.cmd_at(parent)
         .args(["add", "--from"])
         .arg(&donor)
-        .args([
-            "--path",
-            "repo-chosen",
-            "--at",
-            "@",
-            "--no-cow",
-            "--no-colocate",
-        ])
+        .args(["--path", "repo-chosen", "--at", "@", "--no-cow", "--no-colocate"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Created workspace: chosen"));
     let chosen = parent.join("repo-chosen");
+    assert_eq!(fs::read_to_string(chosen.join("README.md")).unwrap(), "donor state\n");
     assert_eq!(
-        fs::read_to_string(chosen.join("README.md")).unwrap(),
-        "donor state\n"
-    );
-    assert_eq!(
-        repo.jj_stdout(
-            &chosen,
-            &["log", "-r", "parents(@)", "--no-graph", "-T", "commit_id"]
-        ),
+        repo.jj_stdout(&chosen, &["log", "-r", "parents(@)", "--no-graph", "-T", "commit_id"]),
         donor_commit
     );
     repo.cmd_at(parent)
@@ -240,17 +204,10 @@ fn shell_switch_enters_explicit_destination_from_selected_source() {
         .env("XDG_CONFIG_HOME", &repo.config_home)
         .env(
             "PATH",
-            env::join_paths(
-                std::iter::once(binary.parent().unwrap().to_path_buf())
-                    .chain(env::split_paths(&env::var_os("PATH").unwrap())),
-            )
-            .unwrap(),
+            env::join_paths(std::iter::once(binary.parent().unwrap().to_path_buf()).chain(env::split_paths(&env::var_os("PATH").unwrap()))).unwrap(),
         )
         .env("SOURCE", &repo.default_root)
-        .args([
-            "-c",
-            "eval \"$(jw shell init bash)\"; jw s --from \"$SOURCE\" --path repo-shell; pwd",
-        ])
+        .args(["-c", "eval \"$(jw shell init bash)\"; jw s --from \"$SOURCE\" --path repo-shell; pwd"])
         .assert()
         .success()
         .stdout(format!("{}\n", parent.join("repo-shell").display()));
@@ -332,9 +289,7 @@ fn switch_can_create_multiple_workspaces_and_print_final_path() {
         .args(["switch", "feature-a", "feature-b", "--print-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            feature_b.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(feature_b.to_string_lossy().as_ref()));
 
     assert!(feature_a.is_dir());
     assert!(feature_b.is_dir());
@@ -375,9 +330,7 @@ fn switch_config_can_create_bookmark_named_like_workspace() {
 fn switch_config_can_template_auto_bookmark_name() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    repo.write_config(
-        "[workspace]\ncreate_bookmark = true\nbookmark_template = \"wip/{workspace}\"\n",
-    );
+    repo.write_config("[workspace]\ncreate_bookmark = true\nbookmark_template = \"wip/{workspace}\"\n");
 
     repo.cmd()
         .args(["switch", "feature-a"])
@@ -392,9 +345,7 @@ fn switch_config_can_template_auto_bookmark_name() {
 fn switch_explicit_bookmark_overrides_config_default() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    repo.write_config(
-        "[workspace]\ncreate_bookmark = true\nbookmark_template = \"wip/{workspace}\"\n",
-    );
+    repo.write_config("[workspace]\ncreate_bookmark = true\nbookmark_template = \"wip/{workspace}\"\n");
 
     repo.cmd()
         .args(["switch", "--bookmark", "custom-name", "feature-a"])
@@ -448,18 +399,10 @@ fn switch_rejects_bookmark_and_no_bookmark_together() {
     let repo = TestRepo::new().expect("create test repo");
 
     repo.cmd()
-        .args([
-            "switch",
-            "--bookmark",
-            "custom-name",
-            "--no-bookmark",
-            "feature-a",
-        ])
+        .args(["switch", "--bookmark", "custom-name", "--no-bookmark", "feature-a"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "--bookmark and --no-bookmark cannot be used together",
-        ));
+        .stderr(predicate::str::contains("--bookmark and --no-bookmark cannot be used together"));
 }
 
 #[test]
@@ -468,18 +411,10 @@ fn switch_rejects_explicit_bookmark_for_batch() {
     let repo = TestRepo::new().expect("create test repo");
 
     repo.cmd()
-        .args([
-            "switch",
-            "--bookmark",
-            "custom-name",
-            "feature-a",
-            "feature-b",
-        ])
+        .args(["switch", "--bookmark", "custom-name", "feature-a", "feature-b"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "--bookmark can only be used with a single workspace",
-        ));
+        .stderr(predicate::str::contains("--bookmark can only be used with a single workspace"));
 }
 
 #[test]
@@ -491,9 +426,7 @@ fn add_rejects_explicit_bookmark_for_batch() {
         .args(["add", "--bookmark", "custom-name", "feature-a", "feature-b"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "--bookmark can only be used with a single workspace",
-        ));
+        .stderr(predicate::str::contains("--bookmark can only be used with a single workspace"));
 }
 
 #[test]
@@ -501,21 +434,13 @@ fn switch_default_returns_existing_root() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     let test_root = repo.default_root.with_extension("test");
-    repo.run_jj([
-        "workspace",
-        "add",
-        "--name",
-        "test",
-        test_root.to_str().unwrap(),
-    ]);
+    repo.run_jj(["workspace", "add", "--name", "test", test_root.to_str().unwrap()]);
 
     repo.cmd_at(&test_root)
         .args(["path", "default"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            repo.default_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(repo.default_root.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -529,9 +454,7 @@ fn default_shorthand_switches_to_default_workspace() {
         .args(["^", "--print-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            repo.default_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(repo.default_root.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -545,9 +468,7 @@ fn previous_shorthand_switches_to_previous_workspace() {
         .args(["-", "--print-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            repo.default_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(repo.default_root.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -556,32 +477,13 @@ fn current_uses_workspace_root_when_targets_share_working_copy() {
     let repo = TestRepo::new().expect("create test repo");
     let docs_root = repo.default_root.with_extension("docs");
 
-    repo.run_in(
-        &repo.default_root,
-        [
-            "jj",
-            "workspace",
-            "add",
-            "--name",
-            "docs",
-            docs_root.to_str().unwrap(),
-        ],
-    )
-    .expect("add docs workspace");
+    repo.run_in(&repo.default_root, ["jj", "workspace", "add", "--name", "docs", docs_root.to_str().unwrap()])
+        .expect("add docs workspace");
     let docs_change = repo.current_change_id(&docs_root);
-    repo.run_in(&repo.default_root, ["jj", "edit", docs_change.as_str()])
-        .expect("edit docs change");
+    repo.run_in(&repo.default_root, ["jj", "edit", docs_change.as_str()]).expect("edit docs change");
 
-    repo.cmd_at(&repo.default_root)
-        .args(["current"])
-        .assert()
-        .success()
-        .stdout("default\n");
-    repo.cmd_at(&docs_root)
-        .args(["current"])
-        .assert()
-        .success()
-        .stdout("docs\n");
+    repo.cmd_at(&repo.default_root).args(["current"]).assert().success().stdout("default\n");
+    repo.cmd_at(&docs_root).args(["current"]).assert().success().stdout("docs\n");
 }
 
 #[test]
@@ -592,42 +494,31 @@ fn previous_shorthand_survives_shared_working_copy_target() {
     repo.cmd().args(["switch", "docs"]).assert().success();
 
     let docs_change = repo.current_change_id(&docs_root);
-    repo.run_in(&repo.default_root, ["jj", "edit", docs_change.as_str()])
-        .expect("edit docs change");
+    repo.run_in(&repo.default_root, ["jj", "edit", docs_change.as_str()]).expect("edit docs change");
 
     repo.cmd_at(&docs_root)
         .args(["switch", "default", "--print-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            repo.default_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(repo.default_root.to_string_lossy().as_ref()));
     repo.cmd_at(&repo.default_root)
         .args(["-", "--print-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            docs_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(predicate::str::contains(docs_root.to_string_lossy().as_ref()));
 }
 
 #[test]
 fn previous_shorthand_rejects_multiline_state_record() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    fs::write(
-        repo.default_root.join(".jj").join("jw-prev-workspace"),
-        "default\ndocs\n",
-    )
-    .expect("write corrupt previous record");
+    fs::write(repo.default_root.join(".jj").join("jw-prev-workspace"), "default\ndocs\n").expect("write corrupt previous record");
 
     repo.cmd()
         .args(["-", "--print-path"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "previous workspace record is invalid",
-        ));
+        .stderr(predicate::str::contains("previous workspace record is invalid"));
 }
 
 #[test]
@@ -668,11 +559,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
         ShellCase {
             name: "fish",
             program: "fish",
-            args: &[
-                "--no-config",
-                "-c",
-                "jw shell init fish | source; jw ^ >/dev/null; pwd; jw - >/dev/null; pwd",
-            ],
+            args: &["--no-config", "-c", "jw shell init fish | source; jw ^ >/dev/null; pwd; jw - >/dev/null; pwd"],
             execute_args: &[
                 "--no-config",
                 "-c",
@@ -694,11 +581,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
         ShellCase {
             name: "zsh",
             program: "zsh",
-            args: &[
-                "-f",
-                "-c",
-                "eval \"$(jw shell init zsh)\"; jw ^ >/dev/null; pwd; jw - >/dev/null; pwd",
-            ],
+            args: &["-f", "-c", "eval \"$(jw shell init zsh)\"; jw ^ >/dev/null; pwd; jw - >/dev/null; pwd"],
             execute_args: &[
                 "-f",
                 "-c",
@@ -709,10 +592,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
 
     for case in cases {
         if !command_available(case.program) {
-            eprintln!(
-                "skipping {} because `{}` is not installed",
-                case.name, case.program
-            );
+            eprintln!("skipping {} because `{}` is not installed", case.name, case.program);
             continue;
         }
 
@@ -735,10 +615,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let lines = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
+        let lines = String::from_utf8_lossy(&output.stdout).lines().map(ToOwned::to_owned).collect::<Vec<_>>();
         assert_eq!(
             lines,
             vec![path_string(&repo.default_root), path_string(&feature_root)],
@@ -753,9 +630,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
             .env("XDG_CONFIG_HOME", &repo.config_home)
             .args(case.execute_args)
             .output()
-            .unwrap_or_else(|error| {
-                panic!("run {} attached execute integration: {error}", case.name)
-            });
+            .unwrap_or_else(|error| panic!("run {} attached execute integration: {error}", case.name));
         assert!(
             execute.status.success(),
             "{} attached execute integration failed\nstdout: {}\nstderr: {}",
@@ -764,10 +639,7 @@ fn installed_shell_init_adapters_switch_default_and_previous_shorthands() {
             String::from_utf8_lossy(&execute.stderr)
         );
         assert_eq!(
-            String::from_utf8_lossy(&execute.stdout)
-                .lines()
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>(),
+            String::from_utf8_lossy(&execute.stdout).lines().map(ToOwned::to_owned).collect::<Vec<_>>(),
             vec![path_string(&feature_root), path_string(&feature_root)],
             "{} shell adapter did not pass attached execute forms through",
             case.name
@@ -780,19 +652,14 @@ fn list_accepts_ls_alias() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
 
-    repo.cmd()
-        .args(["ls"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("default"));
+    repo.cmd().args(["ls"]).assert().success().stdout(predicate::str::contains("default"));
 }
 
 #[test]
 fn list_infers_current_default_without_recorded_path() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    fs::remove_dir_all(repo.default_root.join(".jj/repo/workspace_store"))
-        .expect("remove recorded workspace paths");
+    fs::remove_dir_all(repo.default_root.join(".jj/repo/workspace_store")).expect("remove recorded workspace paths");
 
     let named_root = Command::new("jj")
         .current_dir(&repo.default_root)
@@ -800,10 +667,7 @@ fn list_infers_current_default_without_recorded_path() {
         .output()
         .expect("query named workspace root");
     assert!(!named_root.status.success());
-    assert!(
-        String::from_utf8_lossy(&named_root.stderr)
-            .contains("Workspace has no recorded path: default")
-    );
+    assert!(String::from_utf8_lossy(&named_root.stderr).contains("Workspace has no recorded path: default"));
 
     let output = repo
         .cmd()
@@ -819,12 +683,8 @@ fn list_infers_current_default_without_recorded_path() {
     assert_eq!(name, "@ default");
     // Inferred paths may use Windows' verbatim prefix; compare checkout identity.
     assert_eq!(
-        Path::new(root)
-            .canonicalize()
-            .expect("listed checkout exists"),
-        repo.default_root
-            .canonicalize()
-            .expect("canonical checkout")
+        Path::new(root).canonicalize().expect("listed checkout exists"),
+        repo.default_root.canonicalize().expect("canonical checkout")
     );
 }
 
@@ -834,11 +694,7 @@ fn list_reports_missing_checkout_without_hiding_other_root_errors() {
     let repo = TestRepo::new().expect("create test repo");
     repo.cmd().args(["add", "feature-a"]).assert().success();
     let workspace = repo.default_root.with_extension("feature-a");
-    fs::rename(
-        &workspace,
-        repo.default_root.with_extension("feature-a.gone"),
-    )
-    .expect("move checkout away");
+    fs::rename(&workspace, repo.default_root.with_extension("feature-a.gone")).expect("move checkout away");
 
     repo.cmd()
         .args(["list"])
@@ -893,38 +749,26 @@ fn remove_reports_partial_progress_and_cleans_metadata_when_directory_remains() 
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     let workspace_root = repo.default_root.with_extension("feature-a");
-    repo.cmd()
-        .args(["add", "--bookmark", "wip/feature-a", "feature-a"])
-        .assert()
-        .success();
-    let canonical_workspace_root =
-        fs::canonicalize(&workspace_root).expect("canonical workspace path");
+    repo.cmd().args(["add", "--bookmark", "wip/feature-a", "feature-a"]).assert().success();
+    let canonical_workspace_root = fs::canonicalize(&workspace_root).expect("canonical workspace path");
 
     let parent = repo._tempdir.path();
-    let original_permissions = fs::metadata(parent)
-        .expect("workspace parent metadata")
-        .permissions();
+    let original_permissions = fs::metadata(parent).expect("workspace parent metadata").permissions();
     let mut blocked_permissions = original_permissions.clone();
     blocked_permissions.set_mode(0o500);
     fs::set_permissions(parent, blocked_permissions).expect("block directory deletion");
 
     let output = repo.command_output(&["remove", "--delete-bookmark", "feature-a"]);
 
-    fs::set_permissions(parent, original_permissions)
-        .expect("restore workspace parent permissions");
+    fs::set_permissions(parent, original_permissions).expect("restore workspace parent permissions");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains(
-            "partial removal: workspace feature-a was forgotten and bookmark wip/feature-a was deleted"
-        ),
+        stderr.contains("partial removal: workspace feature-a was forgotten and bookmark wip/feature-a was deleted"),
         "stderr: {stderr}"
     );
     assert!(
-        stderr.contains(&format!(
-            "workspace directory remains at {}",
-            canonical_workspace_root.display()
-        )),
+        stderr.contains(&format!("workspace directory remains at {}", canonical_workspace_root.display())),
         "stderr: {stderr}"
     );
     assert!(workspace_root.is_dir());
@@ -938,14 +782,10 @@ fn remove_keeps_associated_bookmark_by_default() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
 
-    repo.cmd()
-        .args(["switch", "--bookmark", "custom-marker", "feature-a"])
-        .assert()
-        .success();
+    repo.cmd().args(["switch", "--bookmark", "custom-marker", "feature-a"]).assert().success();
     let feature_root = repo.default_root.with_extension("feature-a");
     fs::write(feature_root.join("work.txt"), "work\n").expect("write workspace file");
-    repo.run_in(&feature_root, ["jj", "file", "track", "work.txt"])
-        .expect("track workspace file");
+    repo.run_in(&feature_root, ["jj", "file", "track", "work.txt"]).expect("track workspace file");
     repo.run_in(&feature_root, ["jj", "commit", "-m", "workspace work"])
         .expect("commit workspace work");
 
@@ -963,21 +803,12 @@ fn remove_bookmark_deletion_requires_the_explicit_flag() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
 
-    repo.cmd()
-        .args(["add", "--bookmark", "wip/feature-a", "feature-a"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "--bookmark", "wip/feature-a", "feature-a"]).assert().success();
     repo.cmd().args(["remove", "feature-a"]).assert().success();
     assert!(repo.bookmarks().contains(&"wip/feature-a".to_owned()));
 
-    repo.cmd()
-        .args(["add", "--bookmark", "wip/feature-b", "feature-b"])
-        .assert()
-        .success();
-    repo.cmd()
-        .args(["remove", "--delete-bookmark", "feature-b"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "--bookmark", "wip/feature-b", "feature-b"]).assert().success();
+    repo.cmd().args(["remove", "--delete-bookmark", "feature-b"]).assert().success();
     assert!(!repo.bookmarks().contains(&"wip/feature-b".to_owned()));
 }
 
@@ -1038,10 +869,7 @@ fn remove_deletes_multiple_workspace_directories_by_default() {
     let feature_a = repo.default_root.with_extension("feature-a");
     let feature_b = repo.default_root.with_extension("feature-b");
 
-    repo.cmd()
-        .args(["add", "feature-a", "feature-b"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "feature-a", "feature-b"]).assert().success();
 
     repo.cmd()
         .args(["remove", "feature-a", "feature-b"])
@@ -1061,10 +889,7 @@ fn remove_keep_dir_preserves_multiple_workspace_directories() {
     let feature_a = repo.default_root.with_extension("feature-a");
     let feature_b = repo.default_root.with_extension("feature-b");
 
-    repo.cmd()
-        .args(["add", "feature-a", "feature-b"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "feature-a", "feature-b"]).assert().success();
 
     repo.cmd()
         .args(["remove", "--keep-dir", "feature-a", "feature-b"])
@@ -1083,10 +908,7 @@ fn remove_batch_validates_every_workspace_before_mutating() {
     let feature_a = repo.default_root.with_extension("feature-a");
     let feature_b = repo.default_root.with_extension("feature-b");
 
-    repo.cmd()
-        .args(["add", "feature-a", "feature-b"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "feature-a", "feature-b"]).assert().success();
 
     repo.cmd()
         .args(["remove", "feature-a", "missing", "feature-b"])
@@ -1094,9 +916,7 @@ fn remove_batch_validates_every_workspace_before_mutating() {
         .failure()
         .stdout(predicate::str::contains("Forgot workspace:").not())
         .stdout(predicate::str::contains("Forgot workspace: feature-b").not())
-        .stderr(predicate::str::contains(
-            "failed to remove workspace missing",
-        ));
+        .stderr(predicate::str::contains("failed to remove workspace missing"));
 
     assert!(feature_a.is_dir());
     assert!(feature_b.is_dir());
@@ -1114,9 +934,7 @@ fn remove_batch_rejects_duplicate_workspace_before_mutating() {
         .assert()
         .failure()
         .stdout(predicate::str::contains("Forgot workspace:").not())
-        .stderr(predicate::str::contains(
-            "workspace listed more than once: feature-a",
-        ));
+        .stderr(predicate::str::contains("workspace listed more than once: feature-a"));
 
     assert!(feature.is_dir());
     assert!(repo.workspace_names().contains(&"feature-a".to_owned()));
@@ -1134,9 +952,7 @@ fn clap_completion_combines_cli_metadata_and_workspace_candidates() {
         .args(["--", "jw", "sw"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "switch\tSwitch to or create a workspace",
-        ));
+        .stdout(predicate::str::contains("switch\tSwitch to or create a workspace"));
 
     repo.cmd()
         .env("_JW_COMPLETE", "fish")
@@ -1159,18 +975,14 @@ fn clap_completion_combines_cli_metadata_and_workspace_candidates() {
         .args(["--", "jw", "remove", "--k"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "--keep-dir\tForget the workspace but keep its directory",
-        ));
+        .stdout(predicate::str::contains("--keep-dir\tForget the workspace but keep its directory"));
 
     repo.cmd()
         .env("_JW_COMPLETE", "fish")
         .args(["--", "jw", "-"])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "-\tSwitch to or create a workspace",
-        ));
+        .stdout(predicate::str::contains("-\tSwitch to or create a workspace"));
 }
 
 #[test]
@@ -1185,9 +997,7 @@ fn clap_completion_reports_workspace_discovery_errors() {
         .args(["--", "jw", "switch", ""])
         .assert()
         .success()
-        .stderr(predicate::str::contains(
-            "jw: failed to complete workspaces",
-        ));
+        .stderr(predicate::str::contains("jw: failed to complete workspaces"));
 }
 
 #[test]
@@ -1219,10 +1029,7 @@ fn switch_applies_workspace_links_for_data_directory() {
         .success()
         .stdout(predicate::str::contains("Links: 1 created"));
 
-    let workspace_data = repo
-        .default_root
-        .with_extension("solver-benchmark")
-        .join("data");
+    let workspace_data = repo.default_root.with_extension("solver-benchmark").join("data");
     let metadata = fs::symlink_metadata(&workspace_data).expect("metadata");
     assert!(metadata.file_type().is_symlink());
 }
@@ -1233,49 +1040,25 @@ fn default_creation_snapshots_dirty_source_before_freezing_current_base() {
     for command in ["add", "s"] {
         let repo = TestRepo::new().unwrap();
         let old = repo.revision_commit_id("@");
-        fs::write(
-            repo.default_root.join("README.md"),
-            "unsnapshotted source bytes\n",
-        )
-        .unwrap();
+        fs::write(repo.default_root.join("README.md"), "unsnapshotted source bytes\n").unwrap();
         let parent = repo.default_root.parent().unwrap();
         let destination = parent.join("repo-dirty");
-        let mut cmd = if command == "add" {
-            repo.cmd()
-        } else {
-            repo.cmd_at(parent)
-        };
+        let mut cmd = if command == "add" { repo.cmd() } else { repo.cmd_at(parent) };
         cmd.arg(command).arg("--path").arg(&destination);
         if command == "s" {
-            cmd.arg("--from")
-                .arg(&repo.default_root)
-                .arg("--print-path");
+            cmd.arg("--from").arg(&repo.default_root).arg("--print-path");
         }
         cmd.assert().success();
         let source = repo.revision_commit_id("@");
-        assert_ne!(
-            source, old,
-            "source must be snapshotted before base resolution"
-        );
+        assert_ne!(source, old, "source must be snapshotted before base resolution");
         assert_eq!(
             repo.jj_stdout(
                 &destination,
-                &[
-                    "--ignore-working-copy",
-                    "log",
-                    "-r",
-                    "parents(@)",
-                    "--no-graph",
-                    "-T",
-                    "commit_id"
-                ]
+                &["--ignore-working-copy", "log", "-r", "parents(@)", "--no-graph", "-T", "commit_id"]
             ),
             source
         );
-        assert_eq!(
-            fs::read(destination.join("README.md")).unwrap(),
-            b"unsnapshotted source bytes\n"
-        );
+        assert_eq!(fs::read(destination.join("README.md")).unwrap(), b"unsnapshotted source bytes\n");
         assert!(!destination.join(".git").exists());
     }
 }
@@ -1284,11 +1067,7 @@ fn default_creation_snapshots_dirty_source_before_freezing_current_base() {
 fn add_with_cow_checks_out_exactly_the_base() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    fs::write(
-        repo.default_root.join(".gitignore"),
-        ".env\nnode_modules/\n",
-    )
-    .expect("write gitignore");
+    fs::write(repo.default_root.join(".gitignore"), ".env\nnode_modules/\n").expect("write gitignore");
     fs::create_dir_all(repo.default_root.join("src")).expect("create src");
     fs::write(repo.default_root.join("src/lib.rs"), "fn main() {}\n").expect("write lib");
     repo.run_jj(["commit", "-m", "add sources"]);
@@ -1299,26 +1078,13 @@ fn add_with_cow_checks_out_exactly_the_base() {
     fs::write(repo.default_root.join("scratch.txt"), "draft\n").expect("write scratch");
 
     let output = repo.command_output(&["add", "--cow", "--at", "@-", "feature-a"]);
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
 
     let workspace_root = repo.default_root.with_extension("feature-a");
-    assert_eq!(
-        fs::read_to_string(workspace_root.join("README.md")).expect("read readme"),
-        "hello\n"
-    );
-    assert_eq!(
-        fs::read_to_string(workspace_root.join("src/lib.rs")).expect("read lib"),
-        "fn main() {}\n"
-    );
+    assert_eq!(fs::read_to_string(workspace_root.join("README.md")).expect("read readme"), "hello\n");
+    assert_eq!(fs::read_to_string(workspace_root.join("src/lib.rs")).expect("read lib"), "fn main() {}\n");
     for absent in ["scratch.txt", ".env", "node_modules"] {
-        assert!(
-            !workspace_root.join(absent).exists(),
-            "{absent} should not be carried over"
-        );
+        assert!(!workspace_root.join(absent).exists(), "{absent} should not be carried over");
     }
     assert_eq!(repo.jj_stdout(&workspace_root, &["diff", "--summary"]), "");
 }
@@ -1381,78 +1147,37 @@ fn check_cow_sparse(mode: Option<&str>) {
         }
         #[cfg(not(unix))]
         assert!(mode.is_none());
-        command.args([
-            if patterns.is_empty() { "switch" } else { "add" },
-            "--cow",
-            "--at",
-            "@-",
-            "feature-a",
-        ]);
+        command.args([if patterns.is_empty() { "switch" } else { "add" }, "--cow", "--at", "@-", "feature-a"]);
         if patterns.is_empty() {
             command.arg("--print-path");
         }
         let output = command.output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         if env::var_os("JW_TEST_REQUIRE_COW").is_some_and(|value| !value.is_empty()) {
             if mode.is_none() {
-                assert!(
-                    !String::from_utf8_lossy(&output.stderr)
-                        .contains("copy-on-write is unavailable")
-                );
+                assert!(!String::from_utf8_lossy(&output.stderr).contains("copy-on-write is unavailable"));
             } else {
-                assert!(
-                    repo._tempdir.path().join("fallback-seen").exists(),
-                    "fallback branch not exercised"
-                );
+                assert!(repo._tempdir.path().join("fallback-seen").exists(), "fallback branch not exercised");
             }
         }
         if repo._tempdir.path().join("fallback-seen").exists() {
-            assert!(
-                String::from_utf8_lossy(&output.stderr)
-                    .contains("using ordinary JJ workspace creation")
-            );
+            assert!(String::from_utf8_lossy(&output.stderr).contains("using ordinary JJ workspace creation"));
         }
         assert_eq!(
             repo.jj_stdout(&workspace, &["sparse", "list"]),
             repo.jj_stdout(&repo.default_root, &["sparse", "list"])
         );
         assert!(!workspace.join("excluded").exists());
-        for directory in directories
-            .iter()
-            .copied()
-            .filter(|directory| *directory != "excluded")
-        {
-            assert_eq!(
-                workspace.join(directory).join("tracked").exists(),
-                patterns.contains(&directory)
-            );
+        for directory in directories.iter().copied().filter(|directory| *directory != "excluded") {
+            assert_eq!(workspace.join(directory).join("tracked").exists(), patterns.contains(&directory));
         }
-        assert_eq!(
-            workspace.join("README.md").exists(),
-            patterns.contains(&"README.md")
-        );
+        assert_eq!(workspace.join("README.md").exists(), patterns.contains(&"README.md"));
         if patterns.contains(&"README.md") {
-            assert_eq!(
-                fs::read_to_string(workspace.join("README.md")).unwrap(),
-                "hello\n"
-            );
-            assert_eq!(
-                fs::read_to_string(repo.default_root.join("README.md")).unwrap(),
-                "source edit\n"
-            );
+            assert_eq!(fs::read_to_string(workspace.join("README.md")).unwrap(), "hello\n");
+            assert_eq!(fs::read_to_string(repo.default_root.join("README.md")).unwrap(), "source edit\n");
         }
         assert_eq!(repo.jj_stdout(&workspace, &["diff", "--summary"]), "");
-        assert_eq!(
-            repo.workspace_names()
-                .iter()
-                .filter(|name| *name == "feature-a")
-                .count(),
-            1
-        );
+        assert_eq!(repo.workspace_names().iter().filter(|name| *name == "feature-a").count(), 1);
     }
 }
 
@@ -1469,7 +1194,9 @@ fn install_cow_jj_proxy(repo: &TestRepo, command: &mut Command, mode: &str, work
     let proxy = repo._tempdir.path().join("proxy");
     fs::create_dir(&proxy).unwrap();
     let script = proxy.join("jj");
-    fs::write(&script, r#"#!/usr/bin/env python3
+    fs::write(
+        &script,
+        r#"#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
 args = sys.argv[1:]
@@ -1483,17 +1210,16 @@ if mode == 'rejected-state' and 'status' in args and Path.cwd() == Path(os.envir
     marker.write_text('rejected-state')
     sys.exit(1)
 os.execv(os.environ['JW_TEST_REAL_JJ'], [os.environ['JW_TEST_REAL_JJ']] + args)
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let paths = std::iter::once(proxy).chain(env::split_paths(&original_path));
     command
         .env("PATH", env::join_paths(paths).unwrap())
         .env("JW_TEST_REAL_JJ", real_jj)
         .env("JW_TEST_COW_MODE", mode)
-        .env(
-            "JW_TEST_COW_MARKER",
-            repo._tempdir.path().join("fallback-seen"),
-        )
+        .env("JW_TEST_COW_MARKER", repo._tempdir.path().join("fallback-seen"))
         .env("JW_TEST_COW_WORKSPACE", workspace);
 }
 
@@ -1512,9 +1238,7 @@ fn cow_and_colocation_are_rejected_before_creation() {
             .args(args)
             .assert()
             .failure()
-            .stderr(predicate::str::contains(
-                "colocation and copy-on-write cannot be combined",
-            ));
+            .stderr(predicate::str::contains("colocation and copy-on-write cannot be combined"));
         assert!(!repo.default_root.with_extension("feature-a").exists());
         assert!(!repo.workspace_names().contains(&"feature-a".to_owned()));
     }
@@ -1540,10 +1264,7 @@ fn switch_with_cow_config_leaves_link_sources_to_links() {
         .success()
         .stdout(predicate::str::contains("Links: 1 created"));
 
-    let workspace_data = repo
-        .default_root
-        .with_extension("solver-benchmark")
-        .join("data");
+    let workspace_data = repo.default_root.with_extension("solver-benchmark").join("data");
     let metadata = fs::symlink_metadata(&workspace_data).expect("metadata");
     assert!(metadata.file_type().is_symlink());
 }
@@ -1561,12 +1282,7 @@ fn no_cow_flag_overrides_copy_on_write_config() {
         .stderr(predicate::str::contains("copy-on-write").not());
 
     assert_eq!(
-        fs::read_to_string(
-            repo.default_root
-                .with_extension("feature-a")
-                .join("README.md")
-        )
-        .expect("read readme"),
+        fs::read_to_string(repo.default_root.with_extension("feature-a").join("README.md")).expect("read readme"),
         "hello\n"
     );
 }
@@ -1636,10 +1352,7 @@ fn switch_rolls_back_links_when_workspace_state_cannot_be_recorded() {
         "[[link]]\nsource = \"nested/data\"\ntarget = \"../repo/data\"\nrequired = true\n",
     )
     .expect("write links config");
-    repo.cmd()
-        .args(["add", "--no-links", "feature-a"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "--no-links", "feature-a"]).assert().success();
     let feature_root = repo.default_root.with_extension("feature-a");
     fs::create_dir(feature_root.join(".jj/jw-prev-workspace")).expect("block target state file");
 
@@ -1647,9 +1360,7 @@ fn switch_rolls_back_links_when_workspace_state_cannot_be_recorded() {
         .args(["switch", "feature-a"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "failed to inspect workspace state",
-        ));
+        .stderr(predicate::str::contains("failed to inspect workspace state"));
 
     assert!(!repo.default_root.join(".jj/jw-prev-workspace").exists());
     assert!(!feature_root.join("nested/data").exists());
@@ -1665,15 +1376,10 @@ fn switch_restores_source_state_when_target_state_write_fails() {
     let repo = TestRepo::new().expect("create test repo");
     repo.cmd().args(["add", "feature-a"]).assert().success();
     let source_state = repo.default_root.join(".jj/jw-prev-workspace");
-    let target_state = repo
-        .default_root
-        .with_extension("feature-a")
-        .join(".jj/jw-prev-workspace");
+    let target_state = repo.default_root.with_extension("feature-a").join(".jj/jw-prev-workspace");
     fs::write(&source_state, "older\n").expect("write source state");
     fs::write(&target_state, "target-old\n").expect("write target state");
-    let mut permissions = fs::metadata(&target_state)
-        .expect("target state metadata")
-        .permissions();
+    let mut permissions = fs::metadata(&target_state).expect("target state metadata").permissions();
     permissions.set_mode(0o444);
     fs::set_permissions(&target_state, permissions).expect("make target state readonly");
 
@@ -1683,15 +1389,10 @@ fn switch_restores_source_state_when_target_state_write_fails() {
         .failure()
         .stderr(predicate::str::contains("failed to record workspace state"));
 
-    let mut permissions = fs::metadata(&target_state)
-        .expect("target state metadata")
-        .permissions();
+    let mut permissions = fs::metadata(&target_state).expect("target state metadata").permissions();
     permissions.set_mode(0o644);
     fs::set_permissions(&target_state, permissions).expect("restore target permissions");
-    assert_eq!(
-        fs::read_to_string(source_state).expect("read restored source state"),
-        "older\n"
-    );
+    assert_eq!(fs::read_to_string(source_state).expect("read restored source state"), "older\n");
 }
 
 #[test]
@@ -1700,10 +1401,7 @@ fn add_cleans_workspace_when_bookmark_creation_fails() {
     let repo = TestRepo::new().expect("create test repo");
     let workspace_root = repo.default_root.with_extension("feature-a");
 
-    repo.cmd()
-        .args(["add", "--bookmark", "", "feature-a"])
-        .assert()
-        .failure();
+    repo.cmd().args(["add", "--bookmark", "", "feature-a"]).assert().failure();
 
     assert!(!workspace_root.exists());
     assert!(!repo.workspace_names().contains(&"feature-a".to_owned()));
@@ -1720,10 +1418,7 @@ fn switch_uses_default_workspace_link_config() {
     )
     .expect("write links config");
 
-    repo.cmd()
-        .args(["switch", "solver-benchmark"])
-        .assert()
-        .success();
+    repo.cmd().args(["switch", "solver-benchmark"]).assert().success();
     fs::remove_file(repo.default_root.join(".jwlinks.toml")).expect("remove default config");
 
     repo.cmd_at(&repo.default_root.with_extension("solver-benchmark"))
@@ -1731,15 +1426,9 @@ fn switch_uses_default_workspace_link_config() {
         .assert()
         .success();
 
-    repo.cmd()
-        .args(["switch", "solver-benchmark"])
-        .assert()
-        .success();
+    repo.cmd().args(["switch", "solver-benchmark"]).assert().success();
 
-    let workspace_data = repo
-        .default_root
-        .with_extension("solver-benchmark")
-        .join("data");
+    let workspace_data = repo.default_root.with_extension("solver-benchmark").join("data");
     let metadata = fs::symlink_metadata(&workspace_data).expect("metadata");
     assert!(metadata.file_type().is_symlink());
 }
@@ -1748,10 +1437,7 @@ fn switch_uses_default_workspace_link_config() {
 fn links_apply_uses_default_workspace_config_from_non_default_workspace() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    repo.cmd()
-        .args(["switch", "feature-a", "--no-links"])
-        .assert()
-        .success();
+    repo.cmd().args(["switch", "feature-a", "--no-links"]).assert().success();
 
     fs::create_dir_all(repo.default_root.join("data")).expect("create data directory");
     fs::write(
@@ -1816,18 +1502,11 @@ fn directory_link_conflict_explains_safe_resolution_and_rolls_back_only_new_work
         .failure()
         .stderr(predicate::str::contains(format!(
             "link conflict at {}",
-            Path::new("manuscript")
-                .join("build")
-                .join("figures")
-                .display()
+            Path::new("manuscript").join("build").join("figures").display()
         )))
-        .stderr(predicate::str::contains(
-            "existing directory cannot be replaced by a whole-directory link",
-        ))
+        .stderr(predicate::str::contains("existing directory cannot be replaced by a whole-directory link"))
         .stderr(predicate::str::contains("may contain files tracked by JJ"))
-        .stderr(predicate::str::contains(
-            ".jwlinks.local.toml with target equal to source",
-        ))
+        .stderr(predicate::str::contains(".jwlinks.local.toml with target equal to source"))
         .stderr(predicate::str::contains(
             "Any untracked generated files you need must then be supplied separately",
         ));
@@ -1839,14 +1518,8 @@ fn directory_link_conflict_explains_safe_resolution_and_rolls_back_only_new_work
     for (path, contents) in metadata {
         assert_eq!(fs::read(path).unwrap(), contents);
     }
-    assert_eq!(
-        fs::read_to_string(figures.join("tracked.pdf")).unwrap(),
-        "tracked PDF\n"
-    );
-    assert_eq!(
-        fs::read_to_string(existing_root.join("private.txt")).unwrap(),
-        "existing workspace\n"
-    );
+    assert_eq!(fs::read_to_string(figures.join("tracked.pdf")).unwrap(), "tracked PDF\n");
+    assert_eq!(fs::read_to_string(existing_root.join("private.txt")).unwrap(), "existing workspace\n");
     assert!(!repo.default_root.join(".jj/jw-prev-workspace").exists());
 }
 
@@ -1856,21 +1529,14 @@ fn directory_link_self_target_override_preserves_shared_alias_and_tracked_privat
     let repo = TestRepo::new().expect("create test repo");
     let figures = repo.default_root.join("manuscript/build/figures");
     fs::create_dir_all(&figures).unwrap();
-    fs::write(
-        repo.default_root.join(".gitignore"),
-        "manuscript/build/figures/generated.pdf\n",
-    )
-    .unwrap();
+    fs::write(repo.default_root.join(".gitignore"), "manuscript/build/figures/generated.pdf\n").unwrap();
     fs::write(figures.join("generated.pdf"), "untracked generated PDF\n").unwrap();
     fs::write(
         repo.default_root.join(".jwlinks.toml"),
         "[[link]]\nsource = \"manuscript/build/figures\"\ntarget = \"../repo/manuscript/build/figures\"\nrequired = true\n",
     )
     .unwrap();
-    repo.cmd()
-        .args(["add", "legacy", "--at", "@-"])
-        .assert()
-        .success();
+    repo.cmd().args(["add", "legacy", "--at", "@-"]).assert().success();
     let legacy_root = repo.default_root.with_extension("legacy");
     let shared_alias = legacy_root.join("manuscript/build/figures");
     let original_link = fs::read_link(&shared_alias).unwrap();
@@ -1883,34 +1549,14 @@ fn directory_link_self_target_override_preserves_shared_alias_and_tracked_privat
     )
     .unwrap();
 
-    repo.cmd_at(&legacy_root)
-        .args(["links", "apply"])
-        .assert()
-        .success();
+    repo.cmd_at(&legacy_root).args(["links", "apply"]).assert().success();
     assert_eq!(fs::read_link(&shared_alias).unwrap(), original_link);
-    repo.cmd()
-        .args(["add", "ezra", "--at", "@-"])
-        .assert()
-        .success();
-    let private = repo
-        .default_root
-        .with_extension("ezra")
-        .join("manuscript/build/figures");
-    assert!(
-        !fs::symlink_metadata(&private)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    assert_eq!(
-        fs::read_to_string(private.join("tracked.pdf")).unwrap(),
-        "tracked PDF\n"
-    );
+    repo.cmd().args(["add", "ezra", "--at", "@-"]).assert().success();
+    let private = repo.default_root.with_extension("ezra").join("manuscript/build/figures");
+    assert!(!fs::symlink_metadata(&private).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_to_string(private.join("tracked.pdf")).unwrap(), "tracked PDF\n");
     assert!(!private.join("generated.pdf").exists());
-    assert_eq!(
-        fs::read_to_string(figures.join("generated.pdf")).unwrap(),
-        "untracked generated PDF\n"
-    );
+    assert_eq!(fs::read_to_string(figures.join("generated.pdf")).unwrap(), "untracked generated PDF\n");
     assert_eq!(fs::read_link(&shared_alias).unwrap(), original_link);
 }
 
@@ -1926,16 +1572,10 @@ fn switch_fails_on_conflicting_existing_path() {
     .expect("write links config");
 
     let target_root = repo.default_root.with_extension("solver-benchmark");
-    repo.cmd()
-        .args(["switch", "solver-benchmark", "--no-links"])
-        .assert()
-        .success();
+    repo.cmd().args(["switch", "solver-benchmark", "--no-links"]).assert().success();
 
     fs::create_dir_all(target_root.join("cache")).expect("create conflicting path");
-    repo.cmd_at(&target_root)
-        .args(["switch", "default", "--no-links"])
-        .assert()
-        .success();
+    repo.cmd_at(&target_root).args(["switch", "default", "--no-links"]).assert().success();
 
     repo.cmd()
         .args(["switch", "solver-benchmark"])
@@ -1960,15 +1600,10 @@ fn switch_reapplies_links_after_intermediate_commits_and_workspace_hops() {
     repo.cmd().args(["switch", "feature-a"]).assert().success();
     let feature_a_root = repo.default_root.with_extension("feature-a");
     fs::write(feature_a_root.join("feature.txt"), "feature-a\n").expect("write feature file");
-    repo.run_in(&feature_a_root, ["jj", "file", "track", "feature.txt"])
-        .expect("track file");
-    repo.run_in(&feature_a_root, ["jj", "commit", "-m", "feature-a commit"])
-        .expect("commit change");
+    repo.run_in(&feature_a_root, ["jj", "file", "track", "feature.txt"]).expect("track file");
+    repo.run_in(&feature_a_root, ["jj", "commit", "-m", "feature-a commit"]).expect("commit change");
 
-    repo.cmd_at(&feature_a_root)
-        .args(["switch", "default"])
-        .assert()
-        .success();
+    repo.cmd_at(&feature_a_root).args(["switch", "default"]).assert().success();
 
     repo.cmd().args(["switch", "feature-b"]).assert().success();
     let feature_b_data = repo.default_root.with_extension("feature-b").join("data");
@@ -2007,11 +1642,7 @@ fn list_json_is_versioned_frozen_ansi_free_and_unmanaged() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     let output = repo.command_output(&["list", "--format=json"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert!(output.stderr.is_empty());
     assert!(!output.stdout.contains(&0x1b));
 
@@ -2019,11 +1650,7 @@ fn list_json_is_versioned_frozen_ansi_free_and_unmanaged() {
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["command"], "list");
     assert_eq!(value["repository"]["trunk"]["revset"], "trunk()");
-    assert!(
-        value["repository"]["operation_id"]
-            .as_str()
-            .is_some_and(|id| !id.is_empty())
-    );
+    assert!(value["repository"]["operation_id"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(value["workspaces"][0]["management"], "unmanaged");
     assert_eq!(value["workspaces"][0]["working_copy_refreshed"], true);
 }
@@ -2032,19 +1659,13 @@ fn list_json_is_versioned_frozen_ansi_free_and_unmanaged() {
 fn status_refresh_none_is_read_only_and_aliases_resolve() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    fs::write(repo.default_root.join("dirty.txt"), "not snapshotted\n")
-        .expect("write dirty working-copy file");
+    fs::write(repo.default_root.join("dirty.txt"), "not snapshotted\n").expect("write dirty working-copy file");
     let before = repo.operation_id();
 
     for token in ["@", "default", "^"] {
         let output = repo.command_output(&["status", token, "--format=json", "--refresh=none"]);
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let value: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("valid status JSON");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid status JSON");
         assert_eq!(value["command"], "status");
         assert_eq!(value["workspaces"][0]["name"], "default");
         assert_eq!(value["workspaces"][0]["working_copy_refreshed"], false);
@@ -2061,20 +1682,11 @@ fn status_refresh_current_classifies_modified_working_copy() {
     fs::write(repo.default_root.join("work.txt"), "new work\n").expect("write work");
 
     let output = repo.command_output(&["status", "--format=json"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid status JSON");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid status JSON");
     assert_eq!(value["workspaces"][0]["working_copy_refreshed"], true);
     assert_eq!(value["workspaces"][0]["working_copy"]["state"], "modified");
-    assert!(
-        value["workspaces"][0]["working_copy"]["files"]
-            .as_u64()
-            .is_some_and(|files| files >= 1)
-    );
+    assert!(value["workspaces"][0]["working_copy"]["files"].as_u64().is_some_and(|files| files >= 1));
 }
 
 #[test]
@@ -2084,10 +1696,7 @@ fn list_and_status_reject_non_exact_trunk_before_stdout() {
 
     for revset in ["none()", "all()"] {
         repo.write_config(&format!("[trunk]\nrevset = \"{revset}\"\n"));
-        for args in [
-            &["list", "--format=json"][..],
-            &["status", "--format=json", "--refresh=none"][..],
-        ] {
+        for args in [&["list", "--format=json"][..], &["status", "--format=json", "--refresh=none"][..]] {
             let output = repo.command_output(args);
             assert!(!output.status.success(), "{revset} {args:?}");
             assert!(output.stdout.is_empty(), "{revset} {args:?}");
@@ -2108,8 +1717,7 @@ fn doctor_serializes_bad_trunk_and_corrupt_metadata_before_failure() {
 
     let output = repo.command_output(&["doctor", "--format=json"]);
     assert!(!output.status.success());
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
     assert_eq!(value["command"], "doctor");
     assert_eq!(value["healthy"], false);
     assert!(value["summary"]["errors"].as_u64().unwrap() >= 1);
@@ -2122,8 +1730,7 @@ fn doctor_serializes_bad_trunk_and_corrupt_metadata_before_failure() {
     fs::write(&manifest, corrupt).expect("write corrupt metadata");
     let output = repo.command_output(&["doctor", "--format=json"]);
     assert!(!output.status.success());
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid corrupt-metadata report");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid corrupt-metadata report");
     assert_eq!(value["healthy"], false);
     assert!(
         value["diagnostics"]
@@ -2132,10 +1739,7 @@ fn doctor_serializes_bad_trunk_and_corrupt_metadata_before_failure() {
             .iter()
             .any(|entry| { entry["code"] == "metadata-integrity" && entry["state"] == "failed" })
     );
-    assert_eq!(
-        fs::read(&manifest).expect("read unchanged manifest"),
-        corrupt
-    );
+    assert_eq!(fs::read(&manifest).expect("read unchanged manifest"), corrupt);
 }
 
 #[test]
@@ -2145,19 +1749,16 @@ fn doctor_serializes_configuration_load_failures_before_failure() {
     for malformed in [true, false] {
         let repo = TestRepo::new().expect("create test repo");
         let config_path = repo.config_home.join("jj-waltz/config.toml");
-        fs::create_dir_all(config_path.parent().expect("config parent"))
-            .expect("create config parent");
+        fs::create_dir_all(config_path.parent().expect("config parent")).expect("create config parent");
         if malformed {
-            fs::write(&config_path, "[trunk\nrevset = \"trunk()\"\n")
-                .expect("write malformed config");
+            fs::write(&config_path, "[trunk\nrevset = \"trunk()\"\n").expect("write malformed config");
         } else {
             fs::create_dir(&config_path).expect("create unreadable config path");
         }
 
         let output = repo.command_output(&["doctor", "--format=json"]);
         assert!(!output.status.success());
-        let value: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
         assert_eq!(value["command"], "doctor");
         assert_eq!(value["healthy"], false);
         assert!(
@@ -2187,48 +1788,29 @@ fn doctor_reports_managed_workspace_link_health_in_json_and_plain_output() {
     )
     .expect("write links config");
 
-    repo.cmd()
-        .args(["add", "--no-links", "private", "skipped"])
-        .assert()
-        .success();
-    fs::create_dir_all(
-        repo.default_root
-            .with_extension("private")
-            .join("node_modules"),
-    )
-    .expect("create private link source");
+    repo.cmd().args(["add", "--no-links", "private", "skipped"]).assert().success();
+    fs::create_dir_all(repo.default_root.with_extension("private").join("node_modules")).expect("create private link source");
     let operation = repo.operation_id();
 
     let output = repo.command_output(&["doctor", "--format=json"]);
     assert!(!output.status.success());
-    let report: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
     assert_eq!(report["schema_version"], 1);
     assert_eq!(report["healthy"], false);
     let diagnostics = report["diagnostics"].as_array().expect("diagnostics array");
     assert!(diagnostics.iter().any(|entry| {
-        entry["code"] == "workspace-link"
-            && entry["subject"] == "private:node_modules"
-            && entry["state"] == "failed"
-            && entry["severity"] == "error"
+        entry["code"] == "workspace-link" && entry["subject"] == "private:node_modules" && entry["state"] == "failed" && entry["severity"] == "error"
     }));
     assert!(diagnostics.iter().any(|entry| {
-        entry["code"] == "workspace-link"
-            && entry["subject"] == "skipped:node_modules"
-            && entry["state"] == "skipped"
-            && entry["severity"] == "warning"
+        entry["code"] == "workspace-link" && entry["subject"] == "skipped:node_modules" && entry["state"] == "skipped" && entry["severity"] == "warning"
     }));
 
     repo.cmd()
         .arg("doctor")
         .assert()
         .failure()
-        .stdout(predicate::str::contains(
-            "FAIL workspace-link [private:node_modules]",
-        ))
-        .stdout(predicate::str::contains(
-            "WARN workspace-link [skipped:node_modules]",
-        ));
+        .stdout(predicate::str::contains("FAIL workspace-link [private:node_modules]"))
+        .stdout(predicate::str::contains("WARN workspace-link [skipped:node_modules]"));
     assert_eq!(repo.operation_id(), operation);
 }
 
@@ -2236,39 +1818,21 @@ fn doctor_reports_managed_workspace_link_health_in_json_and_plain_output() {
 fn doctor_uses_current_root_when_default_has_no_recorded_path() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    repo.cmd()
-        .args(["adopt", "default", "--base", "@-", "--no-bookmark"])
-        .assert()
-        .success();
+    repo.cmd().args(["adopt", "default", "--base", "@-", "--no-bookmark"]).assert().success();
     fs::write(
         repo.default_root.join(".jwlinks.toml"),
         "[[link]]\nsource = \"cache\"\ntarget = \"missing\"\nrequired = false\n",
     )
     .expect("write links config");
-    fs::remove_dir_all(repo.default_root.join(".jj/repo/workspace_store"))
-        .expect("remove recorded workspace paths");
+    fs::remove_dir_all(repo.default_root.join(".jj/repo/workspace_store")).expect("remove recorded workspace paths");
 
     let output = repo.command_output(&["doctor", "--format=json"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid doctor JSON");
     assert_eq!(report["healthy"], true);
-    assert!(
-        report["diagnostics"]
-            .as_array()
-            .expect("diagnostics array")
-            .iter()
-            .any(|entry| {
-                entry["code"] == "workspace-link"
-                    && entry["subject"] == "default:cache"
-                    && entry["state"] == "skipped"
-                    && entry["severity"] == "warning"
-            })
-    );
+    assert!(report["diagnostics"].as_array().expect("diagnostics array").iter().any(|entry| {
+        entry["code"] == "workspace-link" && entry["subject"] == "default:cache" && entry["state"] == "skipped" && entry["severity"] == "warning"
+    }));
 }
 
 #[test]
@@ -2277,23 +1841,12 @@ fn creation_metadata_records_exact_base_prebookmark_operation_and_removal_cleans
     let repo = TestRepo::new().expect("create test repo");
     let expected_base = repo.revision_commit_id("@");
 
-    let output = repo.command_output(&[
-        "add",
-        "feature-a",
-        "--no-links",
-        "--bookmark",
-        "wip/feature-a",
-    ]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = repo.command_output(&["add", "feature-a", "--no-links", "--bookmark", "wip/feature-a"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let creation_operation = repo.operation_id();
     let status = repo.command_output(&["status", "feature-a", "--format=json", "--refresh=none"]);
     assert!(status.status.success());
-    let value: serde_json::Value =
-        serde_json::from_slice(&status.stdout).expect("valid managed status");
+    let value: serde_json::Value = serde_json::from_slice(&status.stdout).expect("valid managed status");
     let workspace = &value["workspaces"][0];
     assert_eq!(workspace["management"], "managed");
     assert_eq!(workspace["creation_base_commit_id"], expected_base);
@@ -2319,28 +1872,13 @@ fn merge_working_copy_is_the_default_creation_base() {
     repo.run_jj(["new", &left, &right, "-m", "merge"]);
     let merge = repo.revision_commit_id("@");
     let implicit = repo.command_output(&["add", "implicit", "--no-links"]);
-    assert!(
-        implicit.status.success(),
-        "{}",
-        String::from_utf8_lossy(&implicit.stderr)
-    );
+    assert!(implicit.status.success(), "{}", String::from_utf8_lossy(&implicit.stderr));
     let status = repo.command_output(&["status", "implicit", "--format=json", "--refresh=none"]);
     let value: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(value["workspaces"][0]["creation_base_commit_id"], merge);
 
-    let explicit = repo.command_output(&[
-        "add",
-        "explicit",
-        "--at",
-        "@",
-        "--no-links",
-        "--no-bookmark",
-    ]);
-    assert!(
-        explicit.status.success(),
-        "{}",
-        String::from_utf8_lossy(&explicit.stderr)
-    );
+    let explicit = repo.command_output(&["add", "explicit", "--at", "@", "--no-links", "--no-bookmark"]);
+    assert!(explicit.status.success(), "{}", String::from_utf8_lossy(&explicit.stderr));
     let status = repo.command_output(&["status", "explicit", "--format=json", "--refresh=none"]);
     let value: serde_json::Value = serde_json::from_slice(&status.stdout).expect("status JSON");
     assert_eq!(value["workspaces"][0]["creation_base_commit_id"], merge);
@@ -2351,24 +1889,10 @@ fn adopt_records_intent_without_changing_jj_state() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     let legacy_root = repo.default_root.with_extension("legacy");
-    repo.run_jj([
-        "workspace",
-        "add",
-        "--name",
-        "legacy",
-        legacy_root.to_str().unwrap(),
-    ]);
-    fs::write(legacy_root.join(".jj/jw-bookmark"), "broken\nmarker\n")
-        .expect("write invalid legacy marker");
+    repo.run_jj(["workspace", "add", "--name", "legacy", legacy_root.to_str().unwrap()]);
+    fs::write(legacy_root.join(".jj/jw-bookmark"), "broken\nmarker\n").expect("write invalid legacy marker");
     let missing_before = repo.operation_id();
-    let missing = repo.command_output(&[
-        "adopt",
-        "legacy",
-        "--base",
-        "legacy@-",
-        "--bookmark",
-        "missing",
-    ]);
+    let missing = repo.command_output(&["adopt", "legacy", "--base", "legacy@-", "--bookmark", "missing"]);
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("does not exist locally"));
     assert_eq!(repo.operation_id(), missing_before);
@@ -2378,22 +1902,9 @@ fn adopt_records_intent_without_changing_jj_state() {
     let revision = repo.revision_commit_id("legacy@");
     let bookmarks = repo.bookmarks();
 
-    let output = repo.command_output(&[
-        "adopt",
-        "legacy",
-        "--base",
-        "legacy@-",
-        "--bookmark",
-        "declared",
-    ]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("stack analysis: deferred to milestone 1")
-    );
+    let output = repo.command_output(&["adopt", "legacy", "--base", "legacy@-", "--bookmark", "declared"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("stack analysis: deferred to milestone 1"));
     assert_eq!(repo.operation_id(), operation);
     assert_eq!(repo.revision_commit_id("legacy@"), revision);
     assert_eq!(repo.bookmarks(), bookmarks);
@@ -2410,38 +1921,19 @@ fn adopt_no_bookmark_ignores_stale_legacy_marker_without_changing_jj_state() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
     let legacy_root = repo.default_root.with_extension("legacy");
-    repo.run_jj([
-        "workspace",
-        "add",
-        "--name",
-        "legacy",
-        legacy_root.to_str().unwrap(),
-    ]);
-    fs::write(legacy_root.join(".jj/jw-bookmark"), "wip/deleted\n")
-        .expect("write stale legacy marker");
+    repo.run_jj(["workspace", "add", "--name", "legacy", legacy_root.to_str().unwrap()]);
+    fs::write(legacy_root.join(".jj/jw-bookmark"), "wip/deleted\n").expect("write stale legacy marker");
     let operation = repo.operation_id();
     let bookmarks = repo.bookmarks();
 
     let output = repo.command_output(&["adopt", "legacy", "--base", "legacy@-", "--no-bookmark"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(repo.operation_id(), operation);
     assert_eq!(repo.bookmarks(), bookmarks);
 
-    let record = repo
-        .metadata_record_paths()
-        .into_iter()
-        .next()
-        .expect("managed metadata record");
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(record).expect("read metadata")).expect("metadata JSON");
-    assert_eq!(
-        metadata["metadata"]["associated_bookmark"],
-        serde_json::Value::Null
-    );
+    let record = repo.metadata_record_paths().into_iter().next().expect("managed metadata record");
+    let metadata: serde_json::Value = serde_json::from_slice(&fs::read(record).expect("read metadata")).expect("metadata JSON");
+    assert_eq!(metadata["metadata"]["associated_bookmark"], serde_json::Value::Null);
 }
 
 #[test]
@@ -2450,20 +1942,10 @@ fn adopt_rejects_bookmark_and_no_bookmark_together() {
     let repo = TestRepo::new().expect("create test repo");
 
     repo.cmd()
-        .args([
-            "adopt",
-            "default",
-            "--base",
-            "@-",
-            "--bookmark",
-            "wip/default",
-            "--no-bookmark",
-        ])
+        .args(["adopt", "default", "--base", "@-", "--bookmark", "wip/default", "--no-bookmark"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "cannot be used with '--no-bookmark'",
-        ));
+        .stderr(predicate::str::contains("cannot be used with '--no-bookmark'"));
 }
 
 #[test]
@@ -2477,15 +1959,7 @@ fn repair_requires_explicit_bookmark_intent_and_literal_workspace_name() {
         .failure()
         .stderr(predicate::str::contains("--bookmark"));
     repo.cmd()
-        .args([
-            "repair",
-            "default",
-            "--base",
-            "@-",
-            "--bookmark",
-            "main",
-            "--no-bookmark",
-        ])
+        .args(["repair", "default", "--base", "@-", "--bookmark", "main", "--no-bookmark"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
@@ -2495,10 +1969,7 @@ fn repair_requires_explicit_bookmark_intent_and_literal_workspace_name() {
         .failure()
         .stderr(predicate::str::contains("literal workspace name"));
 
-    repo.cmd()
-        .args(["adopt", "default", "--base", "@-", "--no-bookmark"])
-        .assert()
-        .success();
+    repo.cmd().args(["adopt", "default", "--base", "@-", "--no-bookmark"]).assert().success();
     repo.cmd()
         .args(["repair", "default", "--base", "@-", "--no-bookmark"])
         .assert()
@@ -2510,18 +1981,9 @@ fn repair_requires_explicit_bookmark_intent_and_literal_workspace_name() {
 fn repair_replaces_only_base_and_bookmark_and_fixes_doctor_remedy() {
     skip_without_jj!();
     let repo = TestRepo::new().expect("create test repo");
-    repo.cmd()
-        .args(["add", "--no-links", "feature-a"])
-        .assert()
-        .success();
-    let record_path = repo
-        .metadata_record_paths()
-        .into_iter()
-        .next()
-        .expect("managed metadata record");
-    let mut record: serde_json::Value =
-        serde_json::from_slice(&fs::read(&record_path).expect("read managed metadata record"))
-            .expect("metadata JSON");
+    repo.cmd().args(["add", "--no-links", "feature-a"]).assert().success();
+    let record_path = repo.metadata_record_paths().into_iter().next().expect("managed metadata record");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&record_path).expect("read managed metadata record")).expect("metadata JSON");
     let created_at = record["metadata"]["created_at_unix_ms"].clone();
     let creation_operation = record["metadata"]["creation_operation_id"].clone();
     record["metadata"]["creation_base_commit_id"] = "missing-base".into();
@@ -2536,9 +1998,7 @@ fn repair_replaces_only_base_and_bookmark_and_fixes_doctor_remedy() {
         .assert()
         .failure()
         .stdout(predicate::str::contains("jw repair feature-a"))
-        .stdout(predicate::str::contains(
-            "jw repair feature-a --base <exact-revset> --no-bookmark",
-        ));
+        .stdout(predicate::str::contains("jw repair feature-a --base <exact-revset> --no-bookmark"));
 
     let operation = repo.operation_id();
     let bookmarks = repo.bookmarks();
@@ -2550,37 +2010,20 @@ fn repair_replaces_only_base_and_bookmark_and_fixes_doctor_remedy() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Repaired workspace: feature-a"))
-        .stdout(predicate::str::contains(
-            "previous creation base: missing-base",
-        ))
-        .stdout(predicate::str::contains(format!(
-            "creation base: {expected_base}"
-        )))
-        .stdout(predicate::str::contains(
-            "previous bookmark: missing-bookmark",
-        ))
+        .stdout(predicate::str::contains("previous creation base: missing-base"))
+        .stdout(predicate::str::contains(format!("creation base: {expected_base}")))
+        .stdout(predicate::str::contains("previous bookmark: missing-bookmark"))
         .stdout(predicate::str::contains("bookmark: (none)"));
 
     assert_eq!(repo.operation_id(), operation);
     assert_eq!(repo.bookmarks(), bookmarks);
     assert_eq!(repo.revision_commit_id("feature-a@"), commit);
     assert!(feature_root.is_dir());
-    let repaired: serde_json::Value =
-        serde_json::from_slice(&fs::read(&record_path).expect("read repaired metadata record"))
-            .expect("repaired metadata JSON");
+    let repaired: serde_json::Value = serde_json::from_slice(&fs::read(&record_path).expect("read repaired metadata record")).expect("repaired metadata JSON");
     assert_eq!(repaired["metadata"]["created_at_unix_ms"], created_at);
-    assert_eq!(
-        repaired["metadata"]["creation_operation_id"],
-        creation_operation
-    );
-    assert_eq!(
-        repaired["metadata"]["creation_base_commit_id"],
-        expected_base
-    );
-    assert_eq!(
-        repaired["metadata"]["associated_bookmark"],
-        serde_json::Value::Null
-    );
+    assert_eq!(repaired["metadata"]["creation_operation_id"], creation_operation);
+    assert_eq!(repaired["metadata"]["creation_base_commit_id"], expected_base);
+    assert_eq!(repaired["metadata"]["associated_bookmark"], serde_json::Value::Null);
     assert_eq!(repaired["metadata"]["intended_remote"], "origin");
     repo.cmd().arg("doctor").assert().success();
 }
@@ -2598,33 +2041,16 @@ impl TestRepo {
         let config_home = tempdir.path().join("config");
         fs::create_dir_all(&config_home)?;
 
-        run_in(
-            tempdir.path(),
-            &config_home,
-            ["jj", "git", "init", default_root.to_str().unwrap()],
-        )?;
+        run_in(tempdir.path(), &config_home, ["jj", "git", "init", default_root.to_str().unwrap()])?;
         fs::write(default_root.join("README.md"), "hello\n")?;
-        run_in(
-            &default_root,
-            &config_home,
-            ["jj", "file", "track", "root:README.md"],
-        )?;
-        run_in(
-            &default_root,
-            &config_home,
-            ["jj", "commit", "-m", "initial"],
-        )?;
+        run_in(&default_root, &config_home, ["jj", "file", "track", "root:README.md"])?;
+        run_in(&default_root, &config_home, ["jj", "commit", "-m", "initial"])?;
 
         // Resolve DOS short names and platform aliases before comparing the
         // fixture with JJ's reported checkout paths.
         let default_root = fs::canonicalize(default_root)?;
         #[cfg(windows)]
-        let default_root = PathBuf::from(
-            default_root
-                .to_string_lossy()
-                .strip_prefix(r"\\?\")
-                .unwrap_or(&default_root.to_string_lossy()),
-        );
+        let default_root = PathBuf::from(default_root.to_string_lossy().strip_prefix(r"\\?\").unwrap_or(&default_root.to_string_lossy()));
         Ok(Self {
             _tempdir: tempdir,
             default_root,
@@ -2638,8 +2064,7 @@ impl TestRepo {
 
     fn cmd_at(&self, cwd: &Path) -> Command {
         let mut cmd = Command::cargo_bin("jw").expect("binary");
-        cmd.current_dir(cwd)
-            .env("XDG_CONFIG_HOME", &self.config_home);
+        cmd.current_dir(cwd).env("XDG_CONFIG_HOME", &self.config_home);
         cmd
     }
 
@@ -2648,11 +2073,8 @@ impl TestRepo {
     }
 
     fn run_jj<const N: usize>(&self, args: [&str; N]) {
-        self.run_in(
-            &self.default_root,
-            std::iter::once("jj").chain(args).collect::<Vec<_>>(),
-        )
-        .expect("jj command succeeds");
+        self.run_in(&self.default_root, std::iter::once("jj").chain(args).collect::<Vec<_>>())
+            .expect("jj command succeeds");
     }
 
     fn run_in<I, S>(&self, cwd: &Path, args: I) -> anyhow::Result<()>
@@ -2665,28 +2087,19 @@ impl TestRepo {
 
     fn jj_command_at(&self, cwd: &Path) -> Command {
         let mut command = Command::new("jj");
-        command
-            .current_dir(cwd)
-            .env("XDG_CONFIG_HOME", &self.config_home);
+        command.current_dir(cwd).env("XDG_CONFIG_HOME", &self.config_home);
         command
     }
 
     fn jj_stdout(&self, cwd: &Path, args: &[&str]) -> String {
-        let output = self
-            .jj_command_at(cwd)
-            .args(args)
-            .output()
-            .expect("execute jj command");
+        let output = self.jj_command_at(cwd).args(args).output().expect("execute jj command");
         assert!(
             output.status.success(),
             "jj {args:?} failed\nstdout: {}\nstderr: {}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8(output.stdout)
-            .expect("UTF-8 jj output")
-            .trim()
-            .to_owned()
+        String::from_utf8(output.stdout).expect("UTF-8 jj output").trim().to_owned()
     }
 
     fn operation_id(&self) -> String {
@@ -2709,27 +2122,13 @@ impl TestRepo {
     fn revision_commit_id(&self, revset: &str) -> String {
         self.jj_stdout(
             &self.default_root,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "-r",
-                revset,
-                "--no-graph",
-                "-T",
-                "commit_id",
-            ],
+            &["--ignore-working-copy", "log", "-r", revset, "--no-graph", "-T", "commit_id"],
         )
     }
 
     fn metadata_root(&self) -> PathBuf {
-        let config_path = PathBuf::from(self.jj_stdout(
-            &self.default_root,
-            &["--ignore-working-copy", "config", "path", "--repo"],
-        ));
-        config_path
-            .parent()
-            .expect("repository config path has parent")
-            .join("jj-waltz")
+        let config_path = PathBuf::from(self.jj_stdout(&self.default_root, &["--ignore-working-copy", "config", "path", "--repo"]));
+        config_path.parent().expect("repository config path has parent").join("jj-waltz")
     }
 
     fn metadata_record_paths(&self) -> Vec<PathBuf> {
@@ -2739,10 +2138,7 @@ impl TestRepo {
         };
         entries
             .map(|entry| entry.expect("read metadata entry").path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "json")
-            })
+            .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
             .collect()
     }
 
@@ -2775,13 +2171,7 @@ impl TestRepo {
     fn workspace_names(&self) -> Vec<String> {
         let output = self
             .jj_command_at(&self.default_root)
-            .args([
-                "workspace",
-                "list",
-                "-T",
-                "name ++ \"\\n\"",
-                "--color=never",
-            ])
+            .args(["workspace", "list", "-T", "name ++ \"\\n\"", "--color=never"])
             .output()
             .expect("list workspaces");
         assert!(
@@ -2810,18 +2200,11 @@ impl TestRepo {
             String::from_utf8_lossy(&current_root.stdout),
             String::from_utf8_lossy(&current_root.stderr)
         );
-        let current_root = fs::canonicalize(String::from_utf8_lossy(&current_root.stdout).trim())
-            .expect("canonicalize current root");
+        let current_root = fs::canonicalize(String::from_utf8_lossy(&current_root.stdout).trim()).expect("canonicalize current root");
 
         let output = self
             .jj_command_at(&self.default_root)
-            .args([
-                "workspace",
-                "list",
-                "-T",
-                "name ++ \"\\n\"",
-                "--color=never",
-            ])
+            .args(["workspace", "list", "-T", "name ++ \"\\n\"", "--color=never"])
             .output()
             .expect("list workspaces");
         assert!(
@@ -2848,8 +2231,7 @@ impl TestRepo {
                 if !output.status.success() {
                     return false;
                 }
-                let Ok(root) = fs::canonicalize(String::from_utf8_lossy(&output.stdout).trim())
-                else {
+                let Ok(root) = fs::canonicalize(String::from_utf8_lossy(&output.stdout).trim()) else {
                     return false;
                 };
                 root == current_root
@@ -2894,16 +2276,9 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let values = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect::<Vec<_>>();
+    let values = args.into_iter().map(|arg| arg.as_ref().to_owned()).collect::<Vec<_>>();
     let (program, rest) = values.split_first().expect("program");
-    let output = Command::new(program)
-        .current_dir(cwd)
-        .env("XDG_CONFIG_HOME", config_home)
-        .args(rest)
-        .output()?;
+    let output = Command::new(program).current_dir(cwd).env("XDG_CONFIG_HOME", config_home).args(rest).output()?;
     if output.status.success() {
         Ok(())
     } else {

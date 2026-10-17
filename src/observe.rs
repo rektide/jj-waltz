@@ -1,8 +1,8 @@
 use crate::jj::{JjClient, JjCommandError, JjErrorKind, WorkspaceTargetFacts};
 use crate::metadata::{ManagedWorkspaceMetadata, WorkspaceMetadataStore};
 use crate::snapshot::{
-    Hazard, HazardId, ManagementState, RepositorySnapshot, ResolvedTrunk, SnapshotCommand,
-    SnapshotEnvelope, SnapshotWarning, WorkingCopyStatus, WorkspaceRole, WorkspaceSnapshot,
+    Hazard, HazardId, ManagementState, RepositorySnapshot, ResolvedTrunk, SnapshotCommand, SnapshotEnvelope, SnapshotWarning, WorkingCopyStatus, WorkspaceRole,
+    WorkspaceSnapshot,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,20 +49,11 @@ pub struct ObservationEngine {
 
 impl ObservationEngine {
     pub fn new(client: JjClient, trunk_revset: impl Into<String>) -> Result<Self> {
-        let metadata_store =
-            WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
-        Ok(Self::with_metadata_store(
-            client,
-            trunk_revset,
-            metadata_store,
-        ))
+        let metadata_store = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
+        Ok(Self::with_metadata_store(client, trunk_revset, metadata_store))
     }
 
-    pub(crate) fn with_metadata_store(
-        client: JjClient,
-        trunk_revset: impl Into<String>,
-        metadata_store: WorkspaceMetadataStore,
-    ) -> Self {
+    pub(crate) fn with_metadata_store(client: JjClient, trunk_revset: impl Into<String>, metadata_store: WorkspaceMetadataStore) -> Self {
         Self {
             client,
             trunk_revset: trunk_revset.into(),
@@ -81,29 +72,16 @@ impl ObservationEngine {
     /// target.
     pub(crate) fn capture_list_named(&self, names: &[String]) -> Result<SnapshotEnvelope> {
         let names = names.iter().cloned().collect();
-        self.capture_with_named_refresh(
-            CaptureSelection::List,
-            RefreshMode::None,
-            Some(&names),
-            true,
-        )
+        self.capture_with_named_refresh(CaptureSelection::List, RefreshMode::None, Some(&names), true)
     }
 
     /// Capture one workspace. `workspace` accepts `@` for current, `-` for previous, and `^` or
     /// `default` for default. Any other value is treated as a literal workspace name.
-    pub fn capture_status(
-        &self,
-        workspace: &str,
-        refresh: RefreshMode,
-    ) -> Result<SnapshotEnvelope> {
+    pub fn capture_status(&self, workspace: &str, refresh: RefreshMode) -> Result<SnapshotEnvelope> {
         self.capture(CaptureSelection::Status(workspace.to_owned()), refresh)
     }
 
-    fn capture(
-        &self,
-        selection: CaptureSelection,
-        refresh: RefreshMode,
-    ) -> Result<SnapshotEnvelope> {
+    fn capture(&self, selection: CaptureSelection, refresh: RefreshMode) -> Result<SnapshotEnvelope> {
         self.capture_with_named_refresh(selection, refresh, None, false)
     }
 
@@ -117,17 +95,12 @@ impl ObservationEngine {
         let mut last_drift = None;
 
         for attempt in 0..CAPTURE_ATTEMPTS {
-            let before_refresh_operation = manager_fast_path
-                .then(|| self.client.operation_id())
-                .transpose()?;
+            let before_refresh_operation = manager_fast_path.then(|| self.client.operation_id()).transpose()?;
             let inventory = PreliminaryInventory::discover(&self.client)?;
             let resolved_selection = selection.resolve(&inventory)?;
 
-            let refresh_names = named_refresh
-                .cloned()
-                .unwrap_or_else(|| resolved_selection.refresh_names(&inventory, refresh));
-            let (refresh_states, refresh_warnings) =
-                self.refresh_sequentially(&inventory, &refresh_names, named_refresh.is_some())?;
+            let refresh_names = named_refresh.cloned().unwrap_or_else(|| resolved_selection.refresh_names(&inventory, refresh));
+            let (refresh_states, refresh_warnings) = self.refresh_sequentially(&inventory, &refresh_names, named_refresh.is_some())?;
 
             let operation_id = self.client.operation_id()?;
             let captured_at_unix_ms = unix_time_ms()?;
@@ -142,10 +115,7 @@ impl ObservationEngine {
                 }
                 break;
             }
-            if !final_facts
-                .get(&inventory.current)
-                .is_some_and(|facts| facts.current_working_copy)
-            {
+            if !final_facts.get(&inventory.current).is_some_and(|facts| facts.current_working_copy) {
                 bail!(
                     "frozen workspace inventory did not mark `{}` as the current working-copy target",
                     inventory.current
@@ -156,16 +126,9 @@ impl ObservationEngine {
             let trunk_revision = self
                 .client
                 .resolve_one_at(&operation_id, &self.trunk_revset)
-                .with_context(|| {
-                    format!(
-                        "failed to resolve trunk revset `{}` to exactly one revision",
-                        self.trunk_revset
-                    )
-                })?;
+                .with_context(|| format!("failed to resolve trunk revset `{}` to exactly one revision", self.trunk_revset))?;
 
-            let final_paths = if manager_fast_path
-                && before_refresh_operation.as_deref() == Some(operation_id.as_str())
-            {
+            let final_paths = if manager_fast_path && before_refresh_operation.as_deref() == Some(operation_id.as_str()) {
                 inventory.roots.clone()
             } else {
                 self.workspace_paths_at(&operation_id, final_facts.keys(), &inventory.current)?
@@ -260,19 +223,14 @@ impl ObservationEngine {
                     ));
                 }
                 Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("failed to refresh workspace `{name}` at {}", root.display())
-                    });
+                    return Err(error).with_context(|| format!("failed to refresh workspace `{name}` at {}", root.display()));
                 }
             }
         }
         Ok((states, warnings))
     }
 
-    fn workspace_facts_at(
-        &self,
-        operation_id: &str,
-    ) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
+    fn workspace_facts_at(&self, operation_id: &str) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
         self.client.workspace_target_facts_at(operation_id)
     }
 
@@ -339,33 +297,14 @@ impl ObservationEngine {
             return missing;
         }
 
-        let revset = valid_ids
-            .iter()
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let query = self.client.run_at(
-            operation_id,
-            [
-                "log",
-                "-r",
-                revset.as_str(),
-                "--no-graph",
-                "--template",
-                "commit_id ++ \"\\n\"",
-            ],
-        );
+        let revset = valid_ids.iter().map(ToOwned::to_owned).collect::<Vec<_>>().join(" | ");
+        let query = self
+            .client
+            .run_at(operation_id, ["log", "-r", revset.as_str(), "--no-graph", "--template", "commit_id ++ \"\\n\""]);
         let resolved = match query.and_then(|output| output.stdout().map(str::to_owned)) {
-            Ok(output) => output
-                .lines()
-                .map(ToOwned::to_owned)
-                .collect::<BTreeSet<_>>(),
+            Ok(output) => output.lines().map(ToOwned::to_owned).collect::<BTreeSet<_>>(),
             Err(_) => {
-                return self.missing_creation_bases_at(
-                    operation_id,
-                    metadata,
-                    workspace_names.into_iter(),
-                );
+                return self.missing_creation_bases_at(operation_id, metadata, workspace_names.into_iter());
             }
         };
         for name in workspace_names {
@@ -402,16 +341,10 @@ impl CaptureSelection {
         let Self::Status(token) = self else {
             return Ok(Self::List);
         };
-        Ok(Self::Status(
-            resolve_workspace_token_in(inventory, token)?.name,
-        ))
+        Ok(Self::Status(resolve_workspace_token_in(inventory, token)?.name))
     }
 
-    fn refresh_names(
-        &self,
-        inventory: &PreliminaryInventory,
-        refresh: RefreshMode,
-    ) -> BTreeSet<String> {
+    fn refresh_names(&self, inventory: &PreliminaryInventory, refresh: RefreshMode) -> BTreeSet<String> {
         match refresh {
             RefreshMode::None => BTreeSet::new(),
             RefreshMode::All => inventory.names(),
@@ -422,42 +355,22 @@ impl CaptureSelection {
         }
     }
 
-    fn selected_facts<'a>(
-        &self,
-        facts: &'a BTreeMap<String, WorkspaceTargetFacts>,
-    ) -> Result<Vec<&'a WorkspaceTargetFacts>> {
+    fn selected_facts<'a>(&self, facts: &'a BTreeMap<String, WorkspaceTargetFacts>) -> Result<Vec<&'a WorkspaceTargetFacts>> {
         match self {
             Self::List => Ok(facts.values().collect()),
-            Self::Status(name) => {
-                Ok(vec![facts.get(name).ok_or_else(|| {
-                    anyhow!("workspace not found in frozen snapshot: {name}")
-                })?])
-            }
+            Self::Status(name) => Ok(vec![facts.get(name).ok_or_else(|| anyhow!("workspace not found in frozen snapshot: {name}"))?]),
         }
     }
 }
 
-fn resolve_workspace_token_in(
-    inventory: &PreliminaryInventory,
-    token: &str,
-) -> Result<ResolvedWorkspace> {
+fn resolve_workspace_token_in(inventory: &PreliminaryInventory, token: &str) -> Result<ResolvedWorkspace> {
     let name = match token {
         "@" => inventory.current.clone(),
-        "-" => inventory
-            .previous
-            .clone()
-            .ok_or_else(|| anyhow!("no previous workspace recorded"))?,
-        "^" | "default" => inventory
-            .default
-            .clone()
-            .ok_or_else(|| anyhow!("could not determine default workspace"))?,
+        "-" => inventory.previous.clone().ok_or_else(|| anyhow!("no previous workspace recorded"))?,
+        "^" | "default" => inventory.default.clone().ok_or_else(|| anyhow!("could not determine default workspace"))?,
         name => name.to_owned(),
     };
-    let path = inventory
-        .roots
-        .get(&name)
-        .ok_or_else(|| anyhow!("workspace not found: {name}"))?
-        .clone();
+    let path = inventory.roots.get(&name).ok_or_else(|| anyhow!("workspace not found: {name}"))?.clone();
     Ok(ResolvedWorkspace { name, path })
 }
 
@@ -476,8 +389,7 @@ impl PreliminaryInventory {
             bail!("JJ workspace inventory was empty")
         }
 
-        let current_root = query_workspace_root(client, None)?
-            .ok_or_else(|| anyhow!("current JJ workspace path is missing"))?;
+        let current_root = query_workspace_root(client, None)?.ok_or_else(|| anyhow!("current JJ workspace path is missing"))?;
         let current_root = canonicalize_existing(&current_root)?;
 
         let mut roots = BTreeMap::new();
@@ -491,9 +403,7 @@ impl PreliminaryInventory {
 
         let path_matches = roots
             .iter()
-            .filter_map(|(name, root)| {
-                (root.as_deref() == Some(current_root.as_path())).then_some(name)
-            })
+            .filter_map(|(name, root)| (root.as_deref() == Some(current_root.as_path())).then_some(name))
             .cloned()
             .collect::<Vec<_>>();
         let current = match path_matches.as_slice() {
@@ -509,17 +419,10 @@ impl PreliminaryInventory {
                         roots.insert(name.clone(), Some(current_root.clone()));
                         name.clone()
                     }
-                    _ => bail!(
-                        "could not determine current workspace for root {}",
-                        current_root.display()
-                    ),
+                    _ => bail!("could not determine current workspace for root {}", current_root.display()),
                 }
             }
-            _ => bail!(
-                "multiple workspaces match current root {}: {}",
-                current_root.display(),
-                path_matches.join(", ")
-            ),
+            _ => bail!("multiple workspaces match current root {}: {}", current_root.display(), path_matches.join(", ")),
         };
 
         let default = derive_default_workspace(&names, &current, &current_root)?;
@@ -566,9 +469,7 @@ fn derive_workspace_snapshot(input: DerivationInput<'_>) -> WorkspaceSnapshot {
     let working_copy = match refresh_state {
         Some(RefreshState::Stale) => WorkingCopyStatus::Stale,
         None => WorkingCopyStatus::Unknown,
-        Some(RefreshState::Refreshed) if facts.conflicted => WorkingCopyStatus::Conflicted {
-            conflicts: facts.conflicts,
-        },
+        Some(RefreshState::Refreshed) if facts.conflicted => WorkingCopyStatus::Conflicted { conflicts: facts.conflicts },
         Some(RefreshState::Refreshed) if facts.empty => WorkingCopyStatus::Empty,
         Some(RefreshState::Refreshed) => WorkingCopyStatus::Modified {
             files: facts.files,
@@ -587,23 +488,14 @@ fn derive_workspace_snapshot(input: DerivationInput<'_>) -> WorkspaceSnapshot {
     if facts.conflicted {
         hazards.push(Hazard::new(
             HazardId::Conflicted,
-            format!(
-                "working-copy revision contains {} conflicted files",
-                facts.conflicts
-            ),
+            format!("working-copy revision contains {} conflicted files", facts.conflicts),
         ));
     }
     if facts.divergent {
-        hazards.push(Hazard::new(
-            HazardId::DivergentChange,
-            "working-copy change ID has multiple visible commits",
-        ));
+        hazards.push(Hazard::new(HazardId::DivergentChange, "working-copy change ID has multiple visible commits"));
     }
     if metadata.is_none() {
-        hazards.push(Hazard::new(
-            HazardId::UnmanagedWorkspace,
-            "workspace has no jj-waltz lifecycle metadata",
-        ));
+        hazards.push(Hazard::new(HazardId::UnmanagedWorkspace, "workspace has no jj-waltz lifecycle metadata"));
     }
     if metadata.is_some() && creation_base_missing {
         hazards.push(Hazard::new(
@@ -612,10 +504,7 @@ fn derive_workspace_snapshot(input: DerivationInput<'_>) -> WorkspaceSnapshot {
         ));
     }
     if path.is_none() {
-        hazards.push(Hazard::new(
-            HazardId::MissingWorkspacePath,
-            "JJ workspace has no existing working-copy path",
-        ));
+        hazards.push(Hazard::new(HazardId::MissingWorkspacePath, "JJ workspace has no existing working-copy path"));
     }
 
     WorkspaceSnapshot {
@@ -660,11 +549,7 @@ fn query_workspace_root(client: &JjClient, name: Option<&str>) -> Result<Option<
     }
 }
 
-fn query_workspace_root_at(
-    client: &JjClient,
-    operation_id: &str,
-    name: Option<&str>,
-) -> Result<Option<PathBuf>> {
+fn query_workspace_root_at(client: &JjClient, operation_id: &str, name: Option<&str>) -> Result<Option<PathBuf>> {
     let mut args = vec!["workspace", "root"];
     if let Some(name) = name {
         args.extend(["--name", name]);
@@ -685,43 +570,28 @@ fn query_workspace_root_at(
 
 fn is_missing_workspace_path_error(message: &str) -> bool {
     message.contains("Cannot resolve absolute workspace path")
-        && (message.contains("No such file or directory")
-            || message.contains("os error 2")
-            || message.contains("os error 3"))
+        && (message.contains("No such file or directory") || message.contains("os error 2") || message.contains("os error 3"))
         || message.contains("Workspace has no recorded path")
 }
 
 fn parse_workspace_root(output: &str) -> Result<PathBuf> {
-    let paths = output
-        .lines()
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let paths = output.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
     match paths.as_slice() {
         [path] => Ok(PathBuf::from(path)),
-        _ => bail!(
-            "JJ workspace root query returned {} paths; expected exactly one",
-            paths.len()
-        ),
+        _ => bail!("JJ workspace root query returned {} paths; expected exactly one", paths.len()),
     }
 }
 
 fn canonicalize_existing(path: &Path) -> Result<PathBuf> {
-    fs::canonicalize(path)
-        .with_context(|| format!("failed to resolve workspace path {}", path.display()))
+    fs::canonicalize(path).with_context(|| format!("failed to resolve workspace path {}", path.display()))
 }
 
-fn derive_default_workspace(
-    names: &[String],
-    current: &str,
-    current_root: &Path,
-) -> Result<Option<String>> {
+fn derive_default_workspace(names: &[String], current: &str, current_root: &Path) -> Result<Option<String>> {
     if names.iter().any(|name| name == "default") {
         return Ok(Some("default".to_owned()));
     }
 
-    let parent = current_root
-        .parent()
-        .ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
+    let parent = current_root.parent().ok_or_else(|| anyhow!("workspace root has no parent directory"))?;
     let mut base = current_root
         .file_name()
         .and_then(|name| name.to_str())
@@ -738,10 +608,7 @@ fn derive_default_workspace(
         base = prefix.to_owned();
     }
     let base_root = parent.join(base);
-    Ok(
-        (canonicalize_existing(&base_root).ok().as_deref() == Some(current_root))
-            .then(|| current.to_owned()),
-    )
+    Ok((canonicalize_existing(&base_root).ok().as_deref() == Some(current_root)).then(|| current.to_owned()))
 }
 
 fn read_previous_workspace(current_root: &Path, names: &[String]) -> Result<Option<String>> {
@@ -750,16 +617,10 @@ fn read_previous_workspace(current_root: &Path, names: &[String]) -> Result<Opti
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!("failed to read workspace state {}", state_path.display())
-            });
+            return Err(error).with_context(|| format!("failed to read workspace state {}", state_path.display()));
         }
     };
-    let recorded = contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let recorded = contents.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
     match recorded.as_slice() {
         [name] if names.iter().any(|candidate| candidate == name) => Ok(Some((*name).to_owned())),
         _ => Ok(None),
@@ -777,9 +638,7 @@ fn unix_time_ms() -> Result<u64> {
         .duration_since(UNIX_EPOCH)
         .context("system clock is before the Unix epoch")?
         .as_millis();
-    milliseconds
-        .try_into()
-        .context("current Unix timestamp does not fit in u64 milliseconds")
+    milliseconds.try_into().context("current Unix timestamp does not fit in u64 milliseconds")
 }
 
 fn display_names(names: &BTreeSet<String>) -> String {
@@ -841,18 +700,8 @@ mod tests {
         assert!(!snapshot.working_copy_refreshed);
         assert!(snapshot.role.current && snapshot.role.previous && snapshot.role.default);
         assert_eq!(snapshot.management, ManagementState::Unmanaged);
-        assert!(
-            snapshot
-                .hazards
-                .iter()
-                .any(|hazard| hazard.id == HazardId::UnmanagedWorkspace)
-        );
-        assert!(
-            snapshot
-                .hazards
-                .iter()
-                .any(|hazard| hazard.id == HazardId::MissingWorkspacePath)
-        );
+        assert!(snapshot.hazards.iter().any(|hazard| hazard.id == HazardId::UnmanagedWorkspace));
+        assert!(snapshot.hazards.iter().any(|hazard| hazard.id == HazardId::MissingWorkspacePath));
     }
 
     #[test]
@@ -886,10 +735,7 @@ mod tests {
             metadata: None,
             creation_base_missing: false,
         });
-        assert_eq!(
-            snapshot.working_copy,
-            WorkingCopyStatus::Conflicted { conflicts: 2 }
-        );
+        assert_eq!(snapshot.working_copy, WorkingCopyStatus::Conflicted { conflicts: 2 });
 
         let snapshot = derive_workspace_snapshot(DerivationInput {
             facts: &modified,
@@ -901,12 +747,7 @@ mod tests {
         });
         assert_eq!(snapshot.working_copy, WorkingCopyStatus::Stale);
         assert!(!snapshot.working_copy_refreshed);
-        assert!(
-            snapshot
-                .hazards
-                .iter()
-                .any(|hazard| hazard.id == HazardId::StaleWorkingCopy)
-        );
+        assert!(snapshot.hazards.iter().any(|hazard| hazard.id == HazardId::StaleWorkingCopy));
     }
 
     #[test]
@@ -932,17 +773,9 @@ mod tests {
 
         assert_eq!(snapshot.management, ManagementState::Managed);
         assert_eq!(snapshot.created_at_unix_ms, Some(1_750_000_000_123));
-        assert_eq!(
-            snapshot.creation_operation_id.as_deref(),
-            Some("operation-1")
-        );
+        assert_eq!(snapshot.creation_operation_id.as_deref(), Some("operation-1"));
         assert_eq!(snapshot.intended_remote.as_deref(), Some("origin"));
-        assert!(
-            snapshot
-                .hazards
-                .iter()
-                .any(|hazard| hazard.id == HazardId::MissingCreationBase)
-        );
+        assert!(snapshot.hazards.iter().any(|hazard| hazard.id == HazardId::MissingCreationBase));
     }
 
     #[test]
@@ -950,12 +783,8 @@ mod tests {
         assert!(is_missing_workspace_path_error(
             "Cannot resolve absolute workspace path: No such file or directory (os error 2)"
         ));
-        assert!(is_missing_workspace_path_error(
-            "Workspace has no recorded path"
-        ));
-        assert!(!is_missing_workspace_path_error(
-            "workspace root failed because repository metadata is corrupt"
-        ));
+        assert!(is_missing_workspace_path_error("Workspace has no recorded path"));
+        assert!(!is_missing_workspace_path_error("workspace root failed because repository metadata is corrupt"));
     }
 
     #[test]
@@ -971,28 +800,12 @@ mod tests {
             default: Some("default".to_owned()),
         };
 
+        assert_eq!(resolve_workspace_token_in(&inventory, "@").unwrap().name, "solver");
+        assert_eq!(resolve_workspace_token_in(&inventory, "-").unwrap().name, "docs");
+        assert_eq!(resolve_workspace_token_in(&inventory, "^").unwrap().name, "default");
+        assert_eq!(resolve_workspace_token_in(&inventory, "default").unwrap().name, "default");
         assert_eq!(
-            resolve_workspace_token_in(&inventory, "@").unwrap().name,
-            "solver"
-        );
-        assert_eq!(
-            resolve_workspace_token_in(&inventory, "-").unwrap().name,
-            "docs"
-        );
-        assert_eq!(
-            resolve_workspace_token_in(&inventory, "^").unwrap().name,
-            "default"
-        );
-        assert_eq!(
-            resolve_workspace_token_in(&inventory, "default")
-                .unwrap()
-                .name,
-            "default"
-        );
-        assert_eq!(
-            resolve_workspace_token_in(&inventory, "solver")
-                .unwrap()
-                .path,
+            resolve_workspace_token_in(&inventory, "solver").unwrap().path,
             Some(PathBuf::from("/repo.solver"))
         );
         assert!(resolve_workspace_token_in(&inventory, "missing").is_err());
@@ -1005,31 +818,16 @@ mod tests {
         }
 
         let directory = tempfile::tempdir().unwrap();
-        let init = Command::new("jj")
-            .args(["git", "init"])
-            .arg(directory.path())
-            .output()
-            .unwrap();
-        assert!(
-            init.status.success(),
-            "{}",
-            String::from_utf8_lossy(&init.stderr)
-        );
+        let init = Command::new("jj").args(["git", "init"]).arg(directory.path()).output().unwrap();
+        assert!(init.status.success(), "{}", String::from_utf8_lossy(&init.stderr));
 
         let client = JjClient::new(directory.path());
-        let metadata_store = WorkspaceMetadataStore::from_repo_config_path(
-            directory.path().join("repo-config.toml"),
-        )
-        .unwrap();
-        let engine =
-            ObservationEngine::with_metadata_store(client.clone(), "root()", metadata_store);
+        let metadata_store = WorkspaceMetadataStore::from_repo_config_path(directory.path().join("repo-config.toml")).unwrap();
+        let engine = ObservationEngine::with_metadata_store(client.clone(), "root()", metadata_store);
         let before = client.operation_id().unwrap();
         let resolved = resolve_workspace_token(&client, "@").unwrap();
         assert_eq!(resolved.name, "default");
-        assert_eq!(
-            resolved.path,
-            Some(directory.path().canonicalize().unwrap())
-        );
+        assert_eq!(resolved.path, Some(directory.path().canonicalize().unwrap()));
         assert_eq!(client.operation_id().unwrap(), before);
         fs::write(directory.path().join("dirty.txt"), "dirty\n").unwrap();
 
@@ -1039,10 +837,7 @@ mod tests {
         assert_eq!(before, after);
         assert_eq!(envelope.repository.operation_id, before);
         assert_eq!(envelope.workspaces.len(), 1);
-        assert_eq!(
-            envelope.workspaces[0].working_copy,
-            WorkingCopyStatus::Unknown
-        );
+        assert_eq!(envelope.workspaces[0].working_copy, WorkingCopyStatus::Unknown);
         assert!(!envelope.workspaces[0].working_copy_refreshed);
 
         let refreshed = engine.capture_list(RefreshMode::All).unwrap();

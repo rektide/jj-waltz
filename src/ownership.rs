@@ -35,9 +35,7 @@ impl std::ops::Deref for OwnedGitWorktree {
 
 pub fn registration_paths(client: &JjClient) -> Result<Vec<PathBuf>> {
     let backend = client.run(["--ignore-working-copy", "git", "root"])?;
-    let directory = PathBuf::from(backend.trimmed_stdout()?)
-        .canonicalize()?
-        .join("worktrees");
+    let directory = PathBuf::from(backend.trimmed_stdout()?).canonicalize()?.join("worktrees");
     match fs::read_dir(directory) {
         Ok(entries) => entries.map(|entry| Ok(entry?.path())).collect(),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(Vec::new()),
@@ -45,12 +43,7 @@ pub fn registration_paths(client: &JjClient) -> Result<Vec<PathBuf>> {
     }
 }
 
-pub fn record_created(
-    client: &JjClient,
-    name: &str,
-    path: &Path,
-    previous: &[PathBuf],
-) -> Result<OwnedGitWorktree> {
+pub fn record_created(client: &JjClient, name: &str, path: &Path, previous: &[PathBuf]) -> Result<OwnedGitWorktree> {
     use std::io::Write;
     let topology = detect(path)?.context("JJ did not create the requested linked Git worktree")?;
     if previous.contains(&topology.git_dir) {
@@ -59,21 +52,13 @@ pub fn record_created(
     let ownership_token = format!(
         "{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
     );
-    let owner = OwnedGitWorktree {
-        topology,
-        ownership_token,
-    };
+    let owner = OwnedGitWorktree { topology, ownership_token };
     // Validate topology before placing our marker in a newly allocated registration.
     validate_topology(client, name, Some(path), &owner.topology)?;
     let marker = owner.git_dir.join("jw-owner");
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(marker)?;
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(marker)?;
     file.write_all(owner.ownership_token.as_bytes())?;
     file.sync_all()?;
     validate_owned(client, name, Some(path), &owner)?;
@@ -94,15 +79,9 @@ fn git(args: &[&str]) -> Result<String> {
     ] {
         command.env_remove(name);
     }
-    let output = command
-        .args(args)
-        .output()
-        .context("cannot inspect Git ownership")?;
+    let output = command.args(args).output().context("cannot inspect Git ownership")?;
     if !output.status.success() {
-        bail!(
-            "cannot verify Git ownership: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        bail!("cannot verify Git ownership: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
     String::from_utf8(output.stdout).context("Git ownership paths are not UTF-8")
 }
@@ -143,18 +122,10 @@ fn target_path(client: &JjClient, name: &str) -> Result<Option<PathBuf>> {
     target_path_at(client, name, None)
 }
 
-fn target_path_at(
-    client: &JjClient,
-    name: &str,
-    operation: Option<&str>,
-) -> Result<Option<PathBuf>> {
+fn target_path_at(client: &JjClient, name: &str, operation: Option<&str>) -> Result<Option<PathBuf>> {
     let output = match operation {
-        Some(operation) => {
-            client.run_at_unchecked(operation, ["workspace", "root", "--name", name])?
-        }
-        None => {
-            client.run_unchecked(["--ignore-working-copy", "workspace", "root", "--name", name])?
-        }
+        Some(operation) => client.run_at_unchecked(operation, ["workspace", "root", "--name", name])?,
+        None => client.run_unchecked(["--ignore-working-copy", "workspace", "root", "--name", name])?,
     };
     if output.success() {
         return Ok(Some(PathBuf::from(output.trimmed_stdout()?)));
@@ -193,9 +164,12 @@ fn registrations(client: &JjClient) -> Result<Vec<PathBuf>> {
     let output = client.run_unchecked(["--ignore-working-copy", "git", "root"])?;
     if !output.success() {
         let report = crate::context::discover(Some(client.cwd()));
-        if report.jj.repository_path.as_ref().is_some_and(|repo| {
-            fs::read_to_string(repo.join("store/type")).is_ok_and(|kind| kind.trim() == "local")
-        }) {
+        if report
+            .jj
+            .repository_path
+            .as_ref()
+            .is_some_and(|repo| fs::read_to_string(repo.join("store/type")).is_ok_and(|kind| kind.trim() == "local"))
+        {
             return Ok(Vec::new());
         }
         bail!("cannot verify Git registrations: {}", output.stderr());
@@ -203,39 +177,18 @@ fn registrations(client: &JjClient) -> Result<Vec<PathBuf>> {
     let backend = output.trimmed_stdout()?;
     let backend = crate::paths::external_command_path(Path::new(&backend));
     let backend = backend.to_str().context("Git backend path is not UTF-8")?;
-    let output = git(&[
-        "--git-dir",
-        backend,
-        "worktree",
-        "list",
-        "--porcelain",
-        "-z",
-    ])?;
+    let output = git(&["--git-dir", backend, "worktree", "list", "--porcelain", "-z"])?;
     // The first record is the primary repository, not a linked registration.
     Ok(output
         .split("\0\0")
         .skip(1)
-        .filter_map(|record| {
-            record
-                .split('\0')
-                .find_map(|field| field.strip_prefix("worktree ").map(PathBuf::from))
-        })
+        .filter_map(|record| record.split('\0').find_map(|field| field.strip_prefix("worktree ").map(PathBuf::from)))
         .collect())
 }
 
-pub fn ensure_removal_allowed(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Result<()> {
-    if metadata
-        .and_then(|record| record.external_owner.as_ref())
-        .is_some()
-    {
-        bail!(
-            "workspace {name} is externally owned; use the owning app to remove its checkout and Git registration, then `jw reconcile-external {name}`"
-        );
+pub fn ensure_removal_allowed(client: &JjClient, name: &str, path: Option<&Path>, metadata: Option<&ManagedWorkspaceMetadata>) -> Result<()> {
+    if metadata.and_then(|record| record.external_owner.as_ref()).is_some() {
+        bail!("workspace {name} is externally owned; use the owning app to remove its checkout and Git registration, then `jw reconcile-external {name}`");
     }
     if let Some(owner) = metadata.and_then(|record| record.owned_git_worktree.as_ref()) {
         validate_owned(client, name, path, owner)?;
@@ -252,9 +205,7 @@ pub fn ensure_removal_allowed(
         match fs::symlink_metadata(path) {
             Ok(_) => {
                 if detect(path)?.is_some() {
-                    bail!(
-                        "workspace {name} is externally owned by a linked Git checkout; jw refuses to forget or remove it (including --keep-dir)"
-                    );
+                    bail!("workspace {name} is externally owned by a linked Git checkout; jw refuses to forget or remove it (including --keep-dir)");
                 }
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {}
@@ -262,63 +213,34 @@ pub fn ensure_removal_allowed(
         }
         for registered in registrations(client)? {
             if same_path(&registered, path)? {
-                bail!(
-                    "workspace {name} still has an external Git worktree registration; use the owning app to remove it"
-                );
+                bail!("workspace {name} still has an external Git worktree registration; use the owning app to remove it");
             }
         }
     } else if !registrations(client)?.is_empty() {
-        bail!(
-            "workspace {name} has no recorded path and linked Git worktrees exist; cannot prove ownership safely"
-        );
+        bail!("workspace {name} has no recorded path and linked Git worktrees exist; cannot prove ownership safely");
     }
     Ok(())
 }
 
 /// A stored marker alone never authorizes deleting replacement topology.
-fn validate_owned(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    owner: &OwnedGitWorktree,
-) -> Result<()> {
+fn validate_owned(client: &JjClient, name: &str, path: Option<&Path>, owner: &OwnedGitWorktree) -> Result<()> {
     validate_topology(client, name, path, &owner.topology)?;
     validate_admin(owner)
 }
 
-fn validate_topology(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    owner: &ExternalOwner,
-) -> Result<()> {
+fn validate_topology(client: &JjClient, name: &str, path: Option<&Path>, owner: &ExternalOwner) -> Result<()> {
     validate_topology_at(client, name, path, owner, None)
 }
 
 /// Validate live provenance while pinning all JJ queries to doctor's frozen operation.
-pub(crate) fn validate_owned_at(
-    client: &JjClient,
-    operation: &str,
-    name: &str,
-    path: Option<&Path>,
-    owner: &OwnedGitWorktree,
-) -> Result<()> {
+pub(crate) fn validate_owned_at(client: &JjClient, operation: &str, name: &str, path: Option<&Path>, owner: &OwnedGitWorktree) -> Result<()> {
     validate_topology_at(client, name, path, &owner.topology, Some(operation))?;
     validate_admin(owner)
 }
 
-fn validate_topology_at(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    owner: &ExternalOwner,
-    operation: Option<&str>,
-) -> Result<()> {
-    let queried =
-        target_path_at(client, name, operation)?.context("owned workspace has no recorded path")?;
-    if !same_path(&queried, &owner.checkout_root)?
-        || path.is_some_and(|path| same_path(path, &owner.checkout_root).ok() != Some(true))
-    {
+fn validate_topology_at(client: &JjClient, name: &str, path: Option<&Path>, owner: &ExternalOwner, operation: Option<&str>) -> Result<()> {
+    let queried = target_path_at(client, name, operation)?.context("owned workspace has no recorded path")?;
+    if !same_path(&queried, &owner.checkout_root)? || path.is_some_and(|path| same_path(path, &owner.checkout_root).ok() != Some(true)) {
         bail!("owned workspace path changed; refusing cleanup")
     }
     let backend = match operation {
@@ -344,9 +266,7 @@ fn validate_topology_at(
 fn validate_admin(owner: &OwnedGitWorktree) -> Result<()> {
     validate_admin_topology(&owner.topology)?;
     let marker = owner.git_dir.join("jw-owner");
-    if !fs::symlink_metadata(&marker)?.file_type().is_file()
-        || fs::read_to_string(marker)? != owner.ownership_token
-    {
+    if !fs::symlink_metadata(&marker)?.file_type().is_file() || fs::read_to_string(marker)? != owner.ownership_token {
         bail!("owned Git registration marker changed; refusing cleanup")
     }
     Ok(())
@@ -356,21 +276,14 @@ fn validate_admin_topology(owner: &ExternalOwner) -> Result<()> {
     if owner.git_dir.parent() != Some(owner.common_dir.join("worktrees").as_path()) {
         bail!("invalid owned Git registration path")
     }
-    let metadata = fs::symlink_metadata(&owner.git_dir)
-        .context("owned Git registration is missing; refusing cleanup")?;
+    let metadata = fs::symlink_metadata(&owner.git_dir).context("owned Git registration is missing; refusing cleanup")?;
     if !metadata.is_dir() || owner.git_dir.canonicalize()? != owner.git_dir {
         bail!("owned Git registration was replaced; refusing cleanup")
     }
     let back = fs::read_to_string(owner.git_dir.join("gitdir"))?;
     let common = fs::read_to_string(owner.git_dir.join("commondir"))?;
-    if !same_path(
-        &owner.git_dir.join(back.trim_end_matches(['\r', '\n'])),
-        &owner.checkout_root.join(".git"),
-    )? || owner
-        .git_dir
-        .join(common.trim_end_matches(['\r', '\n']))
-        .canonicalize()?
-        != owner.common_dir
+    if !same_path(&owner.git_dir.join(back.trim_end_matches(['\r', '\n'])), &owner.checkout_root.join(".git"))?
+        || owner.git_dir.join(common.trim_end_matches(['\r', '\n'])).canonicalize()? != owner.common_dir
     {
         bail!("owned Git registration topology changed; refusing cleanup")
     }
@@ -382,31 +295,15 @@ fn validate_admin_topology(owner: &ExternalOwner) -> Result<()> {
 
 /// Use native snapshot/removal with the same bounded Git unlink protection as
 /// forgetting: detach only jw's validated link and clean only its registration.
-pub fn remove_workspace(
-    client: &JjClient,
-    name: &str,
-    path: &Path,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Result<()> {
+pub fn remove_workspace(client: &JjClient, name: &str, path: &Path, metadata: Option<&ManagedWorkspaceMetadata>) -> Result<()> {
     ensure_removal_allowed(client, name, Some(path), metadata)?;
-    cleanup_validated(
-        client,
-        name,
-        Some(path),
-        metadata.and_then(|record| record.owned_git_worktree.as_ref()),
-        true,
-    )
+    cleanup_validated(client, name, Some(path), metadata.and_then(|record| record.owned_git_worktree.as_ref()), true)
 }
 
 /// All cleanup operations pass this boundary. JJ 0.46 unlinks `.git` then runs a
 /// global worktree prune, so detach only our validated gitlink and delete only
 /// our exact administrative directory. Never invoke global Git cleanup.
-pub fn forget_workspace(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Result<()> {
+pub fn forget_workspace(client: &JjClient, name: &str, path: Option<&Path>, metadata: Option<&ManagedWorkspaceMetadata>) -> Result<()> {
     ensure_removal_allowed(client, name, path, metadata)?;
     let resolved = target_path(client, name)?;
     cleanup_validated(
@@ -419,12 +316,7 @@ pub fn forget_workspace(
 }
 
 /// In-memory provenance authorizes rollback before the lifecycle record is persisted.
-pub fn forget_created(
-    client: &JjClient,
-    name: &str,
-    path: &Path,
-    owner: Option<&OwnedGitWorktree>,
-) -> Result<()> {
+pub fn forget_created(client: &JjClient, name: &str, path: &Path, owner: Option<&OwnedGitWorktree>) -> Result<()> {
     if let Some(owner) = owner {
         validate_owned(client, name, Some(path), owner)?;
     } else {
@@ -433,13 +325,7 @@ pub fn forget_created(
     cleanup_validated(client, name, Some(path), owner, false)
 }
 
-fn cleanup_validated(
-    client: &JjClient,
-    name: &str,
-    path: Option<&Path>,
-    owner: Option<&OwnedGitWorktree>,
-    delete_dir: bool,
-) -> Result<()> {
+fn cleanup_validated(client: &JjClient, name: &str, path: Option<&Path>, owner: Option<&OwnedGitWorktree>, delete_dir: bool) -> Result<()> {
     let gitlink = path.map(|p| p.join(".git"));
     let backup = path.map(|p| p.join(".jj/jw-detached-git"));
     let mut detached = false;
@@ -461,15 +347,8 @@ fn cleanup_validated(
                 ensure_absent(backup)?;
                 let original = fs::read(link)?;
                 let text = std::str::from_utf8(&original).context("Git link is not UTF-8")?;
-                let target = text
-                    .trim_end_matches(['\r', '\n'])
-                    .strip_prefix("gitdir: ")
-                    .context("invalid owned Git link")?;
-                if path.unwrap().join(target).canonicalize()? != owner.git_dir
-                    || !fs::symlink_metadata(path.unwrap().join(".jj"))?
-                        .file_type()
-                        .is_dir()
-                {
+                let target = text.trim_end_matches(['\r', '\n']).strip_prefix("gitdir: ").context("invalid owned Git link")?;
+                if path.unwrap().join(target).canonicalize()? != owner.git_dir || !fs::symlink_metadata(path.unwrap().join(".jj"))?.file_type().is_dir() {
                     bail!("owned checkout topology changed before detach; refusing cleanup")
                 }
                 rename_no_replace(link, backup).context("cannot detach owned Git link")?;
@@ -491,30 +370,22 @@ fn cleanup_validated(
         Ok(names) => names.iter().any(|candidate| candidate == name),
         Err(error) => {
             let detail = if detached && backup.as_ref().unwrap().exists() {
-                format!(
-                    "; detached Git link retained at {}",
-                    backup.as_ref().unwrap().display()
-                )
+                format!("; detached Git link retained at {}", backup.as_ref().unwrap().display())
             } else {
                 String::new()
             };
-            return Err(error.context(format!(
-                "cannot verify {command} outcome; registration and lifecycle metadata retained{detail}"
-            )));
+            return Err(error.context(format!("cannot verify {command} outcome; registration and lifecycle metadata retained{detail}")));
         }
     };
     if remaining {
         if detached {
-            validate_admin(owner.unwrap()).with_context(|| format!(
-                "workspace {command} did not complete and Git registration changed; detached link retained",
-            ))?;
+            validate_admin(owner.unwrap())
+                .with_context(|| format!("workspace {command} did not complete and Git registration changed; detached link retained",))?;
             restore_gitlink(backup.as_ref().unwrap(), gitlink.as_ref().unwrap())?;
         }
         return match outcome {
             Err(error) => Err(error),
-            Ok(_) => Err(anyhow::anyhow!(
-                "workspace {command} did not remove {name}; checkout retained"
-            )),
+            Ok(_) => Err(anyhow::anyhow!("workspace {command} did not remove {name}; checkout retained")),
         };
     }
     if let Err(error) = outcome {
@@ -524,14 +395,10 @@ fn cleanup_validated(
         validate_admin(owner)?;
         // Rename the exact registration out of its recorded name, revalidate it,
         // then delete it. Never chase a registration that replaced that name.
-        let staged_path = owner
-            .common_dir
-            .join("worktrees")
-            .join(format!(".jw-cleanup-{}", owner.ownership_token));
+        let staged_path = owner.common_dir.join("worktrees").join(format!(".jw-cleanup-{}", owner.ownership_token));
         ensure_absent(&staged_path)?;
         let identity = fs::symlink_metadata(&owner.git_dir)?;
-        rename_no_replace(&owner.git_dir, &staged_path)
-            .context("workspace forgotten but owned Git registration could not be detached")?;
+        rename_no_replace(&owner.git_dir, &staged_path).context("workspace forgotten but owned Git registration could not be detached")?;
         let mut staged = owner.clone();
         staged.topology.git_dir = staged_path.clone();
         if let Err(error) = validate_staged_admin(&staged, &identity) {
@@ -542,29 +409,21 @@ fn cleanup_validated(
                     staged_path.display()
                 )
             })?;
-            return Err(error
-                .context("Git registration changed during detach; restored without deleting it"));
+            return Err(error.context("Git registration changed during detach; restored without deleting it"));
         }
-        ensure_absent(&owner.git_dir)
-            .context("Git registration was replaced during cleanup; staged cleanup retained")?;
-        fs::remove_dir_all(&staged_path)
-            .context("workspace forgotten but staged Git registration cleanup failed")?;
+        ensure_absent(&owner.git_dir).context("Git registration was replaced during cleanup; staged cleanup retained")?;
+        fs::remove_dir_all(&staged_path).context("workspace forgotten but staged Git registration cleanup failed")?;
         if detached {
             match fs::remove_file(backup.as_ref().unwrap()) {
                 Ok(()) => {}
                 // Native removal also deletes the backup with the checkout.
                 Err(error) if delete_dir && error.kind() == ErrorKind::NotFound => {}
                 Err(error) => {
-                    return Err(error)
-                        .context("workspace forgotten but detached Git link cleanup failed");
+                    return Err(error).context("workspace forgotten but detached Git link cleanup failed");
                 }
             }
         }
-        if owner.git_dir.exists()
-            || registrations(client)?
-                .iter()
-                .any(|p| same_path(p, &owner.checkout_root).ok() == Some(true))
-        {
+        if owner.git_dir.exists() || registrations(client)?.iter().any(|p| same_path(p, &owner.checkout_root).ok() == Some(true)) {
             bail!("workspace forgotten but owned Git registration remains")
         }
     }
@@ -608,11 +467,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     let destination = CString::new(destination.as_os_str().as_bytes())?;
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        fn renamex_np(
-            source: *const std::ffi::c_char,
-            destination: *const std::ffi::c_char,
-            flags: u32,
-        ) -> i32;
+        fn renamex_np(source: *const std::ffi::c_char, destination: *const std::ffi::c_char, flags: u32) -> i32;
     }
     // SAFETY: These C strings are NUL-terminated and live through the call.
     // macOS RENAME_EXCL=4. Linux uses the architecture's syscall number and
@@ -630,11 +485,7 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
             libc::RENAME_NOREPLACE,
         )
     };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
+    if result == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
 #[cfg(windows)]
@@ -646,19 +497,11 @@ fn rename_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
         fn move_file_ex_w(source: *const u16, destination: *const u16, flags: u32) -> i32;
     }
     let source: Vec<_> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<_> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let destination: Vec<_> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
     // SAFETY: Both paths are NUL-terminated and remain alive for the call. Zero
     // flags disallow replacement of an existing file or directory.
     let result = unsafe { move_file_ex_w(source.as_ptr(), destination.as_ptr(), 0) };
-    if result != 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
+    if result != 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
@@ -680,21 +523,14 @@ pub fn reconcile(name: &str) -> Result<()> {
     let metadata = store
         .get(name)?
         .context("no external ownership record; restore its metadata before reconciliation")?;
-    let owner = metadata
-        .external_owner
-        .as_ref()
-        .context("workspace has no external ownership record")?;
+    let owner = metadata.external_owner.as_ref().context("workspace has no external ownership record")?;
     validate_gone(&client, name, owner)?;
     if store.get(name)?.as_ref() != Some(&metadata) {
         bail!("workspace metadata changed during reconciliation");
     }
     // Recheck immediately before the destructive boundary.
     validate_gone(&client, name, owner)?;
-    if client
-        .workspace_names()?
-        .iter()
-        .any(|candidate| candidate == name)
-    {
+    if client.workspace_names()?.iter().any(|candidate| candidate == name) {
         forget_workspace(&client, name, Some(&owner.checkout_root), None)?;
     }
     if !store.remove_if_matches(&metadata)? {
@@ -708,10 +544,7 @@ fn validate_gone(client: &JjClient, name: &str, owner: &ExternalOwner) -> Result
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error).context("cannot verify external checkout cleanup"),
-            Ok(_) => bail!(
-                "external checkout or Git registration still exists: {}",
-                path.display()
-            ),
+            Ok(_) => bail!("external checkout or Git registration still exists: {}", path.display()),
         }
     }
     for path in registrations(client)? {
@@ -719,11 +552,7 @@ fn validate_gone(client: &JjClient, name: &str, owner: &ExternalOwner) -> Result
             bail!("external Git registration still exists for {name}");
         }
     }
-    if client
-        .workspace_names()?
-        .iter()
-        .any(|candidate| candidate == name)
-    {
+    if client.workspace_names()?.iter().any(|candidate| candidate == name) {
         match target_path(client, name)? {
             Some(path) if same_path(&path, &owner.checkout_root)? => {}
             _ => bail!("JJ workspace path changed; refusing external reconciliation"),
@@ -740,12 +569,8 @@ mod cleanup_tests {
     fn exclusive_rename_preserves_occupied_files_and_directories() {
         let temp = tempfile::tempdir().unwrap();
         for directory in [false, true] {
-            let source = temp
-                .path()
-                .join(if directory { "source-dir" } else { "source" });
-            let destination = temp
-                .path()
-                .join(if directory { "dest-dir" } else { "dest" });
+            let source = temp.path().join(if directory { "source-dir" } else { "source" });
+            let destination = temp.path().join(if directory { "dest-dir" } else { "dest" });
             if directory {
                 fs::create_dir(&source).unwrap();
                 fs::create_dir(&destination).unwrap();
@@ -763,9 +588,7 @@ mod cleanup_tests {
             if !directory {
                 assert_eq!(fs::read_to_string(&destination).unwrap(), "destination");
             }
-            let unused = temp
-                .path()
-                .join(if directory { "unused-dir" } else { "unused" });
+            let unused = temp.path().join(if directory { "unused-dir" } else { "unused" });
             rename_no_replace(&source, &unused).unwrap();
             assert!(!source.exists());
             assert!(unused.exists());
@@ -817,11 +640,6 @@ mod cleanup_tests {
             },
             ownership_token: "test-token".into(),
         };
-        assert!(
-            validate_staged_admin(&owner, &identity)
-                .unwrap_err()
-                .to_string()
-                .contains("identity changed")
-        );
+        assert!(validate_staged_admin(&owner, &identity).unwrap_err().to_string().contains("identity changed"));
     }
 }

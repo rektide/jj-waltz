@@ -20,14 +20,8 @@ impl Settings {
             _ => Vec::new(),
         };
         for (index, command) in argv.iter().enumerate() {
-            if command.is_empty()
-                || command[0].is_empty()
-                || command.iter().any(|arg| arg.contains('\0'))
-            {
-                bail!(
-                    "freshen command {} must be a nonempty argv with a nonempty program and no NUL bytes",
-                    index + 1
-                );
+            if command.is_empty() || command[0].is_empty() || command.iter().any(|arg| arg.contains('\0')) {
+                bail!("freshen command {} must be a nonempty argv with a nonempty program and no NUL bytes", index + 1);
             }
         }
         Ok(argv)
@@ -35,24 +29,12 @@ impl Settings {
 }
 
 fn configured_argv(settings: Option<&Settings>) -> Result<Vec<Vec<String>>> {
-    settings
-        .map(Settings::argv)
-        .transpose()
-        .map(Option::unwrap_or_default)
+    settings.map(Settings::argv).transpose().map(Option::unwrap_or_default)
 }
 
-pub(super) fn preflight(
-    metadata: &WorkspaceMetadataStore,
-    inventory: &Inventory,
-    source: &Path,
-    settings: Option<&Settings>,
-) -> Result<()> {
+pub(super) fn preflight(metadata: &WorkspaceMetadataStore, inventory: &Inventory, source: &Path, settings: Option<&Settings>) -> Result<()> {
     let context = checked_context(&JjClient::new(source))?;
-    let name = context
-        .jj
-        .workspace_name
-        .as_deref()
-        .context("source workspace name missing")?;
+    let name = context.jj.workspace_name.as_deref().context("source workspace name missing")?;
     if inventory.root(name)? != source {
         bail!("source registration changed");
     }
@@ -63,28 +45,14 @@ pub(super) fn preflight(
 
 fn validate_ownership(source: &Path, name: &str, metadata: &WorkspaceMetadataStore) -> Result<()> {
     let record = metadata.get(name)?;
-    if record
-        .as_ref()
-        .is_some_and(|m| m.external_owner.is_some() || m.owned_git_worktree.is_some())
-        || crate::ownership::detect(source)?.is_some()
-    {
+    if record.as_ref().is_some_and(|m| m.external_owner.is_some() || m.owned_git_worktree.is_some()) || crate::ownership::detect(source)?.is_some() {
         bail!("freshen does not mutate external/app-owned or linked Git donors");
     }
-    crate::ownership::ensure_removal_allowed(
-        &JjClient::new(source),
-        name,
-        Some(source),
-        record.as_ref(),
-    )?;
+    crate::ownership::ensure_removal_allowed(&JjClient::new(source), name, Some(source), record.as_ref())?;
     Ok(())
 }
 
-pub(super) fn describe(
-    source: &Path,
-    selected: &SourceSelection,
-    settings: Option<&Settings>,
-    ignored: &[String],
-) -> Result<String> {
+pub(super) fn describe(source: &Path, selected: &SourceSelection, settings: Option<&Settings>, ignored: &[String]) -> Result<String> {
     Ok(format!(
         "Prepare source {:?}; pinned {:?} bookmark {:?}@{:?}; prospective post-fetch goal {:?} (currently {:?}); preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
         source,
@@ -133,9 +101,7 @@ impl SourceIdentity {
         self.root.verify(client.cwd())?;
         self.jj.verify(&client.cwd().join(".jj"))?;
         let context = checked_context(client)?;
-        if repository(client)? != self.repository
-            || context.jj.workspace_name.as_ref() != Some(&self.name)
-        {
+        if repository(client)? != self.repository || context.jj.workspace_name.as_ref() != Some(&self.name) {
             bail!("preparation source/repository registration changed");
         }
         let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
@@ -160,13 +126,7 @@ pub(super) fn execute(
         identity.verify(&client)?;
         selected.verify_source_at(&client, &client.operation_id()?)?;
         let old_entries = entries(&client, &selected.operation, &selected.source.commit_id)?;
-        verify_disk(
-            &client,
-            &selected.operation,
-            &selected.source.commit_id,
-            source,
-            &old_entries,
-        )?;
+        verify_disk(&client, &selected.operation, &selected.source.commit_id, source, &old_entries)?;
         diagnostic(&format!(
             "Prepare: fetching remote {:?} bookmark {:?} in {:?}; previous work preserved at {}",
             selected.remote, selected.name, source, selected.source.commit_id,
@@ -181,13 +141,7 @@ pub(super) fn execute(
         select_ignored(source, ignored_patterns, &rules, &goal_entries)?;
         verify_symlink_support(&client, &operation, &goal, &goal_entries)?;
         identity.verify(&client)?;
-        verify_disk(
-            &client,
-            &selected.operation,
-            &selected.source.commit_id,
-            source,
-            &old_entries,
-        )?;
+        verify_disk(&client, &selected.operation, &selected.source.commit_id, source, &old_entries)?;
         selected.verify_source_at(&client, &client.operation_id()?)?;
         let (operation, current) = current_commit(&client)?;
         if !exact_empty_child(&client, &operation, &current, &goal)? {
@@ -221,9 +175,7 @@ pub(super) fn execute(
                 .stdout(std::io::stderr())
                 .stderr(Stdio::inherit())
                 .status()
-                .with_context(|| {
-                    format!("could not run configured preparation argv {}", index + 1)
-                })?;
+                .with_context(|| format!("could not run configured preparation argv {}", index + 1))?;
             if !status.success() {
                 bail!(
                     "configured preparation command failed with {status} (step {}); ignored installation may be incomplete",
@@ -249,20 +201,12 @@ pub(super) fn execute(
     )
 }
 
-fn verify_command_result(
-    identity: &SourceIdentity,
-    client: &JjClient,
-    goal: &str,
-    goal_entries: &[Entry],
-    change_id: &str,
-) -> Result<()> {
+fn verify_command_result(identity: &SourceIdentity, client: &JjClient, goal: &str, goal_entries: &[Entry], change_id: &str) -> Result<()> {
     identity.verify(client)?;
     verify_disk(client, &client.operation_id()?, goal, client.cwd(), goal_entries)
         .context("preparer changed tracked tree (including lockfiles); restore the selected source tree before running prepare again")?;
     let (operation, current) = current_commit(client)?;
-    if client.resolve_one_at(&operation, &current)?.change_id != change_id
-        || !exact_empty_child(client, &operation, &current, goal)?
-    {
+    if client.resolve_one_at(&operation, &current)?.change_id != change_id || !exact_empty_child(client, &operation, &current, goal)? {
         bail!("source selected revision changed during preparation");
     }
     Ok(())
@@ -281,10 +225,7 @@ mod tests {
             "commands = [[]]",
             "commands = [['']]",
         ] {
-            assert!(
-                toml::from_str::<Settings>(text).unwrap().argv().is_err(),
-                "{text}"
-            );
+            assert!(toml::from_str::<Settings>(text).unwrap().argv().is_err(), "{text}");
         }
         assert_eq!(
             toml::from_str::<Settings>("commands = [['bun', 'install'], ['bun', 'run', 'build']]")
@@ -293,18 +234,9 @@ mod tests {
                 .unwrap(),
             [vec!["bun", "install"], vec!["bun", "run", "build"]]
         );
-        assert!(
-            toml::from_str::<Settings>("commands = []")
-                .unwrap()
-                .argv()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(toml::from_str::<Settings>("commands = []").unwrap().argv().unwrap().is_empty());
         assert_eq!(
-            toml::from_str::<Settings>("command = ['cargo', 'build']")
-                .unwrap()
-                .argv()
-                .unwrap(),
+            toml::from_str::<Settings>("command = ['cargo', 'build']").unwrap().argv().unwrap(),
             [vec!["cargo", "build"]]
         );
     }

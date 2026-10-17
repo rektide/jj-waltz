@@ -64,21 +64,15 @@ impl WorkspaceMetadataStore {
     /// Locates repository-scoped metadata without creating anything on disk.
     pub fn from_repo_config_path(path: impl AsRef<Path>) -> Result<Self> {
         let repository_config_path = normalize_repo_config_path(path.as_ref())?;
-        let parent = repository_config_path.parent().ok_or_else(|| {
-            anyhow::anyhow!(
-                "repository config path has no parent: {}",
-                repository_config_path.display()
-            )
-        })?;
+        let parent = repository_config_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("repository config path has no parent: {}", repository_config_path.display()))?;
         let root = parent.join(STORE_DIRECTORY);
         let repository_id = read_manifest_if_present(&root)?
             .map(|manifest| manifest.repository_id)
             .unwrap_or_else(|| repository_id(&repository_config_path));
 
-        Ok(Self {
-            root,
-            repository_id,
-        })
+        Ok(Self { root, repository_id })
     }
 
     pub fn repository_id(&self) -> &str {
@@ -100,25 +94,13 @@ impl WorkspaceMetadataStore {
         };
         let mut records = Vec::new();
         for entry in entries {
-            let entry = entry.with_context(|| {
-                format!(
-                    "failed to read workspace metadata directory {}",
-                    self.workspaces_directory().display()
-                )
-            })?;
+            let entry = entry.with_context(|| format!("failed to read workspace metadata directory {}", self.workspaces_directory().display()))?;
             let path = entry.path();
             if path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
-            if !entry
-                .file_type()
-                .with_context(|| format!("failed to inspect {}", path.display()))?
-                .is_file()
-            {
-                bail!(
-                    "workspace metadata record is not a regular file: {}",
-                    path.display()
-                );
+            if !entry.file_type().with_context(|| format!("failed to inspect {}", path.display()))?.is_file() {
+                bail!("workspace metadata record is not a regular file: {}", path.display());
             }
             records.push(self.read_record(&path)?);
         }
@@ -154,12 +136,7 @@ impl WorkspaceMetadataStore {
                 schema_version: WORKSPACE_METADATA_SCHEMA_VERSION,
                 metadata: metadata.clone(),
             };
-            write_json_new(&path, &record).with_context(|| {
-                format!(
-                    "failed to insert metadata for workspace {}",
-                    metadata.workspace_name
-                )
-            })
+            write_json_new(&path, &record).with_context(|| format!("failed to insert metadata for workspace {}", metadata.workspace_name))
         })
     }
 
@@ -168,11 +145,7 @@ impl WorkspaceMetadataStore {
     /// The replacement is installed with the same atomic writer used for
     /// manifests and new records. A missing or changed record is not an
     /// error: the caller gets `Ok(false)` and the store is left untouched.
-    pub fn replace_if_matches(
-        &self,
-        expected: &ManagedWorkspaceMetadata,
-        replacement: &ManagedWorkspaceMetadata,
-    ) -> Result<bool> {
+    pub fn replace_if_matches(&self, expected: &ManagedWorkspaceMetadata, replacement: &ManagedWorkspaceMetadata) -> Result<bool> {
         validate_metadata(expected)?;
         validate_metadata(replacement)?;
         if expected.workspace_name != replacement.workspace_name {
@@ -197,22 +170,14 @@ impl WorkspaceMetadataStore {
                 metadata: replacement.clone(),
             };
             let path = self.workspace_path(&replacement.workspace_name);
-            write_json_atomic(&path, &record).with_context(|| {
-                format!(
-                    "failed to replace metadata for workspace {}",
-                    replacement.workspace_name
-                )
-            })?;
+            write_json_atomic(&path, &record).with_context(|| format!("failed to replace metadata for workspace {}", replacement.workspace_name))?;
             Ok(true)
         })
     }
 
     /// Atomically replaces one workspace record and returns its prior value.
     #[cfg(test)]
-    pub fn upsert(
-        &self,
-        metadata: &ManagedWorkspaceMetadata,
-    ) -> Result<Option<ManagedWorkspaceMetadata>> {
+    pub fn upsert(&self, metadata: &ManagedWorkspaceMetadata) -> Result<Option<ManagedWorkspaceMetadata>> {
         validate_metadata(metadata)?;
         self.ensure_initialized()?;
         self.with_record_lock(&metadata.workspace_name, || {
@@ -223,12 +188,7 @@ impl WorkspaceMetadataStore {
                 metadata: metadata.clone(),
             };
             let path = self.workspace_path(&metadata.workspace_name);
-            write_json_atomic(&path, &record).with_context(|| {
-                format!(
-                    "failed to write metadata for workspace {}",
-                    metadata.workspace_name
-                )
-            })?;
+            write_json_atomic(&path, &record).with_context(|| format!("failed to write metadata for workspace {}", metadata.workspace_name))?;
             Ok(previous)
         })
     }
@@ -248,8 +208,7 @@ impl WorkspaceMetadataStore {
             match fs::remove_file(self.workspace_path(workspace_name)) {
                 Ok(()) => Ok(previous),
                 Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(error)
-                    .with_context(|| format!("failed to remove metadata for {workspace_name}")),
+                Err(error) => Err(error).with_context(|| format!("failed to remove metadata for {workspace_name}")),
             }
         })
     }
@@ -268,9 +227,7 @@ impl WorkspaceMetadataStore {
             match fs::remove_file(self.workspace_path(&expected.workspace_name)) {
                 Ok(()) => Ok(true),
                 Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-                Err(error) => Err(error).with_context(|| {
-                    format!("failed to remove metadata for {}", expected.workspace_name)
-                }),
+                Err(error) => Err(error).with_context(|| format!("failed to remove metadata for {}", expected.workspace_name)),
             }
         })
     }
@@ -281,17 +238,14 @@ impl WorkspaceMetadataStore {
     /// unreadable/nonempty manifest-less store.
     pub(crate) fn ensure_initialized(&self) -> Result<()> {
         if !self.validate_existing_store()? {
-            fs::create_dir_all(&self.root).with_context(|| {
-                format!("failed to create metadata store {}", self.root.display())
-            })?;
+            fs::create_dir_all(&self.root).with_context(|| format!("failed to create metadata store {}", self.root.display()))?;
 
             // Recheck after creating the directory so concurrent initialization
             // either validates an identical manifest or observes an empty store.
             if !self.validate_existing_store()? {
                 // Install once without replacing a concurrent initializer's
                 // manifest. Readers on Windows can prevent rename replacement.
-                if let Err(error) = write_json_new(&self.manifest_path(), &self.expected_manifest())
-                {
+                if let Err(error) = write_json_new(&self.manifest_path(), &self.expected_manifest()) {
                     self.validate_manifest()
                         .map_err(|_| error)
                         .context("failed to initialize workspace metadata manifest")?;
@@ -304,20 +258,14 @@ impl WorkspaceMetadataStore {
         match fs::create_dir(&directory) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(&directory)
-                    .with_context(|| format!("failed to inspect {}", directory.display()))?;
+                let metadata = fs::symlink_metadata(&directory).with_context(|| format!("failed to inspect {}", directory.display()))?;
                 if metadata.file_type().is_dir() {
                     Ok(())
                 } else {
-                    bail!(
-                        "workspace metadata path is not a directory: {}",
-                        directory.display()
-                    )
+                    bail!("workspace metadata path is not a directory: {}", directory.display())
                 }
             }
-            Err(error) => {
-                Err(error).with_context(|| format!("failed to create {}", directory.display()))
-            }
+            Err(error) => Err(error).with_context(|| format!("failed to create {}", directory.display())),
         }
     }
 
@@ -327,15 +275,11 @@ impl WorkspaceMetadataStore {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
             Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("failed to inspect {}", self.root.display()));
+                return Err(error).with_context(|| format!("failed to inspect {}", self.root.display()));
             }
         };
         if !root_metadata.file_type().is_dir() {
-            bail!(
-                "workspace metadata store is not a directory: {}",
-                self.root.display()
-            );
+            bail!("workspace metadata store is not a directory: {}", self.root.display());
         }
 
         match fs::metadata(self.manifest_path()) {
@@ -343,49 +287,30 @@ impl WorkspaceMetadataStore {
                 self.validate_manifest()?;
                 Ok(true)
             }
-            Ok(_) => bail!(
-                "workspace metadata manifest is not a regular file: {}",
-                self.manifest_path().display()
-            ),
+            Ok(_) => bail!("workspace metadata manifest is not a regular file: {}", self.manifest_path().display()),
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let entries = fs::read_dir(&self.root)
-                    .with_context(|| {
-                        format!("failed to read metadata store {}", self.root.display())
-                    })?
+                    .with_context(|| format!("failed to read metadata store {}", self.root.display()))?
                     .collect::<io::Result<Vec<_>>>()
-                    .with_context(|| {
-                        format!("failed to read metadata store {}", self.root.display())
-                    })?;
-                if entries.is_empty()
-                    || entries
-                        .iter()
-                        .all(|entry| is_manifest_temporary_file(&entry.file_name()))
-                {
+                    .with_context(|| format!("failed to read metadata store {}", self.root.display()))?;
+                if entries.is_empty() || entries.iter().all(|entry| is_manifest_temporary_file(&entry.file_name())) {
                     Ok(false)
-                } else if entries
-                    .iter()
-                    .any(|entry| entry.file_name() == MANIFEST_FILE)
-                {
+                } else if entries.iter().any(|entry| entry.file_name() == MANIFEST_FILE) {
                     // A concurrent initializer may have installed the manifest
                     // after the metadata lookup above.
                     self.validate_manifest()?;
                     Ok(true)
                 } else {
-                    bail!(
-                        "workspace metadata store is missing manifest: {}",
-                        self.manifest_path().display()
-                    )
+                    bail!("workspace metadata store is missing manifest: {}", self.manifest_path().display())
                 }
             }
-            Err(error) => Err(error)
-                .with_context(|| format!("failed to inspect {}", self.manifest_path().display())),
+            Err(error) => Err(error).with_context(|| format!("failed to inspect {}", self.manifest_path().display())),
         }
     }
 
     fn validate_manifest(&self) -> Result<()> {
         let path = self.manifest_path();
-        let contents = fs::read(&path)
-            .with_context(|| format!("failed to read metadata manifest {}", path.display()))?;
+        let contents = fs::read(&path).with_context(|| format!("failed to read metadata manifest {}", path.display()))?;
         let manifest = parse_manifest(&path, &contents)?;
 
         let expected = self.expected_manifest();
@@ -408,14 +333,12 @@ impl WorkspaceMetadataStore {
     }
 
     fn read_record(&self, path: &Path) -> Result<ManagedWorkspaceMetadata> {
-        let contents = fs::read(path)
-            .with_context(|| format!("failed to read workspace metadata {}", path.display()))?;
+        let contents = fs::read(path).with_context(|| format!("failed to read workspace metadata {}", path.display()))?;
         self.parse_record(path, &contents)
     }
 
     fn parse_record(&self, path: &Path, contents: &[u8]) -> Result<ManagedWorkspaceMetadata> {
-        let record: WorkspaceRecord = serde_json::from_slice(contents)
-            .with_context(|| format!("workspace metadata is corrupt: {}", path.display()))?;
+        let record: WorkspaceRecord = serde_json::from_slice(contents).with_context(|| format!("workspace metadata is corrupt: {}", path.display()))?;
         if !(1..=WORKSPACE_METADATA_SCHEMA_VERSION).contains(&record.schema_version) {
             bail!(
                 "unsupported workspace metadata schema {} in {} (expected {})",
@@ -427,14 +350,10 @@ impl WorkspaceMetadataStore {
         if record.schema_version < 3 && record.metadata.owned_git_worktree.is_some() {
             bail!("owned Git worktree provenance requires metadata schema 3")
         }
-        validate_metadata(&record.metadata)
-            .with_context(|| format!("invalid workspace metadata in {}", path.display()))?;
+        validate_metadata(&record.metadata).with_context(|| format!("invalid workspace metadata in {}", path.display()))?;
         let expected_path = self.workspace_path(&record.metadata.workspace_name);
         if path.file_name() != expected_path.file_name() {
-            bail!(
-                "workspace metadata filename does not match embedded name in {}",
-                path.display()
-            );
+            bail!("workspace metadata filename does not match embedded name in {}", path.display());
         }
         Ok(record.metadata)
     }
@@ -448,21 +367,12 @@ impl WorkspaceMetadataStore {
     }
 
     fn workspace_path(&self, workspace_name: &str) -> PathBuf {
-        self.workspaces_directory()
-            .join(workspace_file_name(workspace_name))
+        self.workspaces_directory().join(workspace_file_name(workspace_name))
     }
 
-    fn with_record_lock<T>(
-        &self,
-        workspace_name: &str,
-        operation: impl FnOnce() -> Result<T>,
-    ) -> Result<T> {
-        let process_guard = PROCESS_METADATA_LOCK
-            .lock()
-            .map_err(|_| anyhow::anyhow!("metadata writer lock is poisoned"))?;
-        let path = self
-            .workspaces_directory()
-            .join(format!(".{}.lock", workspace_file_name(workspace_name)));
+    fn with_record_lock<T>(&self, workspace_name: &str, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+        let process_guard = PROCESS_METADATA_LOCK.lock().map_err(|_| anyhow::anyhow!("metadata writer lock is poisoned"))?;
+        let path = self.workspaces_directory().join(format!(".{}.lock", workspace_file_name(workspace_name)));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -485,28 +395,20 @@ fn validate_metadata(metadata: &ManagedWorkspaceMetadata) -> Result<()> {
         bail!("workspace cannot have both external and jw ownership")
     }
     if metadata.owned_git_worktree.as_ref().is_some_and(|owner| {
-        owner.ownership_token.is_empty()
-            || owner.ownership_token.len() > 256
-            || !owner
-                .ownership_token
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        owner.ownership_token.is_empty() || owner.ownership_token.len() > 256 || !owner.ownership_token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
     }) {
         bail!("invalid owned Git worktree token")
     }
-    for owner in metadata.external_owner.iter().chain(
-        metadata
-            .owned_git_worktree
-            .iter()
-            .map(|owner| &owner.topology),
-    ) {
+    for owner in metadata
+        .external_owner
+        .iter()
+        .chain(metadata.owned_git_worktree.iter().map(|owner| &owner.topology))
+    {
         if !owner.checkout_root.is_absolute()
             || !owner.git_dir.is_absolute()
             || !owner.common_dir.is_absolute()
             || owner.checkout_root.parent().is_none()
-            || !owner
-                .git_dir
-                .starts_with(owner.common_dir.join("worktrees"))
+            || !owner.git_dir.starts_with(owner.common_dir.join("worktrees"))
         {
             bail!("invalid external checkout ownership paths");
         }
@@ -525,40 +427,23 @@ fn normalize_repo_config_path(path: &Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_owned()
     } else {
-        env::current_dir()
-            .context("failed to resolve current directory")?
-            .join(path)
+        env::current_dir().context("failed to resolve current directory")?.join(path)
     };
     if absolute.file_name().is_none() {
-        bail!(
-            "repository config path is not a file path: {}",
-            absolute.display()
-        );
+        bail!("repository config path is not a file path: {}", absolute.display());
     }
-    let file_name = absolute
-        .file_name()
-        .expect("file name checked above")
-        .to_owned();
-    let parent = absolute.parent().ok_or_else(|| {
-        anyhow::anyhow!(
-            "repository config path has no parent: {}",
-            absolute.display()
-        )
-    })?;
-    let parent = parent.canonicalize().with_context(|| {
-        format!(
-            "failed to resolve repository config parent {}",
-            parent.display()
-        )
-    })?;
+    let file_name = absolute.file_name().expect("file name checked above").to_owned();
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("repository config path has no parent: {}", absolute.display()))?;
+    let parent = parent
+        .canonicalize()
+        .with_context(|| format!("failed to resolve repository config parent {}", parent.display()))?;
     Ok(parent.join(file_name))
 }
 
 fn repository_id(path: &Path) -> String {
-    format!(
-        "repo-{:032x}",
-        stable_hash(b"repository", &path_bytes(path))
-    )
+    format!("repo-{:032x}", stable_hash(b"repository", &path_bytes(path)))
 }
 
 fn read_manifest_if_present(root: &Path) -> Result<Option<RepositoryManifest>> {
@@ -567,16 +452,14 @@ fn read_manifest_if_present(root: &Path) -> Result<Option<RepositoryManifest>> {
         Ok(contents) => contents,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to read metadata manifest {}", path.display()));
+            return Err(error).with_context(|| format!("failed to read metadata manifest {}", path.display()));
         }
     };
     parse_manifest(&path, &contents).map(Some)
 }
 
 fn parse_manifest(path: &Path, contents: &[u8]) -> Result<RepositoryManifest> {
-    let manifest: RepositoryManifest = serde_json::from_slice(contents)
-        .with_context(|| format!("metadata manifest is corrupt: {}", path.display()))?;
+    let manifest: RepositoryManifest = serde_json::from_slice(contents).with_context(|| format!("metadata manifest is corrupt: {}", path.display()))?;
     if !(1..=WORKSPACE_METADATA_SCHEMA_VERSION).contains(&manifest.schema_version) {
         bail!(
             "unsupported workspace metadata schema {} in {} (expected {})",
@@ -585,8 +468,7 @@ fn parse_manifest(path: &Path, contents: &[u8]) -> Result<RepositoryManifest> {
             WORKSPACE_METADATA_SCHEMA_VERSION
         );
     }
-    validate_repository_id(&manifest.repository_id)
-        .with_context(|| format!("invalid repository identity in {}", path.display()))?;
+    validate_repository_id(&manifest.repository_id).with_context(|| format!("invalid repository identity in {}", path.display()))?;
     Ok(manifest)
 }
 
@@ -601,10 +483,7 @@ fn validate_repository_id(repository_id: &str) -> Result<()> {
 }
 
 fn workspace_file_name(workspace_name: &str) -> String {
-    format!(
-        "workspace-{:032x}.json",
-        stable_hash(b"workspace", workspace_name.as_bytes())
-    )
+    format!("workspace-{:032x}.json", stable_hash(b"workspace", workspace_name.as_bytes()))
 }
 
 fn stable_hash(domain: &[u8], value: &[u8]) -> u128 {
@@ -612,12 +491,7 @@ fn stable_hash(domain: &[u8], value: &[u8]) -> u128 {
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
 
     let mut hash = OFFSET_BASIS;
-    for byte in domain
-        .iter()
-        .copied()
-        .chain([0])
-        .chain(value.iter().copied())
-    {
+    for byte in domain.iter().copied().chain([0]).chain(value.iter().copied()) {
         hash ^= u128::from(byte);
         hash = hash.wrapping_mul(PRIME);
     }
@@ -633,10 +507,7 @@ fn path_bytes(path: &Path) -> Vec<u8> {
 #[cfg(windows)]
 fn path_bytes(path: &Path) -> Vec<u8> {
     use std::os::windows::ffi::OsStrExt;
-    path.as_os_str()
-        .encode_wide()
-        .flat_map(u16::to_le_bytes)
-        .collect()
+    path.as_os_str().encode_wide().flat_map(u16::to_le_bytes).collect()
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -655,14 +526,11 @@ fn read_directory_if_present(path: &Path) -> Result<Option<fs::ReadDir>> {
     if !metadata.file_type().is_dir() {
         bail!("metadata path is not a directory: {}", path.display());
     }
-    fs::read_dir(path)
-        .map(Some)
-        .with_context(|| format!("failed to read {}", path.display()))
+    fs::read_dir(path).map(Some).with_context(|| format!("failed to read {}", path.display()))
 }
 
 fn is_manifest_temporary_file(name: &std::ffi::OsStr) -> bool {
-    name.to_str()
-        .is_some_and(|name| name.starts_with(&format!(".{MANIFEST_FILE}.tmp-")))
+    name.to_str().is_some_and(|name| name.starts_with(&format!(".{MANIFEST_FILE}.tmp-")))
 }
 
 pub(crate) fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -675,17 +543,10 @@ pub(crate) fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(
     let (mut file, mut temporary) = create_temporary_file(path)?;
     file.write_all(&contents)
         .with_context(|| format!("failed to write {}", temporary.path().display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync {}", temporary.path().display()))?;
+    file.sync_all().with_context(|| format!("failed to sync {}", temporary.path().display()))?;
     drop(file);
 
-    atomic_replace(temporary.path(), path).with_context(|| {
-        format!(
-            "failed to replace {} with {}",
-            path.display(),
-            temporary.path().display()
-        )
-    })?;
+    atomic_replace(temporary.path(), path).with_context(|| format!("failed to replace {} with {}", path.display(), temporary.path().display()))?;
     temporary.disarm();
     Ok(())
 }
@@ -695,8 +556,7 @@ fn write_json_new(path: &Path, value: &impl Serialize) -> Result<()> {
     let (mut file, mut temporary) = create_temporary_file(path)?;
     file.write_all(&contents)
         .with_context(|| format!("failed to write {}", temporary.path().display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync {}", temporary.path().display()))?;
+    file.sync_all().with_context(|| format!("failed to sync {}", temporary.path().display()))?;
     drop(file);
 
     match fs::hard_link(temporary.path(), path) {
@@ -707,17 +567,9 @@ fn write_json_new(path: &Path, value: &impl Serialize) -> Result<()> {
             Ok(())
         }
         Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-            bail!(
-                "workspace metadata record already exists: {}",
-                path.display()
-            )
+            bail!("workspace metadata record already exists: {}", path.display())
         }
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "failed to install new workspace metadata record {}",
-                path.display()
-            )
-        }),
+        Err(error) => Err(error).with_context(|| format!("failed to install new workspace metadata record {}", path.display())),
     }
 }
 
@@ -734,32 +586,21 @@ fn create_temporary_file(path: &Path) -> Result<(File, TemporaryPath)> {
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!("metadata path has no UTF-8 filename: {}", path.display())
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("metadata path has no UTF-8 filename: {}", path.display()))?;
 
     for _ in 0..TEMP_ATTEMPTS {
         let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
         let temporary_path = parent.join(format!(".{file_name}.tmp-{}-{id}", process::id()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)
-        {
+        match OpenOptions::new().write(true).create_new(true).open(&temporary_path) {
             Ok(file) => return Ok((file, TemporaryPath::new(temporary_path))),
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("failed to create temporary metadata file {file_name}")
-                });
+                return Err(error).with_context(|| format!("failed to create temporary metadata file {file_name}"));
             }
         }
     }
 
-    bail!(
-        "failed to create unique temporary metadata file beside {}",
-        path.display()
-    )
+    bail!("failed to create unique temporary metadata file beside {}", path.display())
 }
 
 struct TemporaryPath {
@@ -808,29 +649,11 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
         fn move_file_ex_w(source: *const u16, destination: *const u16, flags: u32) -> i32;
     }
 
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(iter::once(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(iter::once(0))
-        .collect::<Vec<_>>();
+    let source = source.as_os_str().encode_wide().chain(iter::once(0)).collect::<Vec<_>>();
+    let destination = destination.as_os_str().encode_wide().chain(iter::once(0)).collect::<Vec<_>>();
     // SAFETY: Both paths are NUL-terminated and remain alive for the call.
-    let result = unsafe {
-        move_file_ex_w(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    let result = unsafe { move_file_ex_w(source.as_ptr(), destination.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) };
+    if result == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -847,8 +670,7 @@ mod tests {
     fn test_store(tempdir: &TempDir) -> WorkspaceMetadataStore {
         let config_directory = tempdir.path().join("repo");
         fs::create_dir_all(&config_directory).expect("create repository config directory");
-        WorkspaceMetadataStore::from_repo_config_path(config_directory.join("config.toml"))
-            .expect("create metadata store")
+        WorkspaceMetadataStore::from_repo_config_path(config_directory.join("config.toml")).expect("create metadata store")
     }
 
     fn metadata(workspace_name: &str) -> ManagedWorkspaceMetadata {
@@ -875,18 +697,12 @@ mod tests {
         assert!(!store.root().exists());
 
         assert_eq!(store.upsert(&expected).expect("insert record"), None);
-        assert_eq!(
-            store.get("solver").expect("read record"),
-            Some(expected.clone())
-        );
+        assert_eq!(store.get("solver").expect("read record"), Some(expected.clone()));
         assert_eq!(store.list().expect("list records"), vec![expected.clone()]);
 
         let reopened = test_store(&tempdir);
         assert_eq!(reopened.repository_id(), store.repository_id());
-        assert_eq!(
-            reopened.get("solver").expect("reopen record"),
-            Some(expected)
-        );
+        assert_eq!(reopened.get("solver").expect("reopen record"), Some(expected));
     }
 
     #[test]
@@ -897,8 +713,7 @@ mod tests {
             let original = metadata("legacy");
             store.insert(&original).unwrap();
             for path in [store.manifest_path(), store.workspace_path("legacy")] {
-                let mut value: serde_json::Value =
-                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
                 value["schema_version"] = serde_json::json!(schema);
                 fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
             }
@@ -914,8 +729,7 @@ mod tests {
             });
             assert!(store.replace_if_matches(&loaded, &replacement).unwrap());
             assert_eq!(store.get("legacy").unwrap(), Some(replacement));
-            let value: serde_json::Value =
-                serde_json::from_slice(&fs::read(store.workspace_path("legacy")).unwrap()).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&fs::read(store.workspace_path("legacy")).unwrap()).unwrap();
             assert_eq!(value["schema_version"], 3);
         }
     }
@@ -931,14 +745,8 @@ mod tests {
 
         let mut updated = first.clone();
         updated.associated_bookmark = Some("wip/updated-alpha".to_owned());
-        assert_eq!(
-            store.upsert(&updated).expect("update first record"),
-            Some(first)
-        );
-        assert_eq!(
-            store.get("beta").expect("read second record"),
-            Some(second.clone())
-        );
+        assert_eq!(store.upsert(&updated).expect("update first record"), Some(first));
+        assert_eq!(store.get("beta").expect("read second record"), Some(second.clone()));
         assert_eq!(store.list().expect("list records"), vec![updated, second]);
     }
 
@@ -951,15 +759,8 @@ mod tests {
         replacement.creation_base_commit_id = "commit-2".to_owned();
         store.insert(&original).expect("insert original record");
 
-        assert!(
-            store
-                .replace_if_matches(&original, &replacement)
-                .expect("replace matching record")
-        );
-        assert_eq!(
-            store.get("solver").expect("read replacement record"),
-            Some(replacement)
-        );
+        assert!(store.replace_if_matches(&original, &replacement).expect("replace matching record"));
+        assert_eq!(store.get("solver").expect("read replacement record"), Some(replacement));
     }
 
     #[test]
@@ -970,11 +771,7 @@ mod tests {
         let mut replacement = original.clone();
         replacement.creation_base_commit_id = "commit-2".to_owned();
 
-        assert!(
-            !store
-                .replace_if_matches(&original, &replacement)
-                .expect("leave missing record absent")
-        );
+        assert!(!store.replace_if_matches(&original, &replacement).expect("leave missing record absent"));
         assert_eq!(store.get("solver").expect("read missing record"), None);
         assert!(!store.root().exists());
     }
@@ -992,19 +789,9 @@ mod tests {
         let path = store.workspace_path("solver");
         let original_bytes = fs::read(&path).expect("read original bytes");
 
-        assert!(
-            !store
-                .replace_if_matches(&expected, &replacement)
-                .expect("refuse changed record")
-        );
-        assert_eq!(
-            fs::read(path).expect("read unchanged bytes"),
-            original_bytes
-        );
-        assert_eq!(
-            store.get("solver").expect("read current record"),
-            Some(current)
-        );
+        assert!(!store.replace_if_matches(&expected, &replacement).expect("refuse changed record"));
+        assert_eq!(fs::read(path).expect("read unchanged bytes"), original_bytes);
+        assert_eq!(store.get("solver").expect("read current record"), Some(current));
     }
 
     #[test]
@@ -1019,18 +806,10 @@ mod tests {
         let original_bytes = fs::read(&path).expect("read original bytes");
         FAIL_NEXT_ATOMIC_WRITE.with(|failure| failure.set(true));
 
-        let error = store
-            .replace_if_matches(&original, &replacement)
-            .expect_err("report atomic write failure");
+        let error = store.replace_if_matches(&original, &replacement).expect_err("report atomic write failure");
         assert!(error.to_string().contains("failed to replace metadata"));
-        assert_eq!(
-            fs::read(path).expect("read preserved bytes"),
-            original_bytes
-        );
-        assert_eq!(
-            store.get("solver").expect("read original record"),
-            Some(original)
-        );
+        assert_eq!(fs::read(path).expect("read preserved bytes"), original_bytes);
+        assert_eq!(store.get("solver").expect("read original record"), Some(original));
     }
 
     #[test]
@@ -1052,12 +831,7 @@ mod tests {
                         let mut replacement = original.clone();
                         replacement.creation_base_commit_id = format!("replacement-{index}");
                         barrier.wait();
-                        (
-                            store
-                                .replace_if_matches(&original, &replacement)
-                                .expect("replace record"),
-                            replacement,
-                        )
+                        (store.replace_if_matches(&original, &replacement).expect("replace record"), replacement)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1071,10 +845,7 @@ mod tests {
                 .into_iter()
                 .find_map(|(replaced, metadata)| replaced.then_some(metadata))
                 .expect("one replacement wins");
-            assert_eq!(
-                store.get(&workspace).expect("read winning record"),
-                Some(winner)
-            );
+            assert_eq!(store.get(&workspace).expect("read winning record"), Some(winner));
         }
         assert_eq!(store.list().expect("list records").len(), 32);
     }
@@ -1101,19 +872,14 @@ mod tests {
         for writer in writers {
             writer.join().expect("writer thread succeeds");
         }
-        assert_eq!(
-            store.list().expect("list concurrent records").len(),
-            RECORD_COUNT
-        );
+        assert_eq!(store.list().expect("list concurrent records").len(), RECORD_COUNT);
     }
 
     #[test]
     fn corrupt_manifest_and_record_are_errors_not_resets() {
         let manifest_tempdir = tempfile::tempdir().expect("create temp directory");
         let manifest_store = test_store(&manifest_tempdir);
-        manifest_store
-            .upsert(&metadata("solver"))
-            .expect("initialize store");
+        manifest_store.upsert(&metadata("solver")).expect("initialize store");
         fs::write(manifest_store.manifest_path(), b"{not-json").expect("corrupt metadata manifest");
         let manifest_error = manifest_store.list().expect_err("reject corrupt manifest");
         assert!(manifest_error.to_string().contains("corrupt"));
@@ -1124,9 +890,7 @@ mod tests {
         record_store.upsert(&expected).expect("insert record");
         let record_path = record_store.workspace_path("solver");
         fs::write(&record_path, b"{not-json").expect("corrupt metadata record");
-        let record_error = record_store
-            .get("solver")
-            .expect_err("reject corrupt record");
+        let record_error = record_store.get("solver").expect_err("reject corrupt record");
         assert!(record_error.to_string().contains("corrupt"));
         assert!(record_store.upsert(&expected).is_err());
         assert_eq!(fs::read(record_path).expect("record remains"), b"{not-json");
@@ -1147,29 +911,17 @@ mod tests {
         for name in names {
             let expected = metadata(name);
             store.upsert(&expected).expect("write safely named record");
-            assert_eq!(
-                store.get(name).expect("read safely named record"),
-                Some(expected)
-            );
-            let filename = store
-                .workspace_path(name)
-                .file_name()
-                .expect("record filename")
-                .to_string_lossy()
-                .into_owned();
+            assert_eq!(store.get(name).expect("read safely named record"), Some(expected));
+            let filename = store.workspace_path(name).file_name().expect("record filename").to_string_lossy().into_owned();
             assert!(filename.starts_with("workspace-"));
             assert!(filename.ends_with(".json"));
-            assert!(filename.chars().all(|character| {
-                character.is_ascii_lowercase()
-                    || character.is_ascii_digit()
-                    || character == '-'
-                    || character == '.'
-            }));
+            assert!(
+                filename
+                    .chars()
+                    .all(|character| { character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-' || character == '.' })
+            );
         }
-        assert_eq!(
-            store.list().expect("list safely named records").len(),
-            names.len()
-        );
+        assert_eq!(store.list().expect("list safely named records").len(), names.len());
         assert!(store.get("").is_err());
     }
 
@@ -1182,10 +934,7 @@ mod tests {
         assert_eq!(store.remove("solver").expect("remove absent record"), None);
         assert!(!store.root().exists());
         store.upsert(&expected).expect("insert record");
-        assert_eq!(
-            store.remove("solver").expect("remove record"),
-            Some(expected)
-        );
+        assert_eq!(store.remove("solver").expect("remove record"), Some(expected));
         assert_eq!(store.get("solver").expect("read removed record"), None);
         assert_eq!(store.remove("solver").expect("remove twice"), None);
     }
@@ -1201,20 +950,9 @@ mod tests {
         let mut replacement = original.clone();
         replacement.creation_operation_id = "operation-2".to_owned();
         store.upsert(&replacement).expect("replace record");
-        assert!(
-            !store
-                .remove_if_matches(&original)
-                .expect("retain nonmatching record")
-        );
-        assert_eq!(
-            store.get("solver").expect("read replacement"),
-            Some(replacement.clone())
-        );
-        assert!(
-            store
-                .remove_if_matches(&replacement)
-                .expect("remove matching record")
-        );
+        assert!(!store.remove_if_matches(&original).expect("retain nonmatching record"));
+        assert_eq!(store.get("solver").expect("read replacement"), Some(replacement.clone()));
+        assert!(store.remove_if_matches(&replacement).expect("remove matching record"));
         assert_eq!(store.get("solver").expect("record removed"), None);
     }
 
@@ -1222,15 +960,9 @@ mod tests {
     fn repository_identity_uses_normalized_config_path() {
         let tempdir = tempfile::tempdir().expect("create temp directory");
         let config_directory = tempdir.path().join("repo");
-        fs::create_dir_all(config_directory.join("child"))
-            .expect("create config directory and normalization segment");
-        let direct =
-            WorkspaceMetadataStore::from_repo_config_path(config_directory.join("config.toml"))
-                .expect("direct store");
-        let equivalent = WorkspaceMetadataStore::from_repo_config_path(
-            config_directory.join("child/../config.toml"),
-        )
-        .expect("normalized store");
+        fs::create_dir_all(config_directory.join("child")).expect("create config directory and normalization segment");
+        let direct = WorkspaceMetadataStore::from_repo_config_path(config_directory.join("config.toml")).expect("direct store");
+        let equivalent = WorkspaceMetadataStore::from_repo_config_path(config_directory.join("child/../config.toml")).expect("normalized store");
 
         assert_eq!(direct.repository_id(), equivalent.repository_id());
         assert_eq!(direct.root(), equivalent.root());
@@ -1241,8 +973,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("create temp directory");
         let original = tempdir.path().join("original/repo");
         fs::create_dir_all(&original).expect("create original config directory");
-        let store = WorkspaceMetadataStore::from_repo_config_path(original.join("config.toml"))
-            .expect("create original store");
+        let store = WorkspaceMetadataStore::from_repo_config_path(original.join("config.toml")).expect("create original store");
         let expected = metadata("solver");
         store.insert(&expected).expect("insert metadata");
         let repository_id = store.repository_id().to_owned();
@@ -1250,13 +981,9 @@ mod tests {
         let moved = tempdir.path().join("moved/repo");
         fs::create_dir_all(moved.parent().expect("moved parent")).expect("create moved parent");
         fs::rename(&original, &moved).expect("move whole repository config directory");
-        let reopened = WorkspaceMetadataStore::from_repo_config_path(moved.join("config.toml"))
-            .expect("reopen moved store");
+        let reopened = WorkspaceMetadataStore::from_repo_config_path(moved.join("config.toml")).expect("reopen moved store");
 
         assert_eq!(reopened.repository_id(), repository_id);
-        assert_eq!(
-            reopened.get("solver").expect("read moved record"),
-            Some(expected)
-        );
+        assert_eq!(reopened.get("solver").expect("read moved record"), Some(expected));
     }
 }

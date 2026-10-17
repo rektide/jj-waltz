@@ -41,20 +41,11 @@ impl Fixture {
         Self::with_colocation(false)
     }
     fn with_colocation(colocated: bool) -> Option<Self> {
-        if !Command::new("jj")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success())
-        {
-            assert!(
-                std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
-                "JJ required"
-            );
+        if !Command::new("jj").arg("--version").output().is_ok_and(|o| o.status.success()) {
+            assert!(std::env::var_os("JW_TEST_REQUIRE_COW").is_none(), "JJ required");
             return None;
         }
-        let scratch = std::env::current_dir()
-            .unwrap()
-            .join(".test-agent/prepare-tests");
+        let scratch = std::env::current_dir().unwrap().join(".test-agent/prepare-tests");
         fs::create_dir_all(&scratch).unwrap();
         let temp = tempfile::tempdir_in(scratch).unwrap();
         let mut f = Self {
@@ -69,10 +60,7 @@ impl Fixture {
         };
         fs::create_dir_all(&f.config).unwrap();
         fs::create_dir(&f.remote).unwrap();
-        ok(f.command("git", &f.remote)
-            .args(["init", "--initial-branch=dev"])
-            .output()
-            .unwrap());
+        ok(f.command("git", &f.remote).args(["init", "--initial-branch=dev"]).output().unwrap());
         fs::write(
             f.remote.join(".gitignore"),
             "node_modules/\n.jwreseed.local.toml\n.jwlinks.local.toml\nshared-link\n.env\n",
@@ -83,15 +71,7 @@ impl Fixture {
         fs::write(f.remote.join("lockfile"), "frozen\n").unwrap();
         f.git_commit();
         ok(f.command("jj", f.temp.path())
-            .args([
-                "git",
-                "clone",
-                if colocated {
-                    "--colocate"
-                } else {
-                    "--no-colocate"
-                },
-            ])
+            .args(["git", "clone", if colocated { "--colocate" } else { "--no-colocate" }])
             .arg(&f.remote)
             .arg(&f.source)
             .output()
@@ -99,25 +79,9 @@ impl Fixture {
         f.baseline = f.id(&f.source, "dev@origin");
         f.jj(
             &f.source,
-            &[
-                "workspace",
-                "add",
-                "--name",
-                "worker",
-                "-r",
-                &f.baseline,
-                f.target.to_str().unwrap(),
-            ],
+            &["workspace", "add", "--name", "worker", "-r", &f.baseline, f.target.to_str().unwrap()],
         );
-        f.jj(
-            &f.target,
-            &[
-                "--ignore-working-copy",
-                "bookmark",
-                "create",
-                "fixture-worker-work",
-            ],
-        );
+        f.jj(&f.target, &["--ignore-working-copy", "bookmark", "create", "fixture-worker-work"]);
         f.script("mkdir -p node_modules\nprintf 'installed\\n' > node_modules/package\n");
         f.policy(true, "");
         Some(f)
@@ -143,25 +107,10 @@ impl Fixture {
         ok(self.command("jj", cwd).args(args).output().unwrap())
     }
     fn id(&self, cwd: &Path, rev: &str) -> String {
-        self.jj(
-            cwd,
-            &[
-                "log",
-                "--ignore-working-copy",
-                "--no-graph",
-                "-r",
-                rev,
-                "-T",
-                "commit_id",
-            ],
-        )
+        self.jj(cwd, &["log", "--ignore-working-copy", "--no-graph", "-r", rev, "-T", "commit_id"])
     }
     fn git_commit(&self) {
-        ok(self
-            .command("git", &self.remote)
-            .args(["add", "."])
-            .output()
-            .unwrap());
+        ok(self.command("git", &self.remote).args(["add", "."]).output().unwrap());
         ok(self
             .command("git", &self.remote)
             .args(["commit", "-m", "local fixture advance"])
@@ -171,18 +120,12 @@ impl Fixture {
     fn advance(&self) -> String {
         fs::write(self.remote.join("version"), "fresh\n").unwrap();
         self.git_commit();
-        ok(self
-            .command("git", &self.remote)
-            .args(["rev-parse", "HEAD"])
-            .output()
-            .unwrap())
+        ok(self.command("git", &self.remote).args(["rev-parse", "HEAD"]).output().unwrap())
     }
     fn script(&self, body: &str) {
         fs::write(
             &self.installer,
-            format!(
-                "#!/bin/sh\nset -eu\npwd >> \"$1\"\nprintf '%s\\n' \"$2\" \"$3\" >> \"$1\"\n{body}"
-            ),
+            format!("#!/bin/sh\nset -eu\npwd >> \"$1\"\nprintf '%s\\n' \"$2\" \"$3\" >> \"$1\"\n{body}"),
         )
         .unwrap();
         fs::set_permissions(&self.installer, fs::Permissions::from_mode(0o755)).unwrap();
@@ -212,16 +155,11 @@ impl Fixture {
     fn jw(&self) -> Command {
         let env = self.command("jw", &self.target);
         let mut c = Command::new(assert_cmd::cargo::cargo_bin!("jw"));
-        c.current_dir(&self.target)
-            .envs(env.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
+        c.current_dir(&self.target).envs(env.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))));
         c
     }
     fn prepare(&self, extra: &[&str]) -> Output {
-        self.jw()
-            .args(["prepare", "--copy-ignored", "node_modules"])
-            .args(extra)
-            .output()
-            .unwrap()
+        self.jw().args(["prepare", "--copy-ignored", "node_modules"]).args(extra).output().unwrap()
     }
     fn cow_supported(&self) -> bool {
         let probe = self.target.join("probe");
@@ -231,10 +169,7 @@ impl Fixture {
                 true
             }
             Err(e) => {
-                assert!(
-                    std::env::var_os("JW_TEST_REQUIRE_COW").is_none(),
-                    "CoW required: {e}"
-                );
+                assert!(std::env::var_os("JW_TEST_REQUIRE_COW").is_none(), "CoW required: {e}");
                 assert!(matches!(e.raw_os_error(), Some(18 | 22 | 38 | 95)), "{e}");
                 false
             }
@@ -247,17 +182,10 @@ fn identity(path: &Path) -> Value {
 }
 fn disk_stamp(root: &Path) -> Value {
     fn visit(root: &Path, dir: &Path, result: &mut Vec<Value>) {
-        let mut children = fs::read_dir(dir)
-            .unwrap()
-            .map(Result::unwrap)
-            .collect::<Vec<_>>();
+        let mut children = fs::read_dir(dir).unwrap().map(Result::unwrap).collect::<Vec<_>>();
         children.sort_by_key(|entry| entry.file_name());
         for entry in children {
-            if dir == root
-                && [".jj", ".git"]
-                    .iter()
-                    .any(|name| entry.file_name() == *name)
-            {
+            if dir == root && [".jj", ".git"].iter().any(|name| entry.file_name() == *name) {
                 continue;
             }
             let path = entry.path();
@@ -295,15 +223,8 @@ fn prepare_from_primary_or_dirty_worker_never_selects_or_snapshots_workers() {
         assert_eq!(f.id(&f.source, "@-"), goal);
         assert!(!f.target.join("node_modules").exists());
         assert_eq!(
-            fs::read_to_string(&f.log)
-                .unwrap()
-                .lines()
-                .collect::<Vec<_>>(),
-            [
-                f.source.to_str().unwrap(),
-                "argument with spaces",
-                "$(touch SHOULD_NOT_EXIST); *"
-            ]
+            fs::read_to_string(&f.log).unwrap().lines().collect::<Vec<_>>(),
+            [f.source.to_str().unwrap(), "argument with spaces", "$(touch SHOULD_NOT_EXIST); *"]
         );
         assert!(!f.source.join("SHOULD_NOT_EXIST").exists());
     }
@@ -327,17 +248,11 @@ fn preparation_commands_leave_new_nonignored_outputs_untracked() {
     f.script("printf output > new-build-output\n");
     let goal = f.advance();
     ok(f.prepare(&[]));
-    assert_eq!(
-        fs::read_to_string(f.source.join("new-build-output")).unwrap(),
-        "output"
-    );
+    assert_eq!(fs::read_to_string(f.source.join("new-build-output")).unwrap(), "output");
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert!(
-        !f.jj(
-            &f.source,
-            &["--ignore-working-copy", "file", "list", "-r", "@"]
-        )
-        .contains("new-build-output")
+        !f.jj(&f.source, &["--ignore-working-copy", "file", "list", "-r", "@"])
+            .contains("new-build-output")
     );
     assert!(!f.target.join("new-build-output").exists());
 }
@@ -350,10 +265,7 @@ fn dry_run_selects_native_upstream_without_fetch_install_or_worker_snapshot() {
     let worker = f.id(&f.target, "@");
     let source = f.id(&f.source, "@");
     let output = ok(f.prepare(&["--dry-run"]));
-    assert!(
-        output.contains("source-only prepare")
-            && output.contains("post-fetch exact commit unknown")
-    );
+    assert!(output.contains("source-only prepare") && output.contains("post-fetch exact commit unknown"));
     assert_eq!(f.id(&f.source, "@"), source);
     assert_eq!(f.id(&f.target, "@"), worker);
     assert_eq!(f.id(&f.source, "dev@origin"), f.baseline);
@@ -371,17 +283,11 @@ fn native_non_origin_and_untracked_exact_lines_are_selected_without_extra_fetche
         }
         let goal = f.advance();
         let target = f.id(&f.target, "@");
-        ok(f.command("git", &f.remote)
-            .args(["branch", "unselected"])
-            .output()
-            .unwrap());
+        ok(f.command("git", &f.remote).args(["branch", "unselected"]).output().unwrap());
         ok(f.prepare(&[]));
         assert_eq!(f.id(&f.source, "dev@native"), goal);
         assert_eq!(f.id(&f.target, "@"), target);
-        assert!(
-            !f.jj(&f.source, &["bookmark", "list", "--all-remotes"])
-                .contains("unselected")
-        );
+        assert!(!f.jj(&f.source, &["bookmark", "list", "--all-remotes"]).contains("unselected"));
     }
 }
 
@@ -415,10 +321,7 @@ fn command_sequence_runs_again_from_the_start_after_failure() {
     });
     fs::write(
         f.source.join(".jwreseed.local.toml"),
-        format!(
-            "source_at='dev@origin'\n[freshen]\ncommands={}\n",
-            serde_json::to_string(&commands).unwrap()
-        ),
+        format!("source_at='dev@origin'\n[freshen]\ncommands={}\n", serde_json::to_string(&commands).unwrap()),
     )
     .unwrap();
     let goal = f.advance();
@@ -428,12 +331,7 @@ fn command_sequence_runs_again_from_the_start_after_failure() {
     ok(f.prepare(&[]));
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert_eq!(
-        fs::read_to_string(&f.log)
-            .unwrap()
-            .lines()
-            .skip(1)
-            .step_by(3)
-            .collect::<Vec<_>>(),
+        fs::read_to_string(&f.log).unwrap().lines().skip(1).step_by(3).collect::<Vec<_>>(),
         ["first", "second", "first", "second", "third"]
     );
     assert!(!f.target.join("node_modules").exists());
@@ -456,37 +354,18 @@ fn tracked_installer_edits_require_deliberate_restoration_before_retry() {
 fn configured_or_explicit_donor_is_prepared_from_worker_subdirectory() {
     let Some(f) = Fixture::new() else { return };
     let donor = f.temp.path().join("other donor");
-    f.jj(
-        &f.source,
-        &[
-            "workspace",
-            "add",
-            "--name",
-            "donor",
-            "-r",
-            &f.baseline,
-            donor.to_str().unwrap(),
-        ],
-    );
+    f.jj(&f.source, &["workspace", "add", "--name", "donor", "-r", &f.baseline, donor.to_str().unwrap()]);
     f.policy(true, &format!("source={donor:?}\n"));
     let primary = f.id(&f.source, "@");
     let worker = f.id(&f.target, "@");
     let goal = f.advance();
     fs::create_dir(f.target.join("subdirectory")).unwrap();
-    ok(f.jw()
-        .current_dir(f.target.join("subdirectory"))
-        .args(["prepare"])
-        .output()
-        .unwrap());
+    ok(f.jw().current_dir(f.target.join("subdirectory")).args(["prepare"]).output().unwrap());
     assert_eq!(f.id(&donor, "@-"), goal);
     assert_eq!(f.id(&f.source, "@"), primary);
     assert_eq!(f.id(&f.target, "@"), worker);
     let other = f.id(&donor, "@");
-    ok(f.jw()
-        .args(["prepare", "--from"])
-        .arg(&f.source)
-        .output()
-        .unwrap());
+    ok(f.jw().args(["prepare", "--from"]).arg(&f.source).output().unwrap());
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert_eq!(f.id(&donor, "@"), other);
     assert_eq!(f.id(&f.target, "@"), worker);
@@ -496,10 +375,7 @@ fn configured_or_explicit_donor_is_prepared_from_worker_subdirectory() {
 fn stale_worker_does_not_block_source_preparation() {
     let Some(f) = Fixture::new() else { return };
     let goal = f.advance();
-    f.jj(
-        &f.source,
-        &["restore", "--into", "worker@", "--from", "root()"],
-    );
+    f.jj(&f.source, &["restore", "--into", "worker@", "--from", "root()"]);
     let worker = f.id(&f.target, "@");
     let before = disk_stamp(&f.target);
     ok(f.prepare(&[]));
@@ -525,26 +401,14 @@ fn colocated_source_preserves_administrative_directory_identity() {
 fn invalid_policy_and_removed_commands_fail_before_fetch() {
     let Some(f) = Fixture::new() else { return };
     f.advance();
-    fails(
-        f.jw().args(["up"]).output().unwrap(),
-        "unrecognized subcommand",
-    );
-    fails(
-        f.jw().args(["reseed", "--freshen"]).output().unwrap(),
-        "use `jw prepare`",
-    );
+    fails(f.jw().args(["up"]).output().unwrap(), "unrecognized subcommand");
+    fails(f.jw().args(["reseed", "--freshen"]).output().unwrap(), "use `jw prepare`");
     for command in ["prepare", "reseed"] {
-        fails(
-            f.jw().args([command, "--resume"]).output().unwrap(),
-            "unexpected argument '--resume'",
-        );
+        fails(f.jw().args([command, "--resume"]).output().unwrap(), "unexpected argument '--resume'");
     }
     for (policy, expected) in [
         ("[freshen]\ncommand=[]", "nonempty argv"),
-        (
-            "[freshen]\ncommand=[]\ncommands=[]",
-            "cannot both be present",
-        ),
+        ("[freshen]\ncommand=[]\ncommands=[]", "cannot both be present"),
         ("[freshen]\n[prepare]", "cannot both be present"),
     ] {
         fs::write(f.source.join(".jwreseed.local.toml"), policy).unwrap();
@@ -561,11 +425,7 @@ fn ignored_selection_is_proved_and_no_command_does_not_claim_a_build() {
     fs::create_dir(f.source.join("node_modules")).unwrap();
     fs::write(f.source.join("node_modules/package"), "existing").unwrap();
     f.advance();
-    let output = ok(f
-        .jw()
-        .args(["prepare", "--no-copy-ignored"])
-        .output()
-        .unwrap());
+    let output = ok(f.jw().args(["prepare", "--no-copy-ignored"]).output().unwrap());
     assert!(output.contains("existing data, not freshly built"));
     assert!(!f.log.exists());
     assert!(!f.target.join("node_modules").exists());
@@ -582,28 +442,16 @@ fn reseed_after_prepare_keeps_feature_tree_and_copies_private_payload() {
     let worker = f.id(&f.target, "@");
     f.advance();
     ok(f.prepare(&[]));
-    ok(f.jw()
-        .args(["reseed", "worker", "--copy-ignored", "node_modules"])
-        .output()
-        .unwrap());
+    ok(f.jw().args(["reseed", "worker", "--copy-ignored", "node_modules"]).output().unwrap());
     assert_eq!(f.id(&f.target, "@"), worker);
-    assert_eq!(
-        fs::read_to_string(f.target.join("version")).unwrap(),
-        "old\n"
-    );
-    assert_eq!(
-        fs::read_to_string(f.target.join("feature")).unwrap(),
-        "keep feature\n"
-    );
+    assert_eq!(fs::read_to_string(f.target.join("version")).unwrap(), "old\n");
+    assert_eq!(fs::read_to_string(f.target.join("feature")).unwrap(), "keep feature\n");
     assert_ne!(
         identity(&f.source.join("node_modules/package")),
         identity(&f.target.join("node_modules/package"))
     );
     fs::write(f.target.join("node_modules/package"), "private edit").unwrap();
-    assert_eq!(
-        fs::read_to_string(f.source.join("node_modules/package")).unwrap(),
-        "installed\n"
-    );
+    assert_eq!(fs::read_to_string(f.source.join("node_modules/package")).unwrap(), "installed\n");
 }
 
 #[test]
@@ -626,12 +474,7 @@ fn leftover_journals_are_ignored_without_migration_or_pruning() {
     // manifestless nonempty stores must still fail closed, never be repaired.
     ok(f.prepare(&["--dry-run"]));
     fs::create_dir_all(&directory).unwrap();
-    let paths = [
-        "old.preparation.json",
-        "old.pending.json",
-        "old.receipt.json",
-    ]
-    .map(|name| directory.join(name));
+    let paths = ["old.preparation.json", "old.pending.json", "old.receipt.json"].map(|name| directory.join(name));
     for path in &paths {
         fs::write(path, b"obsolete invalid JSON\n").unwrap();
     }
@@ -643,18 +486,7 @@ fn leftover_journals_are_ignored_without_migration_or_pruning() {
     for path in paths {
         assert_eq!(fs::read(path).unwrap(), b"obsolete invalid JSON\n");
     }
-    let mut names = fs::read_dir(directory)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .collect::<Vec<_>>();
+    let mut names = fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
     names.sort();
-    assert_eq!(
-        names,
-        [
-            "old.pending.json",
-            "old.preparation.json",
-            "old.receipt.json",
-            "operation.lock"
-        ]
-    );
+    assert_eq!(names, ["old.pending.json", "old.preparation.json", "old.receipt.json", "operation.lock"]);
 }

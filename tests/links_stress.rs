@@ -11,8 +11,7 @@ fn apply_links_supports_large_rule_sets_and_nested_parents() {
     for idx in 0..120 {
         let source = format!("mounts/group-{idx}/dataset");
         let target = format!("../repo/targets/{idx}");
-        fs::create_dir_all(env.workspace_root.join(format!("targets/{idx}")))
-            .expect("create target");
+        fs::create_dir_all(env.workspace_root.join(format!("targets/{idx}"))).expect("create target");
         config.push_str("[[link]]\n");
         config.push_str(&format!("source = \"{source}\"\n"));
         config.push_str(&format!("target = \"{target}\"\n"));
@@ -23,8 +22,7 @@ fn apply_links_supports_large_rule_sets_and_nested_parents() {
     let target_workspace = env.tempdir.path().join("repo.stress");
     fs::create_dir_all(&target_workspace).expect("create target workspace");
 
-    let report =
-        links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("apply links");
+    let report = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("apply links");
     assert_eq!(report.linked, 120);
     assert_eq!(report.satisfied, 0);
     assert_eq!(report.skipped_missing_target, 0);
@@ -32,10 +30,7 @@ fn apply_links_supports_large_rule_sets_and_nested_parents() {
     for idx in [0, 47, 119] {
         let link = target_workspace.join(format!("mounts/group-{idx}/dataset"));
         let metadata = fs::symlink_metadata(&link).expect("link metadata");
-        assert!(
-            metadata.file_type().is_symlink(),
-            "expected symlink for {idx}"
-        );
+        assert!(metadata.file_type().is_symlink(), "expected symlink for {idx}");
     }
 }
 
@@ -63,21 +58,13 @@ fn apply_links_respects_local_override_and_keeps_optional_missing_targets_non_fa
     .expect("write base config");
     fs::write(
         env.workspace_root.join(".jwlinks.local.toml"),
-        [
-            "[[link]]",
-            "source = \"artifact\"",
-            "target = \"../repo/data/shared\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"artifact\"", "target = \"../repo/data/shared\"", "required = true", ""].join("\n"),
     )
     .expect("write local override");
 
     let target_workspace = env.tempdir.path().join("repo.local");
     fs::create_dir_all(&target_workspace).expect("create target workspace");
-    let report =
-        links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("apply links");
+    let report = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("apply links");
 
     assert_eq!(report.linked, 1);
     assert_eq!(report.satisfied, 0);
@@ -106,8 +93,7 @@ fn apply_links_rejects_private_path_when_optional_target_is_missing() {
     fs::create_dir_all(&target_workspace).expect("create target workspace");
     fs::create_dir_all(target_workspace.join("optional-cache")).expect("create private path");
 
-    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace)
-        .expect_err("private optional path must be a conflict");
+    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect_err("private optional path must be a conflict");
     assert!(error.to_string().contains("link conflict"));
     assert!(target_workspace.join("optional-cache").is_dir());
 }
@@ -131,14 +117,9 @@ fn apply_links_keeps_expected_dangling_optional_link_as_skipped() {
 
     let target_workspace = env.tempdir.path().join("repo.local");
     fs::create_dir_all(&target_workspace).expect("create target workspace");
-    std::os::unix::fs::symlink(
-        "../repo/data/does-not-exist",
-        target_workspace.join("optional-cache"),
-    )
-    .expect("create expected dangling link");
+    std::os::unix::fs::symlink("../repo/data/does-not-exist", target_workspace.join("optional-cache")).expect("create expected dangling link");
 
-    let report =
-        links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("inspect link");
+    let report = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect("inspect link");
     assert_eq!(report.linked, 0);
     assert_eq!(report.satisfied, 0);
     assert_eq!(report.skipped_missing_target, 1);
@@ -164,19 +145,10 @@ fn apply_links_rejects_expected_dangling_required_link() {
 
     let target_workspace = env.tempdir.path().join("repo.local");
     fs::create_dir_all(&target_workspace).expect("create target workspace");
-    std::os::unix::fs::symlink(
-        "../repo/data/does-not-exist",
-        target_workspace.join("required-cache"),
-    )
-    .expect("create expected dangling link");
+    std::os::unix::fs::symlink("../repo/data/does-not-exist", target_workspace.join("required-cache")).expect("create expected dangling link");
 
-    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace)
-        .expect_err("required dangling link must fail");
-    assert!(
-        error
-            .to_string()
-            .contains("required link target is missing")
-    );
+    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect_err("required dangling link must fail");
+    assert!(error.to_string().contains("required link target is missing"));
     assert_symlink(&target_workspace.join("required-cache"));
 }
 
@@ -199,11 +171,9 @@ fn apply_links_rejects_wrong_dangling_link_even_when_target_is_optional() {
 
     let target_workspace = env.tempdir.path().join("repo.local");
     fs::create_dir_all(&target_workspace).expect("create target workspace");
-    std::os::unix::fs::symlink("../repo/private", target_workspace.join("optional-cache"))
-        .expect("create wrong dangling link");
+    std::os::unix::fs::symlink("../repo/private", target_workspace.join("optional-cache")).expect("create wrong dangling link");
 
-    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace)
-        .expect_err("wrong dangling link must be a conflict");
+    let error = links::apply_workspace_links(&env.workspace_root, &target_workspace).expect_err("wrong dangling link must be a conflict");
     assert!(error.to_string().contains("link conflict"));
 }
 
@@ -213,25 +183,15 @@ fn apply_links_follows_symlink_before_parent_traversal_for_missing_paths() {
     let env = LinkTestEnv::new();
     let outside = env.tempdir.path().join("outside");
     fs::create_dir_all(outside.join("subdir")).expect("create symlink target");
-    std::os::unix::fs::symlink(outside.join("subdir"), env.workspace_root.join("alias"))
-        .expect("create alias symlink");
+    std::os::unix::fs::symlink(outside.join("subdir"), env.workspace_root.join("alias")).expect("create alias symlink");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"cache\"",
-            "target = \"alias/../missing\"",
-            "required = false",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"cache\"", "target = \"alias/../missing\"", "required = false", ""].join("\n"),
     )
     .expect("write link config");
-    std::os::unix::fs::symlink("missing", env.workspace_root.join("cache"))
-        .expect("create wrong dangling source link");
+    std::os::unix::fs::symlink("missing", env.workspace_root.join("cache")).expect("create wrong dangling source link");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("wrong dangling source must conflict");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("wrong dangling source must conflict");
     assert!(err.to_string().contains("link conflict"), "{err:#}");
 }
 
@@ -240,33 +200,19 @@ fn apply_links_resolves_relative_targets_from_each_receiving_workspace() {
     let env = LinkTestEnv::new();
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"cache\"",
-            "target = \"shared\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"cache\"", "target = \"shared\"", "required = true", ""].join("\n"),
     )
     .expect("write links config");
 
     for name in ["repo.sibling", "nested/repo.receiver"] {
         let receiver = env.tempdir.path().join(name);
         fs::create_dir_all(receiver.join("shared")).expect("create receiver target");
-        let report =
-            links::apply_workspace_links(&env.workspace_root, &receiver).expect("apply links");
+        let report = links::apply_workspace_links(&env.workspace_root, &receiver).expect("apply links");
         assert_eq!(report.linked, 1);
         assert_symlink(&receiver.join("cache"));
         assert_eq!(
-            receiver
-                .join("cache")
-                .canonicalize()
-                .expect("resolve source"),
-            receiver
-                .join("shared")
-                .canonicalize()
-                .expect("resolve target")
+            receiver.join("cache").canonicalize().expect("resolve source"),
+            receiver.join("shared").canonicalize().expect("resolve target")
         );
     }
 }
@@ -278,19 +224,11 @@ fn apply_links_accepts_an_ordinary_path_that_is_the_target() {
     fs::create_dir_all(&target).expect("create target");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"data/shared\"",
-            "target = \"data/shared\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"data/shared\"", "target = \"data/shared\"", "required = true", ""].join("\n"),
     )
     .expect("write links config");
 
-    let report = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect("same ordinary path is satisfied");
+    let report = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect("same ordinary path is satisfied");
     assert_eq!(report.linked, 0);
     assert_eq!(report.satisfied, 1);
     assert_eq!(report.skipped_missing_target, 0);
@@ -302,34 +240,18 @@ fn apply_links_rejects_invalid_source_values_and_missing_required_targets() {
     let env = LinkTestEnv::new();
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"   \"",
-            "target = \"../repo/data\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"   \"", "target = \"../repo/data\"", "required = true", ""].join("\n"),
     )
     .expect("write empty source config");
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("link source cannot be empty"));
 
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"/abs/source\"",
-            "target = \"../repo/data\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"/abs/source\"", "target = \"../repo/data\"", "required = true", ""].join("\n"),
     )
     .expect("write absolute source config");
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("link source must be relative"));
 
     fs::write(
@@ -344,8 +266,7 @@ fn apply_links_rejects_invalid_source_values_and_missing_required_targets() {
         .join("\n"),
     )
     .expect("write missing target config");
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("required link target is missing"));
 }
 
@@ -356,19 +277,11 @@ fn apply_links_rejects_parent_traversal_in_source() {
     fs::create_dir_all(&target).expect("create target");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"../escaped\"",
-            "target = \"target\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"../escaped\"", "target = \"target\"", "required = true", ""].join("\n"),
     )
     .expect("write traversal config");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("parent traversal"));
     assert!(!env.tempdir.path().join("escaped").exists());
 }
@@ -397,8 +310,7 @@ fn apply_links_preflights_every_rule_before_mutating() {
     .expect("write links config");
     fs::create_dir_all(env.workspace_root.join("conflict")).expect("create conflict");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("link conflict"));
     assert!(!env.workspace_root.join("nested").exists());
 }
@@ -427,8 +339,7 @@ fn apply_links_reserves_skipped_optional_sources_against_planned_descendants() {
     fs::create_dir_all(&receiver).expect("create receiver");
     fs::create_dir_all(receiver.join("target-index")).expect("create required target");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &receiver)
-        .expect_err("skipped ancestor must reserve source path");
+    let err = links::apply_workspace_links(&env.workspace_root, &receiver).expect_err("skipped ancestor must reserve source path");
     assert!(err.to_string().contains("link sources overlap"), "{err:#}");
     assert!(!receiver.join("cache").exists());
 }
@@ -441,23 +352,14 @@ fn apply_links_rejects_source_paths_through_symlinked_parents() {
     let target = env.workspace_root.join("target");
     fs::create_dir_all(&outside).expect("create outside directory");
     fs::create_dir_all(&target).expect("create target");
-    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent"))
-        .expect("create escaping parent symlink");
+    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent")).expect("create escaping parent symlink");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"escaped-parent/link\"",
-            "target = \"target\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"escaped-parent/link\"", "target = \"target\"", "required = true", ""].join("\n"),
     )
     .expect("write escaping source config");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("parent cannot be a symlink"));
     assert!(!outside.join("link").exists());
 }
@@ -470,8 +372,7 @@ fn apply_links_rejects_missing_source_below_a_nested_symlinked_parent() {
     let target = env.workspace_root.join("target");
     fs::create_dir_all(&outside).expect("create outside directory");
     fs::create_dir_all(&target).expect("create target");
-    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent"))
-        .expect("create escaping parent symlink");
+    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent")).expect("create escaping parent symlink");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
         [
@@ -485,8 +386,7 @@ fn apply_links_rejects_missing_source_below_a_nested_symlinked_parent() {
     )
     .expect("write escaping source config");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
     assert!(err.to_string().contains("parent cannot be a symlink"));
     assert!(!outside.join("missing/link").exists());
 }
@@ -498,8 +398,7 @@ fn apply_links_rejects_existing_source_below_a_symlinked_parent() {
     let outside = env.tempdir.path().join("outside");
     fs::create_dir_all(&outside).expect("create outside directory");
     fs::create_dir_all(outside.join("ordinary")).expect("create ordinary source");
-    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent"))
-        .expect("create escaping parent symlink");
+    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent")).expect("create escaping parent symlink");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
         [
@@ -513,12 +412,8 @@ fn apply_links_rejects_existing_source_below_a_symlinked_parent() {
     )
     .expect("write link config");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("existing source below a symlink parent must conflict");
-    assert!(
-        err.to_string().contains("parent cannot be a symlink"),
-        "{err:#}"
-    );
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("existing source below a symlink parent must conflict");
+    assert!(err.to_string().contains("parent cannot be a symlink"), "{err:#}");
 }
 
 #[cfg(unix)]
@@ -528,10 +423,8 @@ fn apply_links_rejects_existing_symlink_below_a_symlinked_parent() {
     let outside = env.tempdir.path().join("outside");
     fs::create_dir_all(&outside).expect("create outside directory");
     fs::create_dir_all(outside.join("shared")).expect("create symlink target");
-    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent"))
-        .expect("create escaping parent symlink");
-    std::os::unix::fs::symlink("shared", outside.join("link"))
-        .expect("create existing source symlink");
+    std::os::unix::fs::symlink(&outside, env.workspace_root.join("escaped-parent")).expect("create escaping parent symlink");
+    std::os::unix::fs::symlink("shared", outside.join("link")).expect("create existing source symlink");
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
         [
@@ -545,12 +438,8 @@ fn apply_links_rejects_existing_symlink_below_a_symlinked_parent() {
     )
     .expect("write link config");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("existing symlink below a symlink parent must conflict");
-    assert!(
-        err.to_string().contains("parent cannot be a symlink"),
-        "{err:#}"
-    );
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("existing symlink below a symlink parent must conflict");
+    assert!(err.to_string().contains("parent cannot be a symlink"), "{err:#}");
 }
 
 #[test]
@@ -558,26 +447,14 @@ fn apply_links_rejects_missing_source_below_a_non_directory_parent() {
     let env = LinkTestEnv::new();
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"file-parent/missing\"",
-            "target = \"target\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"file-parent/missing\"", "target = \"target\"", "required = true", ""].join("\n"),
     )
     .expect("write link config");
-    fs::write(env.workspace_root.join("file-parent"), "not a directory")
-        .expect("create non-directory parent");
+    fs::write(env.workspace_root.join("file-parent"), "not a directory").expect("create non-directory parent");
     fs::create_dir_all(env.workspace_root.join("target")).expect("create target");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("must fail");
-    assert!(
-        err.to_string().contains("source parent is not a directory"),
-        "{err:#}"
-    );
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("must fail");
+    assert!(err.to_string().contains("source parent is not a directory"), "{err:#}");
 }
 
 #[test]
@@ -585,14 +462,7 @@ fn apply_links_reports_unreadable_target_metadata() {
     let env = LinkTestEnv::new();
     fs::write(
         env.workspace_root.join(".jwlinks.toml"),
-        [
-            "[[link]]",
-            "source = \"cache\"",
-            "target = \"target-parent/missing\"",
-            "required = true",
-            "",
-        ]
-        .join("\n"),
+        ["[[link]]", "source = \"cache\"", "target = \"target-parent/missing\"", "required = true", ""].join("\n"),
     )
     .expect("write links config");
 
@@ -600,8 +470,7 @@ fn apply_links_reports_unreadable_target_metadata() {
     fs::create_dir_all(&receiver).expect("create receiver");
     fs::write(receiver.join("target-parent"), "not a directory").expect("create target parent");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &receiver)
-        .expect_err("target metadata must be reported as unreadable");
+    let err = links::apply_workspace_links(&env.workspace_root, &receiver).expect_err("target metadata must be reported as unreadable");
     assert!(err.to_string().contains("link is unreadable"), "{err:#}");
     assert!(!receiver.join("cache").exists());
 }
@@ -610,23 +479,15 @@ fn apply_links_reports_unreadable_target_metadata() {
 #[test]
 fn apply_links_reports_dangling_configuration_symlink() {
     let env = LinkTestEnv::new();
-    std::os::unix::fs::symlink(
-        "missing-links.toml",
-        env.workspace_root.join(".jwlinks.toml"),
-    )
-    .expect("create dangling links config symlink");
+    std::os::unix::fs::symlink("missing-links.toml", env.workspace_root.join(".jwlinks.toml")).expect("create dangling links config symlink");
 
-    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root)
-        .expect_err("dangling links config symlink must fail");
+    let err = links::apply_workspace_links(&env.workspace_root, &env.workspace_root).expect_err("dangling links config symlink must fail");
     assert!(err.to_string().contains("failed to read"), "{err:#}");
 }
 
 fn assert_symlink(path: &Path) {
     let metadata = fs::symlink_metadata(path).expect("metadata");
-    assert!(
-        metadata.file_type().is_symlink(),
-        "expected symlink: {path:?}"
-    );
+    assert!(metadata.file_type().is_symlink(), "expected symlink: {path:?}");
 }
 
 struct LinkTestEnv {
@@ -639,9 +500,6 @@ impl LinkTestEnv {
         let tempdir = tempfile::tempdir().expect("create temp dir");
         let workspace_root = tempdir.path().join("repo");
         fs::create_dir_all(&workspace_root).expect("create workspace root");
-        Self {
-            tempdir,
-            workspace_root,
-        }
+        Self { tempdir, workspace_root }
     }
 }

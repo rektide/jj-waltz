@@ -13,11 +13,9 @@ pub const MINIMUM_SUPPORTED_JJ_VERSION: JjVersion = JjVersion::new(0, 39, 0);
 // Keep every workspace field JSON encoded. Tabs and newlines inside names and descriptions cannot
 // corrupt record boundaries. The conflict guards keep diff statistics compatible with JJ 0.39.
 const WORKSPACE_NAMES_TEMPLATE: &str = r#"json(name) ++ "\n""#;
-const CURRENT_WORKSPACE_NAMES_TEMPLATE: &str =
-    r#"if(target.current_working_copy(), json(name) ++ "\n", "")"#;
+const CURRENT_WORKSPACE_NAMES_TEMPLATE: &str = r#"if(target.current_working_copy(), json(name) ++ "\n", "")"#;
 const WORKSPACE_FACTS_TEMPLATE: &str = r#"json(name) ++ "\t" ++ json(target.change_id()) ++ "\t" ++ json(target.commit_id()) ++ "\t" ++ json(target.description().first_line()) ++ "\t" ++ json(target.current_working_copy()) ++ "\t" ++ json(target.empty()) ++ "\t" ++ json(target.conflict()) ++ "\t" ++ json(target.divergent()) ++ "\t" ++ json(target.diff().files().len()) ++ "\t" ++ json(if(target.conflict(), 0, target.diff().stat().total_added())) ++ "\t" ++ json(if(target.conflict(), 0, target.diff().stat().total_removed())) ++ "\t" ++ json(target.conflicted_files().len()) ++ "\n""#;
-const REVISION_TEMPLATE: &str =
-    "change_id ++ \"\\0\" ++ commit_id ++ \"\\0\" ++ description.first_line() ++ \"\\0\"";
+const REVISION_TEMPLATE: &str = "change_id ++ \"\\0\" ++ commit_id ++ \"\\0\" ++ description.first_line() ++ \"\\0\"";
 const LOCAL_BOOKMARK_NAMES_TEMPLATE: &str = r#"if(remote, "", json(name) ++ "\n")"#;
 const BOOKMARK_NAMES_TEMPLATE: &str = r#"json(name) ++ "\n""#;
 const TRACKED_FILES_TEMPLATE: &str = r#"json(path) ++ "\n""#;
@@ -71,15 +69,11 @@ impl FromStr for JjVersion {
         let version = version.split_once('+').map_or(version, |(value, _)| value);
         let (release, prerelease) = version
             .split_once('-')
-            .map_or((version, None), |(release, prerelease)| {
-                (release, Some(prerelease))
-            });
+            .map_or((version, None), |(release, prerelease)| (release, Some(prerelease)));
         if prerelease == Some("") {
             bail!("invalid JJ semantic version `{version}`")
         }
-        let prerelease = prerelease.filter(|value| {
-            value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        });
+        let prerelease = prerelease.filter(|value| value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()));
 
         let numbers = release.split('.').collect::<Vec<_>>();
         let [major, minor, patch] = numbers.as_slice() else {
@@ -105,9 +99,7 @@ impl Ord for JjVersion {
     fn cmp(&self, other: &Self) -> Ordering {
         (self.major, self.minor, self.patch)
             .cmp(&(other.major, other.minor, other.patch))
-            .then_with(|| {
-                compare_prerelease(self.prerelease.as_deref(), other.prerelease.as_deref())
-            })
+            .then_with(|| compare_prerelease(self.prerelease.as_deref(), other.prerelease.as_deref()))
     }
 }
 
@@ -163,9 +155,7 @@ impl JjOutput {
     }
 
     pub fn stderr(&self) -> String {
-        String::from_utf8_lossy(&self.output.stderr)
-            .trim()
-            .to_owned()
+        String::from_utf8_lossy(&self.output.stderr).trim().to_owned()
     }
 
     pub fn error_kind(&self) -> JjErrorKind {
@@ -182,10 +172,7 @@ pub enum JjErrorKind {
 impl JjErrorKind {
     fn from_stderr(stderr: &str) -> Self {
         let stderr = stderr.to_ascii_lowercase();
-        if stderr.contains("working copy")
-            && stderr.contains("stale")
-            && stderr.contains("workspace update-stale")
-        {
+        if stderr.contains("working copy") && stderr.contains("stale") && stderr.contains("workspace update-stale") {
             Self::StaleWorkingCopy
         } else {
             Self::Other
@@ -227,11 +214,7 @@ impl JjCommandError {
 impl fmt::Display for JjCommandError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.stderr.is_empty() {
-            write!(
-                formatter,
-                "{} failed with status {}",
-                self.command, self.status
-            )
+            write!(formatter, "{} failed with status {}", self.command, self.status)
         } else {
             write!(formatter, "{} failed: {}", self.command, self.stderr)
         }
@@ -262,11 +245,7 @@ pub struct CommitFacts {
 impl CommitFacts {
     /// Only an undescribed, empty single-parent change is disposable scratch.
     pub fn ordinary_empty_child(&self) -> bool {
-        self.empty
-            && self.description.is_empty()
-            && self.parents.len() == 1
-            && !self.conflicted
-            && !self.divergent
+        self.empty && self.description.is_empty() && self.parents.len() == 1 && !self.conflicted && !self.divergent
     }
 }
 
@@ -319,9 +298,7 @@ impl JjClient {
     }
 
     pub fn current() -> Result<Self> {
-        Ok(Self::new(
-            std::env::current_dir().context("failed to determine current directory")?,
-        ))
+        Ok(Self::new(std::env::current_dir().context("failed to determine current directory")?))
     }
 
     pub fn cwd(&self) -> &Path {
@@ -366,11 +343,7 @@ impl JjClient {
     }
 
     /// Execute against one frozen operation while leaving non-zero status handling to the caller.
-    pub fn run_at_unchecked<I, S>(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        args: I,
-    ) -> Result<JjOutput>
+    pub fn run_at_unchecked<I, S>(&self, operation_id: impl AsRef<OsStr>, args: I) -> Result<JjOutput>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -383,10 +356,7 @@ impl JjClient {
     }
 
     pub fn version(&self) -> Result<JjVersion> {
-        self.run(["--version"])?
-            .trimmed_stdout()?
-            .parse()
-            .context("failed to parse JJ version")
+        self.run(["--version"])?.trimmed_stdout()?.parse().context("failed to parse JJ version")
     }
 
     /// Probe the actual executable, including builds whose version predates the feature.
@@ -399,8 +369,7 @@ impl JjClient {
 
     /// Probe the subcommand rather than assuming a release number implies support.
     pub fn supports_workspace_removal(&self) -> Result<bool> {
-        let output =
-            self.run_unchecked(["--ignore-working-copy", "workspace", "remove", "--help"])?;
+        let output = self.run_unchecked(["--ignore-working-copy", "workspace", "remove", "--help"])?;
         if output.success() {
             return Ok(true);
         }
@@ -412,9 +381,7 @@ impl JjClient {
 
     pub fn require_workspace_colocation(&self) -> Result<()> {
         if !self.supports_workspace_colocation()? {
-            bail!(
-                "workspace colocation requires JJ with `workspace add --colocate`; upgrade to JJ 0.46+ or use --no-colocate"
-            )
+            bail!("workspace colocation requires JJ with `workspace add --colocate`; upgrade to JJ 0.46+ or use --no-colocate")
         }
         // A local backend cannot create Git worktrees. Check before any mutation.
         self.run(["--ignore-working-copy", "git", "root"])
@@ -428,46 +395,24 @@ impl JjClient {
 
     /// List workspace names without snapshotting a working copy.
     pub fn workspace_names(&self) -> Result<Vec<String>> {
-        let output = self.run([
-            "--ignore-working-copy",
-            "workspace",
-            "list",
-            "-T",
-            WORKSPACE_NAMES_TEMPLATE,
-        ])?;
+        let output = self.run(["--ignore-working-copy", "workspace", "list", "-T", WORKSPACE_NAMES_TEMPLATE])?;
         parse_json_string_lines(output.stdout()?, "workspace name")
     }
 
     /// List targets that JJ marks as the current working copy without snapshotting it.
     pub fn current_workspace_target_names(&self) -> Result<Vec<String>> {
-        let output = self.run([
-            "--ignore-working-copy",
-            "workspace",
-            "list",
-            "-T",
-            CURRENT_WORKSPACE_NAMES_TEMPLATE,
-        ])?;
+        let output = self.run(["--ignore-working-copy", "workspace", "list", "-T", CURRENT_WORKSPACE_NAMES_TEMPLATE])?;
         parse_json_string_lines(output.stdout()?, "current workspace name")
     }
 
     /// Read workspace target facts at one frozen repository operation.
-    pub fn workspace_target_facts_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-    ) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
-        let output = self.run_at(
-            operation_id,
-            ["workspace", "list", "-T", WORKSPACE_FACTS_TEMPLATE],
-        )?;
+    pub fn workspace_target_facts_at(&self, operation_id: impl AsRef<OsStr>) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
+        let output = self.run_at(operation_id, ["workspace", "list", "-T", WORKSPACE_FACTS_TEMPLATE])?;
         parse_workspace_target_facts(output.stdout()?)
     }
 
     /// Read one workspace target by its literal workspace name at a frozen operation.
-    fn workspace_target_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        workspace_name: &str,
-    ) -> Result<WorkspaceTargetFacts> {
+    fn workspace_target_at(&self, operation_id: impl AsRef<OsStr>, workspace_name: &str) -> Result<WorkspaceTargetFacts> {
         self.workspace_target_facts_at(operation_id)?
             .remove(workspace_name)
             .ok_or_else(|| anyhow!("JJ workspace query did not return `{workspace_name}`"))
@@ -475,29 +420,11 @@ impl JjClient {
 
     /// Capture the current operation without snapshotting or reconciling the working copy.
     pub fn operation_id(&self) -> Result<String> {
-        let output = self.run_at(
-            "@",
-            [
-                "operation",
-                "log",
-                "--limit=1",
-                "--no-graph",
-                "--template",
-                "id ++ \"\\n\"",
-            ],
-        )?;
-        let operation_ids = output
-            .stdout()?
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>();
+        let output = self.run_at("@", ["operation", "log", "--limit=1", "--no-graph", "--template", "id ++ \"\\n\""])?;
+        let operation_ids = output.stdout()?.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>();
         match operation_ids.as_slice() {
             [operation_id] => Ok((*operation_id).to_owned()),
-            _ => bail!(
-                "JJ operation query returned {} IDs; expected exactly one",
-                operation_ids.len()
-            ),
+            _ => bail!("JJ operation query returned {} IDs; expected exactly one", operation_ids.len()),
         }
     }
 
@@ -508,29 +435,17 @@ impl JjClient {
     }
 
     /// Resolve exactly one revision at a previously captured repository operation.
-    pub fn resolve_one_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        revset: impl AsRef<OsStr>,
-    ) -> Result<ResolvedRevision> {
+    pub fn resolve_one_at(&self, operation_id: impl AsRef<OsStr>, revset: impl AsRef<OsStr>) -> Result<ResolvedRevision> {
         let revset = revset.as_ref();
         let revisions = self.resolve_all_at(operation_id, revset)?;
         match revisions.as_slice() {
             [revision] => Ok(revision.clone()),
-            _ => bail!(
-                "revset {:?} resolved to {} revisions; expected exactly one",
-                revset,
-                revisions.len()
-            ),
+            _ => bail!("revset {:?} resolved to {} revisions; expected exactly one", revset, revisions.len()),
         }
     }
 
     /// Resolve every revision in a revset at a previously captured repository operation.
-    pub fn resolve_all_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        revset: impl AsRef<OsStr>,
-    ) -> Result<Vec<ResolvedRevision>> {
+    pub fn resolve_all_at(&self, operation_id: impl AsRef<OsStr>, revset: impl AsRef<OsStr>) -> Result<Vec<ResolvedRevision>> {
         let revset = revset.as_ref();
         let args = [
             OsString::from("log"),
@@ -549,41 +464,19 @@ impl JjClient {
         let records = self.commit_facts_many_at(operation, revset)?;
         match records.as_slice() {
             [record] => Ok(record.clone()),
-            _ => bail!(
-                "JJ commit facts query returned {} records; expected one",
-                records.len()
-            ),
+            _ => bail!("JJ commit facts query returned {} records; expected one", records.len()),
         }
     }
 
     /// Read a batch of commits at one frozen operation, without WC snapshots.
     pub fn commit_facts_many_at(&self, operation: &str, revset: &str) -> Result<Vec<CommitFacts>> {
-        let output = self.run_at(
-            operation,
-            [
-                "log",
-                "--no-graph",
-                "-r",
-                revset,
-                "-T",
-                COMMIT_FACTS_TEMPLATE,
-            ],
-        )?;
+        let output = self.run_at(operation, ["log", "--no-graph", "-r", revset, "-T", COMMIT_FACTS_TEMPLATE])?;
         output
             .stdout()?
             .lines()
             .map(|record| {
                 let fields = record.split('\t').collect::<Vec<_>>();
-                let [
-                    commit,
-                    change,
-                    parents,
-                    description,
-                    empty,
-                    conflicted,
-                    divergent,
-                ] = fields.as_slice()
-                else {
+                let [commit, change, parents, description, empty, conflicted, divergent] = fields.as_slice() else {
                     bail!("JJ commit facts query returned malformed output");
                 };
                 Ok(CommitFacts {
@@ -601,29 +494,15 @@ impl JjClient {
 
     /// Include untracked remote refs and deleted tracked local relationships.
     pub fn bookmark_refs_at(&self, operation: &str) -> Result<Vec<BookmarkRef>> {
-        let output = self.run_at(
-            operation,
-            [
-                "bookmark",
-                "list",
-                "--all-remotes",
-                "-T",
-                BOOKMARK_REFS_TEMPLATE,
-            ],
-        )?;
+        let output = self.run_at(operation, ["bookmark", "list", "--all-remotes", "-T", BOOKMARK_REFS_TEMPLATE])?;
         output
             .stdout()?
             .lines()
             .enumerate()
             .map(|(index, record)| {
                 let fields = record.split('\t').collect::<Vec<_>>();
-                let [name, remote, tracked, present, conflicted, added, removed] =
-                    fields.as_slice()
-                else {
-                    bail!(
-                        "JJ bookmark refs query returned malformed record {}",
-                        index + 1
-                    );
+                let [name, remote, tracked, present, conflicted, added, removed] = fields.as_slice() else {
+                    bail!("JJ bookmark refs query returned malformed record {}", index + 1);
                 };
                 Ok(BookmarkRef {
                     name: parse_json_field(name, index, "name")?,
@@ -645,10 +524,7 @@ impl JjClient {
         // JJ renders simple remote symbols followed by one space and the URL.
         // Callers supporting quoted/complex names must not use this probe.
         let prefix = format!("{remote} ");
-        Ok(output
-            .stdout()?
-            .lines()
-            .any(|line| line.starts_with(&prefix)))
+        Ok(output.stdout()?.lines().any(|line| line.starts_with(&prefix)))
     }
 
     /// Fetch only a pinned bookmark from a pinned remote, never JJ's defaults.
@@ -665,17 +541,8 @@ impl JjClient {
     }
 
     /// Test ancestry using exact IDs, immune to same-spelled bookmarks/tags.
-    pub fn is_ancestor_at(
-        &self,
-        operation: &str,
-        ancestor: &str,
-        descendant: &str,
-    ) -> Result<bool> {
-        let revset = format!(
-            "{} & ::{}",
-            commit_id_revset(ancestor)?,
-            commit_id_revset(descendant)?
-        );
+    pub fn is_ancestor_at(&self, operation: &str, ancestor: &str, descendant: &str) -> Result<bool> {
+        let revset = format!("{} & ::{}", commit_id_revset(ancestor)?, commit_id_revset(descendant)?);
         Ok(!self.resolve_all_at(operation, revset)?.is_empty())
     }
 
@@ -683,52 +550,23 @@ impl JjClient {
     /// Native JJ refuses an existing local bookmark, including conflicted refs.
     pub fn create_bookmark(&self, name: &str, commit: &str) -> Result<JjOutput> {
         let revision = commit_id_revset(commit)?;
-        self.run([
-            "--ignore-working-copy",
-            "bookmark",
-            "create",
-            "-r",
-            &revision,
-            "--",
-            name,
-        ])
+        self.run(["--ignore-working-copy", "bookmark", "create", "-r", &revision, "--", name])
     }
 
     /// Read local bookmark names at one frozen repository operation.
-    pub fn local_bookmark_names_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-    ) -> Result<BTreeSet<String>> {
-        let output = self.run_at(
-            operation_id,
-            [
-                "bookmark",
-                "list",
-                "--template",
-                LOCAL_BOOKMARK_NAMES_TEMPLATE,
-            ],
-        )?;
-        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?
-            .into_iter()
-            .collect())
+    pub fn local_bookmark_names_at(&self, operation_id: impl AsRef<OsStr>) -> Result<BTreeSet<String>> {
+        let output = self.run_at(operation_id, ["bookmark", "list", "--template", LOCAL_BOOKMARK_NAMES_TEMPLATE])?;
+        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?.into_iter().collect())
     }
 
     /// Read local bookmark names attached to a literal workspace target at one frozen operation.
-    pub fn local_bookmark_names_for_workspace_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        workspace_name: &str,
-    ) -> Result<BTreeSet<String>> {
+    pub fn local_bookmark_names_for_workspace_at(&self, operation_id: impl AsRef<OsStr>, workspace_name: &str) -> Result<BTreeSet<String>> {
         let operation_id = operation_id.as_ref().to_owned();
         let target = self.workspace_target_at(&operation_id, workspace_name)?;
         self.local_bookmark_names_for_revset_at(&operation_id, &target.commit_id)
     }
 
-    fn local_bookmark_names_for_revset_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-        revset: impl AsRef<OsStr>,
-    ) -> Result<BTreeSet<String>> {
+    fn local_bookmark_names_for_revset_at(&self, operation_id: impl AsRef<OsStr>, revset: impl AsRef<OsStr>) -> Result<BTreeSet<String>> {
         let args = [
             OsString::from("bookmark"),
             OsString::from("list"),
@@ -738,29 +576,13 @@ impl JjClient {
             OsString::from(LOCAL_BOOKMARK_NAMES_TEMPLATE),
         ];
         let output = self.run_at(operation_id, args)?;
-        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?
-            .into_iter()
-            .collect())
+        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?.into_iter().collect())
     }
 
     /// Read conflicted bookmark names at one frozen repository operation.
-    pub fn conflicted_bookmark_names_at(
-        &self,
-        operation_id: impl AsRef<OsStr>,
-    ) -> Result<BTreeSet<String>> {
-        let output = self.run_at(
-            operation_id,
-            [
-                "bookmark",
-                "list",
-                "--conflicted",
-                "--template",
-                BOOKMARK_NAMES_TEMPLATE,
-            ],
-        )?;
-        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?
-            .into_iter()
-            .collect())
+    pub fn conflicted_bookmark_names_at(&self, operation_id: impl AsRef<OsStr>) -> Result<BTreeSet<String>> {
+        let output = self.run_at(operation_id, ["bookmark", "list", "--conflicted", "--template", BOOKMARK_NAMES_TEMPLATE])?;
+        Ok(parse_json_string_lines(output.stdout()?, "bookmark name")?.into_iter().collect())
     }
 
     /// Return JJ's repository-level config path.
@@ -782,15 +604,7 @@ impl JjClient {
     /// List the files tracked in this workspace's working-copy commit, relative to
     /// the workspace root, without snapshotting the working copy.
     pub fn tracked_files(&self) -> Result<Vec<PathBuf>> {
-        let output = self.run([
-            "--ignore-working-copy",
-            "file",
-            "list",
-            "-r",
-            "@",
-            "-T",
-            TRACKED_FILES_TEMPLATE,
-        ])?;
+        let output = self.run(["--ignore-working-copy", "file", "list", "-r", "@", "-T", TRACKED_FILES_TEMPLATE])?;
         // JJ repository paths are always `/`-separated, independent of platform.
         Ok(parse_json_string_lines(output.stdout()?, "file path")?
             .into_iter()
@@ -803,12 +617,7 @@ impl JjClient {
     /// Watchman's clock is recorded in the working-copy state and only describes the
     /// checkout that recorded it.
     pub fn uses_watchman(&self) -> Result<bool> {
-        let output = self.run_unchecked([
-            "--ignore-working-copy",
-            "config",
-            "get",
-            "fsmonitor.backend",
-        ])?;
+        let output = self.run_unchecked(["--ignore-working-copy", "config", "get", "fsmonitor.backend"])?;
         Ok(output.success() && output.trimmed_stdout()? == "watchman")
     }
 
@@ -818,13 +627,7 @@ impl JjClient {
             .args(["--no-pager", "--color=never"])
             .args(args)
             .output()
-            .with_context(|| {
-                format!(
-                    "failed to execute {} in {}",
-                    display_command(args),
-                    self.cwd.display()
-                )
-            })?;
+            .with_context(|| format!("failed to execute {} in {}", display_command(args), self.cwd.display()))?;
         Ok(JjOutput { output })
     }
 }
@@ -847,14 +650,9 @@ pub(crate) fn commit_id_revset(id: &str) -> Result<String> {
 /// if JJ rejects it.
 pub fn copy_tree_state(source_root: &Path, workspace_root: &Path) -> Result<Vec<u8>> {
     let source = tree_state_path(source_root);
-    let state =
-        std::fs::read(&source).with_context(|| format!("failed to read {}", source.display()))?;
-    let previous = std::fs::read(tree_state_path(workspace_root)).with_context(|| {
-        format!(
-            "failed to read working-copy state in {}",
-            workspace_root.display()
-        )
-    })?;
+    let state = std::fs::read(&source).with_context(|| format!("failed to read {}", source.display()))?;
+    let previous =
+        std::fs::read(tree_state_path(workspace_root)).with_context(|| format!("failed to read working-copy state in {}", workspace_root.display()))?;
     write_tree_state(workspace_root, &state)?;
     Ok(previous)
 }
@@ -866,10 +664,7 @@ pub fn write_tree_state(workspace_root: &Path, state: &[u8]) -> Result<()> {
 }
 
 fn tree_state_path(workspace_root: &Path) -> PathBuf {
-    workspace_root
-        .join(".jj")
-        .join("working_copy")
-        .join("tree_state")
+    workspace_root.join(".jj").join("working_copy").join("tree_state")
 }
 
 fn collect_args<I, S>(args: I) -> Vec<OsString>
@@ -877,9 +672,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    args.into_iter()
-        .map(|arg| arg.as_ref().to_owned())
-        .collect()
+    args.into_iter().map(|arg| arg.as_ref().to_owned()).collect()
 }
 
 fn display_command(args: &[OsString]) -> String {
@@ -890,9 +683,7 @@ fn parse_release_number(value: &str, version: &str) -> Result<u64> {
     if value.len() > 1 && value.starts_with('0') {
         bail!("invalid JJ semantic version `{version}`")
     }
-    value
-        .parse()
-        .with_context(|| format!("invalid JJ semantic version `{version}`"))
+    value.parse().with_context(|| format!("invalid JJ semantic version `{version}`"))
 }
 
 fn compare_prerelease(left: Option<&str>, right: Option<&str>) -> Ordering {
@@ -975,11 +766,7 @@ fn parse_workspace_target_facts(output: &str) -> Result<BTreeMap<String, Workspa
             change_id: parse_json_field(change_id, index, "change ID")?,
             commit_id: parse_json_field(commit_id, index, "commit ID")?,
             description: parse_json_field(description, index, "description")?,
-            current_working_copy: parse_json_field(
-                current_working_copy,
-                index,
-                "current working copy",
-            )?,
+            current_working_copy: parse_json_field(current_working_copy, index, "current working copy")?,
             empty: parse_json_field(empty, index, "empty")?,
             conflicted: parse_json_field(conflicted, index, "conflicted")?,
             divergent: parse_json_field(divergent, index, "divergent")?,
@@ -1012,22 +799,14 @@ fn parse_json_field<T>(value: &str, record_index: usize, field: &str) -> Result<
 where
     T: serde::de::DeserializeOwned,
 {
-    serde_json::from_str(value).with_context(|| {
-        format!(
-            "JJ query returned invalid {field} JSON in record {}",
-            record_index + 1
-        )
-    })
+    serde_json::from_str(value).with_context(|| format!("JJ query returned invalid {field} JSON in record {}", record_index + 1))
 }
 
 fn parse_count(value: &str, record_index: usize, field: &str) -> Result<u32> {
     let value: u64 = parse_json_field(value, record_index, field)?;
-    value.try_into().with_context(|| {
-        format!(
-            "JJ workspace query returned {field} count outside u32 range in record {}",
-            record_index + 1
-        )
-    })
+    value
+        .try_into()
+        .with_context(|| format!("JJ workspace query returned {field} count outside u32 range in record {}", record_index + 1))
 }
 
 #[cfg(test)]
@@ -1036,21 +815,10 @@ mod tests {
 
     #[test]
     fn parses_jj_semantic_versions() {
+        assert_eq!("jj 0.43.0".parse::<JjVersion>().unwrap(), JjVersion::new(0, 43, 0));
+        assert_eq!("jj 1.2.3-beta.2+build.7".parse::<JjVersion>().unwrap().to_string(), "1.2.3-beta.2");
         assert_eq!(
-            "jj 0.43.0".parse::<JjVersion>().unwrap(),
-            JjVersion::new(0, 43, 0)
-        );
-        assert_eq!(
-            "jj 1.2.3-beta.2+build.7"
-                .parse::<JjVersion>()
-                .unwrap()
-                .to_string(),
-            "1.2.3-beta.2"
-        );
-        assert_eq!(
-            "jj 0.39.0-d9689cd9b51b4139d2842fcf6c30f65f4eed8cd1"
-                .parse::<JjVersion>()
-                .unwrap(),
+            "jj 0.39.0-d9689cd9b51b4139d2842fcf6c30f65f4eed8cd1".parse::<JjVersion>().unwrap(),
             JjVersion::new(0, 39, 0)
         );
         assert!("jj 0.43".parse::<JjVersion>().is_err());
@@ -1081,19 +849,11 @@ mod tests {
     #[test]
     fn classifies_only_actionable_stale_working_copy_errors() {
         assert_eq!(
-            JjErrorKind::from_stderr(
-                "Working copy is stale. Run `jj workspace update-stale` to update it."
-            ),
+            JjErrorKind::from_stderr("Working copy is stale. Run `jj workspace update-stale` to update it."),
             JjErrorKind::StaleWorkingCopy
         );
-        assert_eq!(
-            JjErrorKind::from_stderr("Working copy snapshot failed"),
-            JjErrorKind::Other
-        );
-        assert_eq!(
-            JjErrorKind::from_stderr("Revision is stale"),
-            JjErrorKind::Other
-        );
+        assert_eq!(JjErrorKind::from_stderr("Working copy snapshot failed"), JjErrorKind::Other);
+        assert_eq!(JjErrorKind::from_stderr("Revision is stale"), JjErrorKind::Other);
     }
 
     #[test]
@@ -1108,12 +868,7 @@ mod tests {
         assert!(undescribed.description.is_empty());
 
         assert!(parse_resolved_revisions("").unwrap().is_empty());
-        assert_eq!(
-            parse_resolved_revisions("change-1\0commit-1\0one\0change-2\0commit-2\0two\0")
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(parse_resolved_revisions("change-1\0commit-1\0one\0change-2\0commit-2\0two\0").unwrap().len(), 2);
         assert!(parse_resolved_revisions("change\0commit\0").is_err());
     }
 
@@ -1153,16 +908,8 @@ mod tests {
         }
 
         let directory = tempfile::tempdir().unwrap();
-        let init = Command::new("jj")
-            .args(["git", "init"])
-            .arg(directory.path())
-            .output()
-            .unwrap();
-        assert!(
-            init.status.success(),
-            "{}",
-            String::from_utf8_lossy(&init.stderr)
-        );
+        let init = Command::new("jj").args(["git", "init"]).arg(directory.path()).output().unwrap();
+        assert!(init.status.success(), "{}", String::from_utf8_lossy(&init.stderr));
 
         let client = JjClient::new(directory.path());
         let operation_id = client.operation_id().unwrap();
@@ -1171,33 +918,14 @@ mod tests {
         assert!(!revision.change_id.is_empty());
         assert!(!revision.commit_id.is_empty());
         assert_eq!(client.workspace_names().unwrap(), ["default"]);
-        assert_eq!(
-            client.current_workspace_target_names().unwrap(),
-            ["default"]
-        );
-        assert!(
-            client
-                .workspace_target_facts_at(&operation_id)
-                .unwrap()
-                .contains_key("default")
-        );
-        assert!(
-            client
-                .local_bookmark_names_at(&operation_id)
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(client.current_workspace_target_names().unwrap(), ["default"]);
+        assert!(client.workspace_target_facts_at(&operation_id).unwrap().contains_key("default"));
+        assert!(client.local_bookmark_names_at(&operation_id).unwrap().is_empty());
 
-        client
-            .run(["bookmark", "create", "topic", "-r", "@"])
-            .unwrap();
+        client.run(["bookmark", "create", "topic", "-r", "@"]).unwrap();
         let bookmark_operation = client.operation_id().unwrap();
         assert_eq!(
-            client
-                .local_bookmark_names_at(&bookmark_operation)
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<_>>(),
+            client.local_bookmark_names_at(&bookmark_operation).unwrap().into_iter().collect::<Vec<_>>(),
             ["topic"]
         );
         assert_eq!(

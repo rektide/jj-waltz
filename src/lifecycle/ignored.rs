@@ -40,9 +40,7 @@ impl IgnoredPlan {
         {
             let _ = (base, plans, asserted_source);
             let selection = patterns.select(inventory.current_root(), [], |_| {
-                anyhow::bail!(
-                    "ignored payload copying requires Unix filesystem identity and real CoW support"
-                )
+                anyhow::bail!("ignored payload copying requires Unix filesystem identity and real CoW support")
             })?;
             Ok(Self {
                 diagnostics: selection.skipped,
@@ -110,13 +108,10 @@ mod unix {
             bail!("source changed since --source-at was asserted; pause writers and retry");
         }
         let source_entries = payload::entries(&client, &operation, &source_commit)?;
-        let source_rules =
-            IgnoreRules::new(&client, &operation, &source_commit, &source_entries, true)?;
-        let selected = patterns.select(
-            source,
-            source_entries.iter().map(|entry| entry.path.as_path()),
-            |path| source_rules.is_ignored_directory(path),
-        )?;
+        let source_rules = IgnoreRules::new(&client, &operation, &source_commit, &source_entries, true)?;
+        let selected = patterns.select(source, source_entries.iter().map(|entry| entry.path.as_path()), |path| {
+            source_rules.is_ignored_directory(path)
+        })?;
         let mut plan = IgnoredPlan {
             diagnostics: selected.skipped,
             proof: None,
@@ -142,15 +137,10 @@ mod unix {
             }
         }
         let target_entries = payload::entries(&client, &operation, &base.commit_id)?;
-        let target_rules =
-            IgnoreRules::new(&client, &operation, &base.commit_id, &target_entries, false)?;
-        let tracked = target_entries
-            .iter()
-            .map(|entry| entry.path.as_path())
-            .collect::<BTreeSet<_>>();
+        let target_rules = IgnoreRules::new(&client, &operation, &base.commit_id, &target_entries, false)?;
+        let tracked = target_entries.iter().map(|entry| entry.path.as_path()).collect::<BTreeSet<_>>();
         for path in &selected.roots {
-            require_untracked(path, &tracked)
-                .context("ignored payload overlaps the desired target tree")?;
+            require_untracked(path, &tracked).context("ignored payload overlaps the desired target tree")?;
             target_rules
                 .require_ignored(path)
                 .context("ignored payload is not ignored in the desired target tree")?;
@@ -178,19 +168,14 @@ mod unix {
         fn validate_source(&self) -> Result<()> {
             if payload::directory_identity(&self.source)? != self.source_identity
                 || payload::directory_identity(&self.source.join(".jj"))? != self.source_jj_identity
-                || crate::context::repository_path(&self.source).map_err(anyhow::Error::msg)?
-                    != self.repository
+                || crate::context::repository_path(&self.source).map_err(anyhow::Error::msg)? != self.repository
             {
                 bail!("source directory or repository identity changed since the creation plan");
             }
             let client = JjClient::new(&self.source);
             let operation = client.operation_id()?;
-            if client.resolve_one_at(&operation, "@")?.commit_id != self.source_commit
-                || payload::stamp(&self.source)? != self.stamp
-            {
-                bail!(
-                    "source changed since the ignored payload was frozen; pause writers and retry"
-                );
+            if client.resolve_one_at(&operation, "@")?.commit_id != self.source_commit || payload::stamp(&self.source)? != self.stamp {
+                bail!("source changed since the ignored payload was frozen; pause writers and retry");
             }
             validate_selected(
                 &self.source,
@@ -207,18 +192,13 @@ mod unix {
         pub(super) fn copy_to(&self, target: &Path, config_root: Option<&Path>) -> Result<()> {
             self.validate_source()?;
             payload::directory_identity(target)?;
-            if crate::context::repository_path(target).map_err(anyhow::Error::msg)?
-                != self.repository
-            {
+            if crate::context::repository_path(target).map_err(anyhow::Error::msg)? != self.repository {
                 bail!("new workspace no longer belongs to the frozen source repository");
             }
             let client = JjClient::new(target);
             let operation = client.operation_id()?;
             if !client
-                .run_at(
-                    &operation,
-                    ["diff", "--from", &self.base, "--to", "@", "--summary"],
-                )?
+                .run_at(&operation, ["diff", "--from", &self.base, "--to", "@", "--summary"])?
                 .stdout()?
                 .is_empty()
             {
@@ -247,10 +227,7 @@ mod unix {
                 match fs::symlink_metadata(target.join(path)) {
                     Err(error) if error.kind() == ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
-                    Ok(_) => bail!(
-                        "ignored payload target is obstructed: {}",
-                        target.join(path).display()
-                    ),
+                    Ok(_) => bail!("ignored payload target is obstructed: {}", target.join(path).display()),
                 }
             }
             // Independent of the tracked checkout mode: no bytes/hardlinks/shared

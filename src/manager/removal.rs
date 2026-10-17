@@ -127,12 +127,7 @@ pub fn prepare(trunk: &str, names: &[String], prune: bool) -> Result<BatchPlan> 
         let bookmark_targets = bookmark_targets(&client, &operation_id, metadata.as_ref())?;
         let mut warnings = status_row.warnings.clone();
         let mut blocked = structural_block(&status_row, prune);
-        if let Err(error) = crate::ownership::ensure_removal_allowed(
-            &client,
-            &workspace.name,
-            workspace.path.as_deref(),
-            metadata.as_ref(),
-        ) {
+        if let Err(error) = crate::ownership::ensure_removal_allowed(&client, &workspace.name, workspace.path.as_deref(), metadata.as_ref()) {
             set_blocked(&mut blocked, error.to_string());
         }
         let mut ignored = Vec::new();
@@ -160,27 +155,19 @@ pub fn prepare(trunk: &str, names: &[String], prune: bool) -> Result<BatchPlan> 
         }
 
         if metadata_identity(&metadata) != workspace_metadata_identity(workspace) {
-            set_blocked(
-                &mut blocked,
-                "workspace metadata changed while the removal preview was being built",
-            );
+            set_blocked(&mut blocked, "workspace metadata changed while the removal preview was being built");
         }
 
         let risky = is_risky(&status_row);
         append_review_warnings(&status_row, &mut warnings);
         if !ignored.is_empty() {
-            warnings.push(format!(
-                "{} path(s) not recorded by JJ are present",
-                ignored.len()
-            ));
+            warnings.push(format!("{} path(s) not recorded by JJ are present", ignored.len()));
         }
 
         let public = RemovalRow {
             name: workspace.name.clone(),
             path: workspace.path.clone().or_else(|| missing_path.clone()),
-            bookmark: (!bookmark_targets.is_empty())
-                .then(|| managed_bookmark(workspace, metadata.as_ref()))
-                .flatten(),
+            bookmark: (!bookmark_targets.is_empty()).then(|| managed_bookmark(workspace, metadata.as_ref())).flatten(),
             warnings,
             ignored,
             blocked,
@@ -203,10 +190,7 @@ pub fn prepare(trunk: &str, names: &[String], prune: bool) -> Result<BatchPlan> 
     if !selected.is_empty() {
         let missing = selected.difference(&seen).cloned().collect::<Vec<_>>();
         if !missing.is_empty() {
-            bail!(
-                "requested workspace(s) were not returned by the refreshed snapshot: {}",
-                missing.join(", ")
-            )
+            bail!("requested workspace(s) were not returned by the refreshed snapshot: {}", missing.join(", "))
         }
     }
 
@@ -219,12 +203,7 @@ pub fn prepare(trunk: &str, names: &[String], prune: bool) -> Result<BatchPlan> 
 }
 
 /// Execute reviewed removals one at a time. Every row is recaptured immediately before mutation.
-pub fn execute(
-    plan: BatchPlan,
-    delete_bookmarks: bool,
-    include_risky: bool,
-    acknowledge_ignored: bool,
-) -> Vec<BatchOutcome> {
+pub fn execute(plan: BatchPlan, delete_bookmarks: bool, include_risky: bool, acknowledge_ignored: bool) -> Vec<BatchOutcome> {
     let BatchPlan {
         trunk,
         rows,
@@ -241,16 +220,10 @@ pub fn execute(
                 return skipped(&row.name, format!("blocked: {reason}"));
             }
             if row.risky && !include_risky {
-                return skipped(
-                    &row.name,
-                    "excluded because it needs the risky-removal override",
-                );
+                return skipped(&row.name, "excluded because it needs the risky-removal override");
             }
             if !row.ignored.is_empty() && !acknowledge_ignored {
-                return skipped(
-                    &row.name,
-                    "skipped because files not recorded by JJ were not approved for deletion",
-                );
+                return skipped(&row.name, "skipped because files not recorded by JJ were not approved for deletion");
             }
 
             match execute_one(&trunk, prune, row, expected, delete_bookmarks) {
@@ -275,8 +248,7 @@ fn execute_one(
     let name = row.name.clone();
     let result = (|| -> Result<String> {
         let requested = vec![name.clone()];
-        let captured = status::capture(trunk, &requested)
-            .with_context(|| format!("failed to revalidate workspace {name}"))?;
+        let captured = status::capture(trunk, &requested).with_context(|| format!("failed to revalidate workspace {name}"))?;
         let operation_id = captured.snapshot.repository.operation_id.clone();
         let current = captured
             .rows
@@ -288,17 +260,11 @@ fn execute_one(
         let client = JjClient::current()?;
         let store = metadata_store(&client)?;
         let current_metadata = store.get(&name)?;
-        crate::ownership::ensure_removal_allowed(
-            &client,
-            &name,
-            current.workspace.path.as_deref(),
-            current_metadata.as_ref(),
-        )?;
+        crate::ownership::ensure_removal_allowed(&client, &name, current.workspace.path.as_deref(), current_metadata.as_ref())?;
         if current_metadata != expected.metadata {
             bail!("workspace metadata changed since the removal preview; review it again")
         }
-        let current_bookmark_targets =
-            bookmark_targets(&client, &operation_id, current_metadata.as_ref())?;
+        let current_bookmark_targets = bookmark_targets(&client, &operation_id, current_metadata.as_ref())?;
         if current_bookmark_targets != expected.bookmark_targets {
             bail!("associated bookmark moved since the removal preview; review it again")
         }
@@ -307,9 +273,7 @@ fn execute_one(
             Some(path) => {
                 let identity = inspect_workspace_path(&client, path, &name)?;
                 if Some(identity) != expected.path_identity {
-                    bail!(
-                        "workspace path identity changed since the removal preview; review it again"
-                    )
+                    bail!("workspace path identity changed since the removal preview; review it again")
                 }
                 let scan = scan_ignored(path)?;
                 if scan.inventory != expected.ignored_inventory {
@@ -322,9 +286,7 @@ fn execute_one(
             None if prune => {
                 let missing_path = inspect_missing_workspace(&client, &name)?;
                 if Some(missing_path) != expected.missing_path {
-                    bail!(
-                        "missing workspace path changed since the removal preview; review it again"
-                    )
+                    bail!("missing workspace path changed since the removal preview; review it again")
                 }
             }
             None => {}
@@ -332,13 +294,7 @@ fn execute_one(
 
         if prune {
             let shared = shared_bookmark(&client, &store, &name, expected.metadata.as_ref())?;
-            execute_prune(
-                &client,
-                &store,
-                &name,
-                expected.metadata.as_ref(),
-                delete_bookmarks && !shared,
-            )?;
+            execute_prune(&client, &store, &name, expected.metadata.as_ref(), delete_bookmarks && !shared)?;
             Ok(success_message(
                 "Pruned missing workspace",
                 &name,
@@ -378,28 +334,17 @@ fn execute_one(
                 bail!("workspace path changed during final removal planning; review it again")
             }
             let shared = shared_bookmark(&client, &store, &name, expected.metadata.as_ref())?;
-            let result = workspace::execute_remove_workspace(
-                low_level,
-                delete_bookmarks && !shared && expected.metadata.is_some(),
-            )?;
+            let result = workspace::execute_remove_workspace(low_level, delete_bookmarks && !shared && expected.metadata.is_some())?;
             let action = if result.deleted_dir {
                 "Removed workspace and directory"
             } else {
                 "Forgot workspace"
             };
-            Ok(success_message(
-                action,
-                &name,
-                expected.metadata.as_ref(),
-                delete_bookmarks,
-                shared,
-            ))
+            Ok(success_message(action, &name, expected.metadata.as_ref(), delete_bookmarks, shared))
         }
     })();
 
-    result
-        .map(|message| (name.clone(), message))
-        .map_err(|error| (name, format!("{error:#}")))
+    result.map(|message| (name.clone(), message)).map_err(|error| (name, format!("{error:#}")))
 }
 
 fn execute_prune(
@@ -416,9 +361,7 @@ fn execute_prune(
     crate::ownership::forget_workspace(client, name, None, metadata)?;
     let mut progress = format!("partial removal: workspace {name} was forgotten");
 
-    if delete_bookmark
-        && let Some(bookmark) = metadata.and_then(|entry| entry.associated_bookmark.as_deref())
-    {
+    if delete_bookmark && let Some(bookmark) = metadata.and_then(|entry| entry.associated_bookmark.as_deref()) {
         let operation_id = client.operation_id().with_context(|| progress.clone())?;
         if client
             .local_bookmark_names_at(&operation_id)
@@ -443,21 +386,13 @@ fn execute_prune(
     Ok(())
 }
 
-fn success_message(
-    action: &str,
-    name: &str,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-    delete_bookmarks: bool,
-    shared: bool,
-) -> String {
+fn success_message(action: &str, name: &str, metadata: Option<&ManagedWorkspaceMetadata>, delete_bookmarks: bool, shared: bool) -> String {
     let mut message = format!("{action}: {name}");
     if let Some(bookmark) = metadata.and_then(|entry| entry.associated_bookmark.as_deref()) {
         if delete_bookmarks && shared {
             message.push_str(&format!("; preserved shared bookmark {bookmark}"));
         } else if delete_bookmarks {
-            message.push_str(&format!(
-                "; deleted bookmark {bookmark} if it existed locally"
-            ));
+            message.push_str(&format!("; deleted bookmark {bookmark} if it existed locally"));
         } else {
             message.push_str(&format!("; preserved bookmark {bookmark}"));
         }
@@ -475,17 +410,11 @@ fn structural_block(row: &ManagerRow, prune: bool) -> Option<String> {
     }
     match (&workspace.path, prune) {
         (None, false) => Some("workspace path is missing; review it in prune mode".to_owned()),
-        (Some(_), true) => {
-            Some("workspace path still exists and is not a prune candidate".to_owned())
-        }
-        (Some(_), false) if !workspace.working_copy_refreshed => {
-            Some("working copy could not be refreshed safely".to_owned())
-        }
+        (Some(_), true) => Some("workspace path still exists and is not a prune candidate".to_owned()),
+        (Some(_), false) if !workspace.working_copy_refreshed => Some("working copy could not be refreshed safely".to_owned()),
         _ => match workspace.working_copy {
             WorkingCopyStatus::Stale => Some("working copy is stale".to_owned()),
-            WorkingCopyStatus::Unknown if workspace.path.is_some() => {
-                Some("working-copy state is unknown".to_owned())
-            }
+            WorkingCopyStatus::Unknown if workspace.path.is_some() => Some("working-copy state is unknown".to_owned()),
             _ => None,
         },
     }
@@ -495,10 +424,7 @@ fn is_risky(row: &ManagerRow) -> bool {
     row.workspace.management == ManagementState::Unmanaged
         || matches!(
             row.work_integration,
-            Integration::OutsideTrunk
-                | Integration::Unknown
-                | Integration::Unassociated
-                | Integration::Conflicted
+            Integration::OutsideTrunk | Integration::Unknown | Integration::Unassociated | Integration::Conflicted
         )
         || matches!(
             row.bookmark_integration,
@@ -516,61 +442,34 @@ fn append_review_warnings(row: &ManagerRow, warnings: &mut Vec<String>) {
     if matches!(row.work_integration, Integration::Conflicted) {
         warnings.push("workspace work is conflicted".to_owned());
     }
-    if matches!(
-        row.work_integration,
-        Integration::Unknown | Integration::Unassociated
-    ) {
+    if matches!(row.work_integration, Integration::Unknown | Integration::Unassociated) {
         warnings.push("workspace integration could not be established".to_owned());
     }
     match row.bookmark_integration {
-        Integration::OutsideTrunk => {
-            warnings.push("associated bookmark points outside trunk".to_owned())
-        }
-        Integration::Conflicted => {
-            warnings.push("associated bookmark has conflicting targets".to_owned())
-        }
-        Integration::Unknown => {
-            warnings.push("associated bookmark integration could not be established".to_owned())
-        }
+        Integration::OutsideTrunk => warnings.push("associated bookmark points outside trunk".to_owned()),
+        Integration::Conflicted => warnings.push("associated bookmark has conflicting targets".to_owned()),
+        Integration::Unknown => warnings.push("associated bookmark integration could not be established".to_owned()),
         _ => {}
     }
 }
 
-fn managed_bookmark(
-    workspace: &WorkspaceSnapshot,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Option<String> {
+fn managed_bookmark(workspace: &WorkspaceSnapshot, metadata: Option<&ManagedWorkspaceMetadata>) -> Option<String> {
     (workspace.management == ManagementState::Managed)
         .then(|| metadata.and_then(|entry| entry.associated_bookmark.clone()))
         .flatten()
 }
 
-fn shared_bookmark(
-    client: &JjClient,
-    store: &WorkspaceMetadataStore,
-    removed_name: &str,
-    removed_metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Result<bool> {
-    let Some(bookmark) = removed_metadata.and_then(|entry| entry.associated_bookmark.as_deref())
-    else {
+fn shared_bookmark(client: &JjClient, store: &WorkspaceMetadataStore, removed_name: &str, removed_metadata: Option<&ManagedWorkspaceMetadata>) -> Result<bool> {
+    let Some(bookmark) = removed_metadata.and_then(|entry| entry.associated_bookmark.as_deref()) else {
         return Ok(false);
     };
-    let registered = client
-        .workspace_names()?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let registered = client.workspace_names()?.into_iter().collect::<BTreeSet<_>>();
     Ok(store.list()?.into_iter().any(|entry| {
-        entry.workspace_name != removed_name
-            && registered.contains(&entry.workspace_name)
-            && entry.associated_bookmark.as_deref() == Some(bookmark)
+        entry.workspace_name != removed_name && registered.contains(&entry.workspace_name) && entry.associated_bookmark.as_deref() == Some(bookmark)
     }))
 }
 
-fn bookmark_targets(
-    client: &JjClient,
-    operation_id: &str,
-    metadata: Option<&ManagedWorkspaceMetadata>,
-) -> Result<Vec<String>> {
+fn bookmark_targets(client: &JjClient, operation_id: &str, metadata: Option<&ManagedWorkspaceMetadata>) -> Result<Vec<String>> {
     let Some(bookmark) = metadata.and_then(|entry| entry.associated_bookmark.as_deref()) else {
         return Ok(Vec::new());
     };
@@ -610,16 +509,11 @@ fn ensure_status_unchanged(expected: &ManagerRow, current: &ManagerRow) -> Resul
     }
 }
 
-fn inspect_workspace_path(
-    repository_client: &JjClient,
-    path: &Path,
-    workspace_name: &str,
-) -> Result<PathIdentity> {
+fn inspect_workspace_path(repository_client: &JjClient, path: &Path, workspace_name: &str) -> Result<PathIdentity> {
     if !path.is_absolute() {
         bail!("workspace path is not absolute: {}", path.display())
     }
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("workspace path is unreadable: {}", path.display()))?;
+    let metadata = fs::symlink_metadata(path).with_context(|| format!("workspace path is unreadable: {}", path.display()))?;
     if metadata.file_type().is_symlink() {
         bail!("workspace root is a symlink: {}", path.display())
     }
@@ -631,13 +525,11 @@ fn inspect_workspace_path(
         bail!("refusing unsafe workspace root: {}", canonical.display())
     }
 
-    let jj_metadata = fs::symlink_metadata(path.join(".jj"))
-        .context("workspace root has no readable .jj metadata")?;
+    let jj_metadata = fs::symlink_metadata(path.join(".jj")).context("workspace root has no readable .jj metadata")?;
     if !jj_metadata.is_dir() || jj_metadata.file_type().is_symlink() {
         bail!("workspace root has unsafe .jj metadata")
     }
-    let repo_pointer = fs::symlink_metadata(path.join(".jj/repo"))
-        .context("workspace root has no readable .jj repository pointer")?;
+    let repo_pointer = fs::symlink_metadata(path.join(".jj/repo")).context("workspace root has no readable .jj repository pointer")?;
     if repo_pointer.is_dir() {
         bail!("workspace root contains the repository storage")
     }
@@ -683,35 +575,16 @@ fn inspect_workspace_path(
 }
 
 fn inspect_missing_workspace(client: &JjClient, workspace_name: &str) -> Result<PathBuf> {
-    let output = client.run_unchecked([
-        "--ignore-working-copy",
-        "workspace",
-        "root",
-        "--name",
-        workspace_name,
-    ])?;
+    let output = client.run_unchecked(["--ignore-working-copy", "workspace", "root", "--name", workspace_name])?;
     let path = if output.success() {
         one_path(output.stdout()?)?
     } else {
-        missing_path_from_error(&output.stderr()).ok_or_else(|| {
-            anyhow!(
-                "workspace path is unknown rather than confirmed missing: {}",
-                output.stderr()
-            )
-        })?
+        missing_path_from_error(&output.stderr()).ok_or_else(|| anyhow!("workspace path is unknown rather than confirmed missing: {}", output.stderr()))?
     };
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "workspace path could not be checked safely: {}",
-                path.display()
-            )
-        }),
-        Ok(_) => bail!(
-            "workspace path is not a confirmed-missing directory: {}",
-            path.display()
-        ),
+        Err(error) => Err(error).with_context(|| format!("workspace path could not be checked safely: {}", path.display())),
+        Ok(_) => bail!("workspace path is not a confirmed-missing directory: {}", path.display()),
     }
 }
 
@@ -720,28 +593,16 @@ fn ensure_no_nested_workspace(client: &JjClient, own_name: &str, root: &Path) ->
         if name == own_name {
             continue;
         }
-        let output = client.run_unchecked([
-            "--ignore-working-copy",
-            "workspace",
-            "root",
-            "--name",
-            &name,
-        ])?;
+        let output = client.run_unchecked(["--ignore-working-copy", "workspace", "root", "--name", &name])?;
         if !output.success() {
             if missing_path_from_error(&output.stderr()).is_some() {
                 continue;
             }
-            bail!(
-                "could not verify registered workspace {name} before removal: {}",
-                output.stderr()
-            )
+            bail!("could not verify registered workspace {name} before removal: {}", output.stderr())
         }
         let nested = canonicalize(&one_path(output.stdout()?)?)?;
         if nested != root && nested.starts_with(root) {
-            bail!(
-                "workspace contains registered workspace {name} at {}",
-                nested.display()
-            )
+            bail!("workspace contains registered workspace {name} at {}", nested.display())
         }
     }
     Ok(())
@@ -749,26 +610,17 @@ fn ensure_no_nested_workspace(client: &JjClient, own_name: &str, root: &Path) ->
 
 fn repository_identity(client: &JjClient) -> Result<PathBuf> {
     let config = client.repo_config_path()?;
-    let directory = config.parent().ok_or_else(|| {
-        anyhow!(
-            "JJ repository config path has no parent: {}",
-            config.display()
-        )
-    })?;
+    let directory = config
+        .parent()
+        .ok_or_else(|| anyhow!("JJ repository config path has no parent: {}", config.display()))?;
     canonicalize(directory)
 }
 
 fn one_path(output: &str) -> Result<PathBuf> {
-    let paths = output
-        .lines()
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let paths = output.lines().filter(|line| !line.is_empty()).collect::<Vec<_>>();
     match paths.as_slice() {
         [path] => Ok(PathBuf::from(path)),
-        _ => bail!(
-            "JJ workspace root query returned {} paths; expected exactly one",
-            paths.len()
-        ),
+        _ => bail!("JJ workspace root query returned {} paths; expected exactly one", paths.len()),
     }
 }
 
@@ -776,12 +628,7 @@ fn missing_path_from_error(message: &str) -> Option<PathBuf> {
     const PREFIX: &str = "Cannot resolve absolute workspace path: ";
     message
         .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("Error: ")
-                .unwrap_or(line.trim())
-                .strip_prefix(PREFIX)
-        })
+        .find_map(|line| line.trim().strip_prefix("Error: ").unwrap_or(line.trim()).strip_prefix(PREFIX))
         .map(PathBuf::from)
 }
 
@@ -790,20 +637,8 @@ fn path_contains(parent: &Path, child: &Path) -> bool {
 }
 
 fn scan_ignored(root: &Path) -> Result<IgnoredScan> {
-    let output = JjClient::new(root).run([
-        "--ignore-working-copy",
-        "file",
-        "list",
-        "-r",
-        "@",
-        "--template",
-        "path ++ \"\\0\"",
-    ])?;
-    let tracked = output
-        .stdout()?
-        .split_terminator('\0')
-        .map(PathBuf::from)
-        .collect::<BTreeSet<_>>();
+    let output = JjClient::new(root).run(["--ignore-working-copy", "file", "list", "-r", "@", "--template", "path ++ \"\\0\""])?;
+    let tracked = output.stdout()?.split_terminator('\0').map(PathBuf::from).collect::<BTreeSet<_>>();
     let tracked_parents = tracked
         .iter()
         .flat_map(|path| path.ancestors().skip(1).map(Path::to_path_buf))
@@ -811,15 +646,7 @@ fn scan_ignored(root: &Path) -> Result<IgnoredScan> {
         .collect::<BTreeSet<_>>();
     let mut display = Vec::new();
     let mut inventory = Vec::new();
-    scan_directory(
-        root,
-        root,
-        &tracked,
-        &tracked_parents,
-        false,
-        &mut display,
-        &mut inventory,
-    )?;
+    scan_directory(root, root, &tracked, &tracked_parents, false, &mut display, &mut inventory)?;
     display.sort();
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(IgnoredScan { display, inventory })
@@ -841,25 +668,15 @@ fn scan_directory(
 
     for entry in entries {
         let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .expect("directory walk stays below its root")
-            .to_path_buf();
+        let relative = path.strip_prefix(root).expect("directory walk stays below its root").to_path_buf();
         if relative.components().count() == 1 && matches!(relative.to_str(), Some(".jj" | ".git")) {
             continue;
         }
-        if matches!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some(".jj" | ".git")
-        ) {
-            bail!(
-                "workspace contains nested repository metadata at {}",
-                path.display()
-            )
+        if matches!(path.file_name().and_then(|name| name.to_str()), Some(".jj" | ".git")) {
+            bail!("workspace contains nested repository metadata at {}", path.display())
         }
 
-        let metadata = fs::symlink_metadata(&path)
-            .with_context(|| format!("failed to inspect {}", path.display()))?;
+        let metadata = fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {}", path.display()))?;
         let has_tracked_descendant = tracked_parents.contains(&relative);
         let is_tracked = tracked.contains(&relative);
         let is_unrecorded = !is_tracked && !has_tracked_descendant;
@@ -885,25 +702,13 @@ fn scan_directory(
                     .with_context(|| format!("failed to read symlink {}", path.display()))?,
             });
             if !parent_listed {
-                let suffix = if kind == IgnoredKind::Directory {
-                    "/"
-                } else {
-                    ""
-                };
+                let suffix = if kind == IgnoredKind::Directory { "/" } else { "" };
                 display.push(format!("{}{suffix}", relative.display()));
             }
         }
 
         if kind == IgnoredKind::Directory {
-            scan_directory(
-                root,
-                &path,
-                tracked,
-                tracked_parents,
-                parent_listed || is_unrecorded,
-                display,
-                inventory,
-            )?;
+            scan_directory(root, &path, tracked, tracked_parents, parent_listed || is_unrecorded, display, inventory)?;
         }
     }
     Ok(())
@@ -913,14 +718,7 @@ fn metadata_store(client: &JjClient) -> Result<WorkspaceMetadataStore> {
     WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)
 }
 
-type MetadataIdentity<'a> = (
-    &'a str,
-    u64,
-    &'a str,
-    &'a str,
-    Option<&'a str>,
-    Option<&'a str>,
-);
+type MetadataIdentity<'a> = (&'a str, u64, &'a str, &'a str, Option<&'a str>, Option<&'a str>);
 
 fn metadata_identity(metadata: &Option<ManagedWorkspaceMetadata>) -> Option<MetadataIdentity<'_>> {
     metadata.as_ref().map(|entry| {
@@ -942,26 +740,15 @@ fn workspace_metadata_identity(workspace: &WorkspaceSnapshot) -> Option<Metadata
     Some((
         workspace.name.as_str(),
         workspace.created_at_unix_ms.unwrap_or_default(),
-        workspace
-            .creation_operation_id
-            .as_deref()
-            .unwrap_or_default(),
-        workspace
-            .creation_base_commit_id
-            .as_deref()
-            .unwrap_or_default(),
+        workspace.creation_operation_id.as_deref().unwrap_or_default(),
+        workspace.creation_base_commit_id.as_deref().unwrap_or_default(),
         workspace.associated_bookmark.as_deref(),
         workspace.intended_remote.as_deref(),
     ))
 }
 
 fn modified_ns(metadata: &fs::Metadata) -> Option<u128> {
-    metadata
-        .modified()
-        .ok()?
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|value| value.as_nanos())
+    metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|value| value.as_nanos())
 }
 
 fn canonicalize(path: &Path) -> Result<PathBuf> {
@@ -1025,11 +812,7 @@ mod tests {
             let repo = root.path().join("repo");
             let config = root.path().join("config");
             fs::create_dir(&config).unwrap();
-            run_with_config(
-                root.path(),
-                &config,
-                &["git", "init", repo.to_str().unwrap()],
-            );
+            run_with_config(root.path(), &config, &["git", "init", repo.to_str().unwrap()]);
             fs::write(repo.join("tracked.txt"), "tracked\n").unwrap();
             fs::write(repo.join(".gitignore"), "*.tmp\n").unwrap();
             run_with_config(&repo, &config, &["describe", "-m", "base"]);
@@ -1065,47 +848,22 @@ mod tests {
         }
 
         fn workspace_names(&self) -> Vec<String> {
-            self.lines(&[
-                "--ignore-working-copy",
-                "workspace",
-                "list",
-                "-T",
-                "name ++ \"\\n\"",
-            ])
+            self.lines(&["--ignore-working-copy", "workspace", "list", "-T", "name ++ \"\\n\""])
         }
 
         fn bookmark_names(&self) -> Vec<String> {
-            self.lines(&[
-                "--ignore-working-copy",
-                "bookmark",
-                "list",
-                "-T",
-                "if(remote, \"\", name ++ \"\\n\")",
-            ])
+            self.lines(&["--ignore-working-copy", "bookmark", "list", "-T", "if(remote, \"\", name ++ \"\\n\")"])
         }
 
         fn lines(&self, args: &[&str]) -> Vec<String> {
             let output = command_output(self.path(), &self.config, args);
-            String::from_utf8(output.stdout)
-                .unwrap()
-                .lines()
-                .map(ToOwned::to_owned)
-                .collect()
+            String::from_utf8(output.stdout).unwrap().lines().map(ToOwned::to_owned).collect()
         }
     }
 
     fn command_output(cwd: &Path, config: &Path, args: &[&str]) -> std::process::Output {
-        let output = Command::new("jj")
-            .current_dir(cwd)
-            .env("XDG_CONFIG_HOME", config)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "jj {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let output = Command::new("jj").current_dir(cwd).env("XDG_CONFIG_HOME", config).args(args).output().unwrap();
+        assert!(output.status.success(), "jj {args:?} failed: {}", String::from_utf8_lossy(&output.stderr));
         output
     }
 
@@ -1198,25 +956,12 @@ mod tests {
     fn approved_unmanaged_removal_preserves_an_inferred_bookmark() {
         let repo = Repo::new();
         let workspace = repo.add_workspace("unmanaged");
-        run_with_config(
-            repo.path(),
-            &repo.config,
-            &["bookmark", "create", "wip/unmanaged", "-r", "unmanaged@"],
-        );
+        run_with_config(repo.path(), &repo.config, &["bookmark", "create", "wip/unmanaged", "-r", "unmanaged@"]);
         run_scenario(&repo, "unmanaged-inferred-bookmark");
 
         assert!(!workspace.exists());
-        assert!(
-            !repo
-                .workspace_names()
-                .iter()
-                .any(|name| name == "unmanaged")
-        );
-        assert!(
-            repo.bookmark_names()
-                .iter()
-                .any(|name| name == "wip/unmanaged")
-        );
+        assert!(!repo.workspace_names().iter().any(|name| name == "unmanaged"));
+        assert!(repo.bookmark_names().iter().any(|name| name == "wip/unmanaged"));
     }
 
     #[test]
@@ -1235,18 +980,12 @@ mod tests {
 
     #[test]
     fn bookmark_choice_is_respected_for_keep_and_delete() {
-        for (scenario, name, bookmark, should_exist) in [
-            ("keep", "keep", "wip/keep", true),
-            ("delete", "delete", "wip/delete", false),
-        ] {
+        for (scenario, name, bookmark, should_exist) in [("keep", "keep", "wip/keep", true), ("delete", "delete", "wip/delete", false)] {
             let repo = Repo::new();
             repo.add_workspace(name);
             run_scenario(&repo, scenario);
 
-            assert_eq!(
-                repo.bookmark_names().iter().any(|name| name == bookmark),
-                should_exist
-            );
+            assert_eq!(repo.bookmark_names().iter().any(|name| name == bookmark), should_exist);
         }
     }
 
@@ -1332,8 +1071,7 @@ mod tests {
             "ownership-drift" => {
                 manage_here("owned", None);
                 let inventory = workspace::WorkspaceInventory::load().unwrap();
-                let low_level =
-                    workspace::plan_remove_workspace(&inventory, Some("owned"), true).unwrap();
+                let low_level = workspace::plan_remove_workspace(&inventory, Some("owned"), true).unwrap();
                 let preview = prepare("default@", &["owned".to_owned()], false).unwrap();
                 let client = JjClient::current().unwrap();
                 let store = metadata_store(&client).unwrap();
@@ -1351,40 +1089,19 @@ mod tests {
                 assert!(!outcomes[0].success());
                 assert!(outcomes[0].message.contains("externally owned"));
                 let blocked = prepare("default@", &["owned".to_owned()], false).unwrap();
-                assert!(
-                    blocked.rows[0]
-                        .blocked
-                        .as_ref()
-                        .unwrap()
-                        .contains("externally owned")
-                );
+                assert!(blocked.rows[0].blocked.as_ref().unwrap().contains("externally owned"));
                 assert!(inventory.root("owned").unwrap().exists());
                 fs::remove_dir_all(inventory.root("owned").unwrap()).unwrap();
                 let prune = prepare("default@", &["owned".to_owned()], true).unwrap();
-                assert!(
-                    prune.rows[0]
-                        .blocked
-                        .as_ref()
-                        .unwrap()
-                        .contains("externally owned")
-                );
+                assert!(prune.rows[0].blocked.as_ref().unwrap().contains("externally owned"));
                 assert!(store.get("owned").unwrap().is_some());
             }
             "scan-symlink" => {
                 let scan = scan_ignored(Path::new(".")).unwrap();
                 assert!(scan.display.iter().any(|path| path == "ignored/"));
-                assert!(
-                    !scan
-                        .display
-                        .iter()
-                        .any(|path| path.contains("loop/ignored"))
-                );
+                assert!(!scan.display.iter().any(|path| path.contains("loop/ignored")));
                 #[cfg(unix)]
-                assert!(
-                    scan.inventory
-                        .iter()
-                        .any(|entry| entry.kind == IgnoredKind::Symlink)
-                );
+                assert!(scan.inventory.iter().any(|entry| entry.kind == IgnoredKind::Symlink));
             }
             "inventory-drift" => {
                 let before = scan_ignored(Path::new(".")).unwrap().inventory;
@@ -1423,79 +1140,36 @@ mod tests {
             }
             "unmanaged-inferred-bookmark" => {
                 let inventory = workspace::WorkspaceInventory::load().unwrap();
-                let lifecycle_plan =
-                    workspace::plan_remove_workspace(&inventory, Some("unmanaged"), true).unwrap();
+                let lifecycle_plan = workspace::plan_remove_workspace(&inventory, Some("unmanaged"), true).unwrap();
                 assert!(lifecycle_plan.bookmarks.contains(&"wip/unmanaged".into()));
 
                 let store = metadata_store(&JjClient::current().unwrap()).unwrap();
                 assert!(store.get("unmanaged").unwrap().is_none());
                 let manager_plan = prepare("default@", &["unmanaged".to_owned()], false).unwrap();
                 let row = &manager_plan.rows[0];
-                assert!(
-                    row.risky,
-                    "the operator must explicitly approve unmanaged removal"
-                );
-                assert_eq!(
-                    row.bookmark, None,
-                    "unmanaged bookmark is not an authoritative association"
-                );
-                assert!(
-                    row.warnings
-                        .iter()
-                        .any(|warning| warning.contains("no bookmark will be inferred"))
-                );
+                assert!(row.risky, "the operator must explicitly approve unmanaged removal");
+                assert_eq!(row.bookmark, None, "unmanaged bookmark is not an authoritative association");
+                assert!(row.warnings.iter().any(|warning| warning.contains("no bookmark will be inferred")));
                 let outcomes = execute(manager_plan, true, true, true);
                 assert!(outcomes[0].success(), "{}", outcomes[0].message);
                 assert!(
-                    JjClient::current()
-                        .unwrap()
-                        .resolve_one("wip/unmanaged")
-                        .is_ok(),
+                    JjClient::current().unwrap().resolve_one("wip/unmanaged").is_ok(),
                     "approved removal must preserve the unmanaged bookmark"
                 );
             }
             "mixed" => {
                 manage_here("safe", None);
-                let plan =
-                    prepare("default@", &["safe".to_owned(), "risky".to_owned()], false).unwrap();
-                assert!(
-                    !plan
-                        .rows
-                        .iter()
-                        .find(|row| row.name == "safe")
-                        .unwrap()
-                        .risky
-                );
-                assert!(
-                    plan.rows
-                        .iter()
-                        .find(|row| row.name == "risky")
-                        .unwrap()
-                        .risky
-                );
+                let plan = prepare("default@", &["safe".to_owned(), "risky".to_owned()], false).unwrap();
+                assert!(!plan.rows.iter().find(|row| row.name == "safe").unwrap().risky);
+                assert!(plan.rows.iter().find(|row| row.name == "risky").unwrap().risky);
                 let outcomes = execute(plan, false, false, true);
-                assert!(
-                    outcomes
-                        .iter()
-                        .find(|row| row.name == "safe")
-                        .unwrap()
-                        .success()
-                );
-                assert!(
-                    !outcomes
-                        .iter()
-                        .find(|row| row.name == "risky")
-                        .unwrap()
-                        .success()
-                );
+                assert!(outcomes.iter().find(|row| row.name == "safe").unwrap().success());
+                assert!(!outcomes.iter().find(|row| row.name == "risky").unwrap().success());
             }
             "keep" | "delete" => {
                 let name = scenario.as_str();
                 let bookmark = format!("wip/{name}");
-                JjClient::current()
-                    .unwrap()
-                    .run(["bookmark", "create", &bookmark, "-r", "default@"])
-                    .unwrap();
+                JjClient::current().unwrap().run(["bookmark", "create", &bookmark, "-r", "default@"]).unwrap();
                 manage_here(name, Some(&bookmark));
                 let plan = prepare("default@", &[name.to_owned()], false).unwrap();
                 let outcomes = execute(plan, scenario == "delete", false, true);
@@ -1504,38 +1178,18 @@ mod tests {
             "drift" => {
                 manage_here("drift", None);
                 manage_here("independent", None);
-                let plan = prepare(
-                    "default@",
-                    &["drift".to_owned(), "independent".to_owned()],
-                    false,
-                )
-                .unwrap();
+                let plan = prepare("default@", &["drift".to_owned(), "independent".to_owned()], false).unwrap();
                 fs::write("../drift/late.tmp", "new after review").unwrap();
                 let outcomes = execute(plan, false, false, true);
-                assert!(
-                    !outcomes
-                        .iter()
-                        .find(|row| row.name == "drift")
-                        .unwrap()
-                        .success()
-                );
-                assert!(
-                    outcomes
-                        .iter()
-                        .find(|row| row.name == "independent")
-                        .unwrap()
-                        .success()
-                );
+                assert!(!outcomes.iter().find(|row| row.name == "drift").unwrap().success());
+                assert!(outcomes.iter().find(|row| row.name == "independent").unwrap().success());
             }
             "prune" => {
                 manage_here("stale", None);
                 let plan = prepare("default@", &[], true).unwrap();
                 assert_eq!(plan.rows.len(), 1);
                 assert_eq!(plan.rows[0].name, "stale");
-                assert_eq!(
-                    plan.rows[0].path.as_ref().unwrap().file_name().unwrap(),
-                    "stale"
-                );
+                assert_eq!(plan.rows[0].path.as_ref().unwrap().file_name().unwrap(), "stale");
                 assert!(plan.rows[0].blocked.is_none());
                 let outcomes = execute(plan, false, false, true);
                 assert!(outcomes[0].success(), "{}", outcomes[0].message);
@@ -1545,29 +1199,14 @@ mod tests {
                 use std::os::unix::fs::PermissionsExt;
                 manage_here("a-partial", None);
                 manage_here("independent", None);
-                let plan = prepare(
-                    "default@",
-                    &["a-partial".into(), "independent".into()],
-                    false,
-                )
-                .unwrap();
+                let plan = prepare("default@", &["a-partial".into(), "independent".into()], false).unwrap();
                 let parent = Path::new("../locked");
                 let permissions = fs::metadata(parent).unwrap().permissions();
                 fs::set_permissions(parent, fs::Permissions::from_mode(0o500)).unwrap();
                 let outcomes = execute(plan, false, false, true);
                 fs::set_permissions(parent, permissions).unwrap();
-                assert_eq!(
-                    outcomes[0].state,
-                    OutcomeState::Partial,
-                    "{}",
-                    outcomes[0].message
-                );
-                assert_eq!(
-                    outcomes[1].state,
-                    OutcomeState::Completed,
-                    "{}",
-                    outcomes[1].message
-                );
+                assert_eq!(outcomes[0].state, OutcomeState::Partial, "{}", outcomes[0].message);
+                assert_eq!(outcomes[1].state, OutcomeState::Completed, "{}", outcomes[1].message);
             }
             "ignored" => {
                 manage_here("ignored", None);
@@ -1593,16 +1232,9 @@ mod tests {
 
     #[test]
     fn lifecycle_partial_progress_is_distinct_from_failure() {
+        assert_eq!(failed("one", "identity changed").state, OutcomeState::Failed);
         assert_eq!(
-            failed("one", "identity changed").state,
-            OutcomeState::Failed
-        );
-        assert_eq!(
-            failed(
-                "one",
-                "partial removal: workspace one was forgotten; directory remains"
-            )
-            .state,
+            failed("one", "partial removal: workspace one was forgotten; directory remains").state,
             OutcomeState::Partial
         );
     }

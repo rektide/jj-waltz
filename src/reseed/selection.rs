@@ -1,10 +1,7 @@
 //! Snapshot-free group resolution. Membership is a registration fact, never an
 //! inference from a directory basename or a reason to adopt another checkout.
 
-use super::{
-    ReseedOutcome, ReseedRequest, ReseedSelection, ReseedSelectionMiss, ReseedStatus,
-    UnmatchedPolicy,
-};
+use super::{ReseedOutcome, ReseedRequest, ReseedSelection, ReseedSelectionMiss, ReseedStatus, UnmatchedPolicy};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -56,11 +53,7 @@ impl SelectionPlan {
         if !self.issues.is_empty() {
             bail!(
                 "reseed selection failed: {}",
-                self.issues
-                    .iter()
-                    .map(|issue| issue.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                self.issues.iter().map(|issue| issue.message.as_str()).collect::<Vec<_>>().join("; ")
             );
         }
         if self.selections.is_empty() {
@@ -117,10 +110,7 @@ impl Resolver<'_> {
         };
         // Root lookup errors are hard failures, regardless of group policy.
         let Some(root) = root else {
-            self.reject(
-                name,
-                format!("workspace {} has no usable recorded root", quote(name)),
-            );
+            self.reject(name, format!("workspace {} has no usable recorded root", quote(name)));
             return Ok(());
         };
         if let Some(selected) = self.plan.selections.iter_mut().find(|s| s.name == name) {
@@ -137,35 +127,19 @@ impl Resolver<'_> {
         Ok(())
     }
 
-    fn paths(
-        &mut self,
-        pattern: &str,
-        base: &Path,
-        home: Option<&Path>,
-        origin: &str,
-        policy: UnmatchedPolicy,
-    ) -> Result<()> {
+    fn paths(&mut self, pattern: &str, base: &Path, home: Option<&Path>, origin: &str, policy: UnmatchedPolicy) -> Result<()> {
         let pattern = path_pattern(pattern, base, home)?;
         // If a registration cannot be resolved, we cannot prove a candidate is
         // unrelated to it. Never downgrade incomplete inventory to a skip.
         if let Some((name, _)) = self.registrations.iter().find(|(_, root)| root.is_none()) {
-            bail!(
-                "cannot resolve registered workspace {} for path selection",
-                quote(name)
-            );
+            bail!("cannot resolve registered workspace {} for path selection", quote(name));
         }
         let mut candidates: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
         // Include matching recorded paths even when absent from disk. This makes
         // a stale registration a selected target that fails normal validation.
         for (name, root) in self.registrations {
-            if root
-                .as_ref()
-                .is_some_and(|root| path_matches(&pattern, root))
-            {
-                candidates
-                    .entry(root.as_ref().unwrap().clone())
-                    .or_default()
-                    .push(name.clone());
+            if root.as_ref().is_some_and(|root| path_matches(&pattern, root)) {
+                candidates.entry(root.as_ref().unwrap().clone()).or_default().push(name.clone());
             }
         }
         for candidate in expand_paths(&pattern)? {
@@ -193,9 +167,7 @@ impl Resolver<'_> {
                 }
                 continue;
             }
-            let metadata = fs::symlink_metadata(&candidate).with_context(|| {
-                format!("cannot inspect group candidate {}", quote_path(&candidate))
-            })?;
+            let metadata = fs::symlink_metadata(&candidate).with_context(|| format!("cannot inspect group candidate {}", quote_path(&candidate)))?;
             self.miss(
                 quote_path(&candidate),
                 if metadata.is_dir() {
@@ -247,9 +219,7 @@ pub(super) fn resolve(
             }
             continue;
         }
-        let group = groups
-            .get(group_name)
-            .with_context(|| format!("unknown reseed group {}", quote(group_name)))?;
+        let group = groups.get(group_name).with_context(|| format!("unknown reseed group {}", quote(group_name)))?;
         let (names, name_globs, path_globs, default_policy) = match group {
             Group::Names(names) => (names.as_slice(), &[][..], &[][..], UnmatchedPolicy::Error),
             Group::Selectors(group) => (
@@ -269,10 +239,7 @@ pub(super) fn resolve(
         for pattern in name_globs {
             validate_glob(pattern)?;
             if pattern.contains('/') {
-                bail!(
-                    "name glob cannot contain a path separator: {}",
-                    quote(pattern)
-                );
+                bail!("name glob cannot contain a path separator: {}", quote(pattern));
             }
             let origin = format!("{origin} name_globs {}", quote(pattern));
             let mut matched = false;
@@ -287,13 +254,7 @@ pub(super) fn resolve(
             }
         }
         for pattern in path_globs {
-            resolver.paths(
-                pattern,
-                base,
-                home,
-                &format!("{origin} path_globs {}", quote(pattern)),
-                policy,
-            )?;
+            resolver.paths(pattern, base, home, &format!("{origin} path_globs {}", quote(pattern)), policy)?;
         }
     }
     for (miss, strict) in resolver.misses {
@@ -312,22 +273,14 @@ pub(super) fn resolve(
 
 pub(super) fn validate_groups(groups: &BTreeMap<String, Group>) -> Result<()> {
     if groups.contains_key("all") {
-        bail!(
-            "reseed group \"all\" is reserved for all registered workers; remove its local definition"
-        );
+        bail!("reseed group \"all\" is reserved for all registered workers; remove its local definition");
     }
     Ok(())
 }
 
 fn validate_glob(pattern: &str) -> Result<()> {
-    if pattern.is_empty()
-        || pattern.contains(['\0', '[', ']', '{', '}', '\\'])
-        || pattern.contains("**")
-    {
-        bail!(
-            "group patterns support nonempty literal components, * and ? only: {}",
-            quote(pattern)
-        );
+    if pattern.is_empty() || pattern.contains(['\0', '[', ']', '{', '}', '\\']) || pattern.contains("**") {
+        bail!("group patterns support nonempty literal components, * and ? only: {}", quote(pattern));
     }
     Ok(())
 }
@@ -346,10 +299,7 @@ impl PathPattern {
 fn path_pattern(pattern: &str, base: &Path, home: Option<&Path>) -> Result<PathPattern> {
     validate_glob(pattern)?;
     let (prefix, relative) = if let Some(relative) = pattern.strip_prefix("~/") {
-        (
-            home.context("cannot expand ~/ without a home directory")?,
-            Path::new(relative),
-        )
+        (home.context("cannot expand ~/ without a home directory")?, Path::new(relative))
     } else {
         if pattern.starts_with('~') {
             bail!("group paths support ~/ but not ~user: {}", quote(pattern));
@@ -367,17 +317,11 @@ fn path_pattern(pattern: &str, base: &Path, home: Option<&Path>) -> Result<PathP
             .chain(relative.components())
             .any(|component| component == Component::ParentDir)
     {
-        bail!(
-            "group paths cannot contain .. components: {}",
-            quote(pattern)
-        );
+        bail!("group paths cannot contain .. components: {}", quote(pattern));
     }
     Ok(PathPattern {
         prefix: prefix.to_path_buf(),
-        pattern: relative
-            .components()
-            .filter(|c| *c != Component::CurDir)
-            .collect(),
+        pattern: relative.components().filter(|c| *c != Component::CurDir).collect(),
     })
 }
 
@@ -387,11 +331,7 @@ fn path_matches(pattern: &PathPattern, path: &Path) -> bool {
     };
     let pattern = pattern.pattern.components().collect::<Vec<_>>();
     let path = path.components().collect::<Vec<_>>();
-    pattern.len() == path.len()
-        && pattern
-            .iter()
-            .zip(path)
-            .all(|(pattern, value)| os_glob(pattern.as_os_str(), value.as_os_str()))
+    pattern.len() == path.len() && pattern.iter().zip(path).all(|(pattern, value)| os_glob(pattern.as_os_str(), value.as_os_str()))
 }
 
 /// Bounded component traversal. Preserve non-UTF-8 candidates and never follow a
@@ -404,8 +344,7 @@ fn expand_paths(pattern: &PathPattern) -> Result<Vec<PathBuf>> {
         Ok(_) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
-            return Err(error)
-                .with_context(|| format!("cannot inspect {}", quote_path(&pattern.prefix)));
+            return Err(error).with_context(|| format!("cannot inspect {}", quote_path(&pattern.prefix)));
         }
     }
     let mut paths = vec![pattern.prefix.clone()];
@@ -419,8 +358,7 @@ fn expand_paths(pattern: &PathPattern) -> Result<Vec<PathBuf>> {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == ErrorKind::NotFound => continue,
                 Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("cannot inspect {}", quote_path(&parent)));
+                    return Err(error).with_context(|| format!("cannot inspect {}", quote_path(&parent)));
                 }
             };
             if !metadata.is_dir() {
@@ -428,14 +366,8 @@ fn expand_paths(pattern: &PathPattern) -> Result<Vec<PathBuf>> {
                 next.push(parent);
                 continue;
             }
-            if pattern
-                .as_bytes()
-                .iter()
-                .any(|byte| matches!(byte, b'*' | b'?'))
-            {
-                for child in fs::read_dir(&parent)
-                    .with_context(|| format!("cannot enumerate {}", quote_path(&parent)))?
-                {
+            if pattern.as_bytes().iter().any(|byte| matches!(byte, b'*' | b'?')) {
+                for child in fs::read_dir(&parent).with_context(|| format!("cannot enumerate {}", quote_path(&parent)))? {
                     let child = child?;
                     if os_glob(pattern, &child.file_name()) {
                         next.push(child.path());
@@ -447,8 +379,7 @@ fn expand_paths(pattern: &PathPattern) -> Result<Vec<PathBuf>> {
                     Ok(_) => next.push(child),
                     Err(error) if error.kind() == ErrorKind::NotFound => {}
                     Err(error) => {
-                        return Err(error)
-                            .with_context(|| format!("cannot inspect {}", quote_path(&child)));
+                        return Err(error).with_context(|| format!("cannot inspect {}", quote_path(&child)));
                     }
                 }
             }
@@ -469,8 +400,7 @@ fn non_directory_ancestor(path: &Path) -> Result<Option<PathBuf>> {
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("cannot inspect {}", quote_path(&current)));
+                return Err(error).with_context(|| format!("cannot inspect {}", quote_path(&current)));
             }
         }
     }
@@ -486,12 +416,7 @@ fn os_glob(pattern: &OsStr, text: &OsStr) -> bool {
 }
 
 pub(super) fn component_glob(pattern: &str, text: &str) -> bool {
-    glob_items(
-        &pattern.chars().collect::<Vec<_>>(),
-        &text.chars().collect::<Vec<_>>(),
-        '*',
-        '?',
-    )
+    glob_items(&pattern.chars().collect::<Vec<_>>(), &text.chars().collect::<Vec<_>>(), '*', '?')
 }
 
 fn glob_items<T: PartialEq>(pattern: &[T], text: &[T], star: T, question: T) -> bool {
@@ -562,12 +487,7 @@ mod tests {
         tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap()
     }
 
-    fn plan(
-        config: &str,
-        request: ReseedRequest,
-        registered: &Registrations,
-        base: &Path,
-    ) -> Result<SelectionPlan> {
+    fn plan(config: &str, request: ReseedRequest, registered: &Registrations, base: &Path) -> Result<SelectionPlan> {
         let config: Config = toml::from_str(config)?;
         resolve(&request, &config.groups, registered, base, Some(base), base)
     }
@@ -580,10 +500,7 @@ mod tests {
     }
 
     fn registrations(base: &Path, names: &[&str]) -> Registrations {
-        names
-            .iter()
-            .map(|name| ((*name).into(), Some(base.join(name))))
-            .collect()
+        names.iter().map(|name| ((*name).into(), Some(base.join(name)))).collect()
     }
 
     #[test]
@@ -605,17 +522,10 @@ mod tests {
         let config: Config = toml::from_str("[groups]\nworkers=['a','z']").unwrap();
         let result = resolve(&req, &config.groups, &registered, &primary, None, &donor).unwrap();
         assert_eq!(
-            result
-                .selections
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>(),
+            result.selections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
             ["z", "a", "all", "default"]
         );
-        assert_eq!(
-            result.selections[0].origins,
-            ["positional", "group \"all\"", "group \"workers\" names"]
-        );
+        assert_eq!(result.selections[0].origins, ["positional", "group \"all\"", "group \"workers\" names"]);
         assert_eq!(result.issues.len(), 1);
         assert_eq!(result.issues[0].name, "unavailable");
         assert!(result.skipped.is_empty());
@@ -641,77 +551,38 @@ mod tests {
         let base = Path::new("/repo");
         let registered = BTreeMap::from([("renamed-primary".into(), Some(base.to_path_buf()))]);
         assert!(
-            plan(
-                "[groups]\nall=['renamed-primary']",
-                request(&["all"]),
-                &registered,
-                base
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("reserved")
-        );
-        let result = plan("[groups]", request(&["all"]), &registered, base).unwrap();
-        assert!(
-            result
-                .validate()
+            plan("[groups]\nall=['renamed-primary']", request(&["all"]), &registered, base)
                 .unwrap_err()
                 .to_string()
-                .contains("no workspaces selected")
+                .contains("reserved")
         );
+        let result = plan("[groups]", request(&["all"]), &registered, base).unwrap();
+        assert!(result.validate().unwrap_err().to_string().contains("no workspaces selected"));
     }
 
     #[test]
     fn literal_arrays_remain_literal_and_deduplicate_without_selectors() {
-        let registered = registrations(
-            Path::new("/repo"),
-            &["a", "b", "one-off", "a*", "@", "^", "-"],
-        );
+        let registered = registrations(Path::new("/repo"), &["a", "b", "one-off", "a*", "@", "^", "-"]);
         let mut req = request(&["workers"]);
         req.names = vec!["b".into(), "one-off".into()];
-        let result = plan(
-            "[groups]\nworkers=['a','b','a','a*','@','^','-']",
-            req,
-            &registered,
-            Path::new("/repo"),
-        )
-        .unwrap();
+        let result = plan("[groups]\nworkers=['a','b','a','a*','@','^','-']", req, &registered, Path::new("/repo")).unwrap();
         result.validate().unwrap();
         assert_eq!(
-            result
-                .selections
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>(),
+            result.selections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
             ["b", "one-off", "a", "a*", "@", "^", "-"]
         );
         assert_eq!(result.selections[0].origins.len(), 2);
-        assert!(
-            plan(
-                "[groups]",
-                ReseedRequest::default(),
-                &registered,
-                Path::new("/repo")
-            )
-            .is_err()
-        );
+        assert!(plan("[groups]", ReseedRequest::default(), &registered, Path::new("/repo")).is_err());
     }
 
     #[test]
     fn group_and_cli_policy_never_weaken_positional_names() {
-        let config =
-            "[groups.warn]\nnames=['absent','a']\non_unmatched='warn'\n[groups]\nstrict=['absent']";
+        let config = "[groups.warn]\nnames=['absent','a']\non_unmatched='warn'\n[groups]\nstrict=['absent']";
         let registered = registrations(Path::new("/repo"), &["a"]);
         let result = plan(config, request(&["warn"]), &registered, Path::new("/repo")).unwrap();
         result.validate().unwrap();
         assert_eq!(result.skipped.len(), 1);
-        let result = plan(
-            config,
-            request(&["warn", "strict"]),
-            &registered,
-            Path::new("/repo"),
-        )
-        .unwrap();
+        let result = plan(config, request(&["warn", "strict"]), &registered, Path::new("/repo")).unwrap();
         assert!(result.validate().is_err());
         assert!(result.warning().is_none(), "strict wins for duplicate miss");
         let mut req = request(&["warn", "strict"]);
@@ -725,12 +596,7 @@ mod tests {
         assert!(result.skipped.is_empty());
         let mut req = request(&["warn"]);
         req.on_unmatched = Some(UnmatchedPolicy::Error);
-        assert!(
-            plan(config, req, &registered, Path::new("/repo"))
-                .unwrap()
-                .validate()
-                .is_err()
-        );
+        assert!(plan(config, req, &registered, Path::new("/repo")).unwrap().validate().is_err());
     }
 
     #[test]
@@ -744,13 +610,7 @@ mod tests {
             Path::new("/repo"),
         )
         .unwrap();
-        assert!(
-            result
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("ocw-stale")
-        );
+        assert!(result.validate().unwrap_err().to_string().contains("ocw-stale"));
         assert!(result.skipped.is_empty());
     }
 
@@ -769,14 +629,7 @@ mod tests {
             let config = format!("[groups.w]\npath_globs=[{pattern:?}]\non_unmatched='warn'");
             let result = plan(&config, request(&["w"]), &registered, base).unwrap();
             result.validate().unwrap();
-            assert_eq!(
-                result
-                    .selections
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>(),
-                ["z-name", "a-name"]
-            );
+            assert_eq!(result.selections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["z-name", "a-name"]);
             assert_eq!(result.skipped.len(), 1);
             assert!(result.warning().unwrap().contains("opencode-notes"));
             assert!(!result.warning().unwrap().contains("unrelated"));
@@ -801,11 +654,7 @@ mod tests {
     #[test]
     fn misses_are_aggregated_escaped_and_never_lossy() {
         let temp = tempdir();
-        for name in [
-            b"opencode-\nquote\"".to_vec(),
-            b"opencode-\xff".to_vec(),
-            b"opencode-\xfe".to_vec(),
-        ] {
+        for name in [b"opencode-\nquote\"".to_vec(), b"opencode-\xff".to_vec(), b"opencode-\xfe".to_vec()] {
             fs::create_dir(temp.path().join(std::ffi::OsString::from_vec(name))).unwrap();
         }
         let result = plan(
@@ -821,13 +670,7 @@ mod tests {
         for text in ["\\nquote\\\"", "\\xff", "\\xfe"] {
             assert!(warning.contains(text), "{warning}");
         }
-        assert!(
-            result
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("no workspaces selected")
-        );
+        assert!(result.validate().unwrap_err().to_string().contains("no workspaces selected"));
     }
 
     #[test]
@@ -853,20 +696,9 @@ mod tests {
             "[groups.w]\nname_globs=['[ab]']",
             "[groups.w]\non_unmatched='ignore'",
         ] {
-            assert!(
-                plan(config, request(&["w"]), &Registrations::new(), temp.path()).is_err(),
-                "{config}"
-            );
+            assert!(plan(config, request(&["w"]), &Registrations::new(), temp.path()).is_err(), "{config}");
         }
-        assert!(
-            plan(
-                "[groups]",
-                request(&["missing"]),
-                &Registrations::new(),
-                temp.path()
-            )
-            .is_err()
-        );
+        assert!(plan("[groups]", request(&["missing"]), &Registrations::new(), temp.path()).is_err());
     }
 
     #[test]
@@ -882,13 +714,7 @@ mod tests {
         assert!(!result.warning().unwrap().contains("child"));
         let registered = BTreeMap::from([("broken".into(), Some(temp.path().join("alias/child")))]);
         let result = plan(config, request(&["w"]), &registered, temp.path()).unwrap();
-        assert!(
-            result
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("not a real directory")
-        );
+        assert!(result.validate().unwrap_err().to_string().contains("not a real directory"));
     }
 
     #[test]
@@ -898,13 +724,7 @@ mod tests {
         fs::create_dir(&base).unwrap();
         fs::create_dir(base.join("target")).unwrap();
         let registered = registrations(&base, &["target"]);
-        let result = plan(
-            "[groups.w]\npath_globs=['target']",
-            request(&["w"]),
-            &registered,
-            &base,
-        )
-        .unwrap();
+        let result = plan("[groups.w]\npath_globs=['target']", request(&["w"]), &registered, &base).unwrap();
         result.validate().unwrap();
         assert_eq!(result.selections.len(), 1);
         assert!(component_glob("package-?", "package-λ"));

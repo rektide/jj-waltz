@@ -54,26 +54,16 @@ impl Fixture {
             .env("JJ_EMAIL", "source@example.invalid")
             .env("JJ_EDITOR", "true")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env(
-                "GIT_CONFIG_GLOBAL",
-                if cfg!(windows) { "NUL" } else { "/dev/null" },
-            )
+            .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
             .env("GIT_AUTHOR_NAME", "Source Test")
             .env("GIT_AUTHOR_EMAIL", "source@example.invalid")
             .env("GIT_COMMITTER_NAME", "Source Test")
             .env("GIT_COMMITTER_EMAIL", "source@example.invalid");
         if program == "jj" {
-            command.args([
-                "--config=git.colocate=false",
-                "--config=fsmonitor.backend=none",
-            ]);
+            command.args(["--config=git.colocate=false", "--config=fsmonitor.backend=none"]);
         }
         let output = command.args(args).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{program} {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{program} {args:?}: {}", String::from_utf8_lossy(&output.stderr));
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
@@ -98,18 +88,10 @@ impl Fixture {
         self.client().operation_id().unwrap()
     }
 
-    fn select(
-        &self,
-        explicit: Option<&str>,
-        remote: Option<&str>,
-    ) -> anyhow::Result<SourceSelection> {
+    fn select(&self, explicit: Option<&str>, remote: Option<&str>) -> anyhow::Result<SourceSelection> {
         let operation = self.operation();
         let result = SourceSelection::select(&self.client(), &operation, explicit, remote);
-        assert_eq!(
-            operation,
-            self.client().operation_id().unwrap(),
-            "selection must not mutate JJ"
-        );
+        assert_eq!(operation, self.client().operation_id().unwrap(), "selection must not mutate JJ");
         result
     }
 
@@ -139,11 +121,7 @@ fn tracked_line_is_pinned_before_fetch() {
         (&"dev".to_owned(), &"origin".to_owned(), &f.base)
     );
     let goal = f.advance("upstream advance");
-    assert_eq!(
-        f.fetched(&selected).unwrap(),
-        f.base,
-        "server changes do not change the local ref until fetch"
-    );
+    assert_eq!(f.fetched(&selected).unwrap(), f.base, "server changes do not change the local ref until fetch");
     f.fetch();
     assert_eq!(f.fetched(&selected).unwrap(), goal);
     assert_eq!(f.id("@"), selected.source.commit_id);
@@ -177,11 +155,7 @@ fn untracked_exact_remote_ignores_an_unrelated_same_named_local() {
     let goal = f.advance("remote only");
     f.fetch();
     assert_eq!(f.fetched(&selected).unwrap(), goal);
-    assert_eq!(
-        f.id("dev"),
-        local,
-        "untracked local must not be moved/repaired"
-    );
+    assert_eq!(f.id("dev"), local, "untracked local must not be moved/repaired");
 }
 
 #[test]
@@ -232,22 +206,12 @@ fn multiple_exact_untracked_refs_require_an_explicit_identity() {
 fn snapshot_and_history_both_guard_against_source_work() {
     let f = Fixture::new();
     fs::write(f.source.join("local"), "work").unwrap();
-    assert!(
-        f.select(Some("dev@origin"), None)
-            .unwrap_err()
-            .to_string()
-            .contains("unpublished work")
-    );
+    assert!(f.select(Some("dev@origin"), None).unwrap_err().to_string().contains("unpublished work"));
     f.jj(&["new", "-m", "intentional empty"]);
     // An empty @ above unpublished history must not be treated as clean.
     assert!(f.select(None, None).is_err());
     f.jj(&["new"]);
-    assert!(
-        f.select(Some("dev@origin"), None)
-            .unwrap_err()
-            .to_string()
-            .contains("unpublished work")
-    );
+    assert!(f.select(Some("dev@origin"), None).unwrap_err().to_string().contains("unpublished work"));
 }
 
 #[test]
@@ -255,27 +219,12 @@ fn meaningful_empty_and_merge_sources_are_not_disposable_scratch() {
     let f = Fixture::new();
     f.jj(&["new", "-r", &f.base, "-m", "intentional empty"]);
     let left = f.id("@");
-    assert!(
-        f.select(Some("dev@origin"), None)
-            .unwrap_err()
-            .to_string()
-            .contains("unpublished work")
-    );
+    assert!(f.select(Some("dev@origin"), None).unwrap_err().to_string().contains("unpublished work"));
     f.jj(&["new", "-r", &f.base, "-m", "other empty"]);
     let right = f.id("@");
     f.jj(&["new", &left, &right]);
-    assert!(
-        f.client()
-            .commit_facts_at(&f.operation(), "@")
-            .unwrap()
-            .empty
-    );
-    assert!(
-        f.select(Some("dev@origin"), None)
-            .unwrap_err()
-            .to_string()
-            .contains("unpublished work")
-    );
+    assert!(f.client().commit_facts_at(&f.operation(), "@").unwrap().empty);
+    assert!(f.select(Some("dev@origin"), None).unwrap_err().to_string().contains("unpublished work"));
 }
 
 #[test]
@@ -287,11 +236,7 @@ fn direct_at_published_nonempty_source_is_not_mistaken_for_local_work() {
     let published = f.id("@");
     // Transfer only disposable fixture objects; no push or live-repo mutation.
     f.jj(&["git", "export"]);
-    f.git(&[
-        "fetch",
-        f.source.join(".jj/repo/store/git").to_str().unwrap(),
-        &published,
-    ]);
+    f.git(&["fetch", f.source.join(".jj/repo/store/git").to_str().unwrap(), &published]);
     f.git(&["update-ref", "refs/heads/dev", &published]);
     f.jj(&[
         r#"--config=revset-aliases."immutable_heads()"="none()""#,
@@ -309,11 +254,7 @@ fn direct_at_published_nonempty_source_is_not_mistaken_for_local_work() {
     assert_eq!(f.fetched(&selected).unwrap(), published);
     let goal = f.advance("next upstream");
     f.fetch();
-    assert_ne!(
-        f.id("@"),
-        published,
-        "native JJ normalizes an immutable checkout"
-    );
+    assert_ne!(f.id("@"), published, "native JJ normalizes an immutable checkout");
     assert_eq!(f.fetched(&selected).unwrap(), goal);
 }
 
@@ -325,10 +266,7 @@ fn applicable_unpublished_local_bookmark_blocks_instead_of_falling_back() {
     f.jj(&["bookmark", "set", "dev", "-r", "@"]);
     f.jj(&["new", "-r", &f.base]);
     let error = f.select(None, None).unwrap_err().to_string();
-    assert!(
-        error.contains("tracked local bookmark contains unpublished work"),
-        "{error}"
-    );
+    assert!(error.contains("tracked local bookmark contains unpublished work"), "{error}");
 }
 
 #[test]
@@ -379,20 +317,11 @@ fn remote_constraint_cannot_silently_redirect_an_explicit_line() {
     let f = Fixture::new();
     f.jj(&["git", "remote", "add", "other", f.remote.to_str().unwrap()]);
     f.jj(&["git", "fetch", "--remote", "other"]);
-    let error = f
-        .select(Some("dev@other"), Some("origin"))
-        .unwrap_err()
-        .to_string();
+    let error = f.select(Some("dev@other"), Some("origin")).unwrap_err().to_string();
     assert!(error.contains("different remote"), "{error}");
-    assert_eq!(
-        f.select(Some("dev@other"), Some("other")).unwrap().remote,
-        "other"
-    );
+    assert_eq!(f.select(Some("dev@other"), Some("other")).unwrap().remote, "other");
     f.jj(&["bookmark", "track", "dev@other"]);
-    assert_eq!(
-        f.select(Some("dev"), Some("origin")).unwrap().remote,
-        "origin"
-    );
+    assert_eq!(f.select(Some("dev"), Some("origin")).unwrap().remote, "origin");
 }
 
 #[test]
@@ -409,26 +338,11 @@ fn missing_ref_preview_freezes_unknown_ids_then_fetches_only_the_requested_branc
     assert!(selected.old_goal.is_none());
     assert!(selected.tracked.is_none());
     assert_eq!(f.id("dev@origin"), f.base, "preview must not fetch");
-    assert!(
-        f.fetched(&selected)
-            .unwrap_err()
-            .to_string()
-            .contains("still absent after fetch")
-    );
-    f.client()
-        .fetch_bookmark(&selected.remote, &selected.name)
-        .unwrap();
+    assert!(f.fetched(&selected).unwrap_err().to_string().contains("still absent after fetch"));
+    f.client().fetch_bookmark(&selected.remote, &selected.name).unwrap();
     assert_eq!(f.fetched(&selected).unwrap(), goal);
-    assert_eq!(
-        f.id("dev@origin"),
-        f.base,
-        "fetch must not advance an unrequested branch"
-    );
-    assert_eq!(
-        f.id("@"),
-        selected.source.commit_id,
-        "resolver must not advance the source"
-    );
+    assert_eq!(f.id("dev@origin"), f.base, "fetch must not advance an unrequested branch");
+    assert_eq!(f.id("@"), selected.source.commit_id, "resolver must not advance the source");
 }
 
 #[test]
@@ -442,20 +356,11 @@ fn missing_ref_requires_the_supported_literal_form_and_a_configured_remote() {
         "introduced-later@git",
     ] {
         let error = f.select(Some(expression), None).unwrap_err().to_string();
-        assert!(
-            error.contains("missing refs require a simple unquoted --source-at"),
-            "{expression}: {error}"
-        );
+        assert!(error.contains("missing refs require a simple unquoted --source-at"), "{expression}: {error}");
     }
-    let error = f
-        .select(Some("introduced-later@unknown"), None)
-        .unwrap_err()
-        .to_string();
+    let error = f.select(Some("introduced-later@unknown"), None).unwrap_err().to_string();
     assert!(error.contains("unconfigured remote"), "{error}");
-    let error = f
-        .select(Some("introduced-later@origin"), Some("other"))
-        .unwrap_err()
-        .to_string();
+    let error = f.select(Some("introduced-later@origin"), Some("other")).unwrap_err().to_string();
     assert!(error.contains("different remote"), "{error}");
     // Invalid native syntax is not reinterpreted as a branch to fetch.
     assert!(f.select(Some("introduced-later@origin("), None).is_err());
@@ -465,12 +370,8 @@ fn missing_ref_requires_the_supported_literal_form_and_a_configured_remote() {
 #[test]
 fn missing_ref_that_stays_absent_does_not_advance_or_invent_a_goal() {
     let f = Fixture::new();
-    let selected = f
-        .select(Some("does-not-exist@origin"), Some("origin"))
-        .unwrap();
-    f.client()
-        .fetch_bookmark(&selected.remote, &selected.name)
-        .unwrap();
+    let selected = f.select(Some("does-not-exist@origin"), Some("origin")).unwrap();
+    f.client().fetch_bookmark(&selected.remote, &selected.name).unwrap();
     let error = f.fetched(&selected).unwrap_err().to_string();
     assert!(error.contains("still absent after fetch"), "{error}");
     assert!(selected.old_remote.is_none() && selected.old_goal.is_none());
@@ -486,16 +387,11 @@ fn missing_ref_fetch_cannot_discard_dirty_source_or_unpublished_parent_history()
     for name in ["future-dirty", "future-empty"] {
         let selected = f.select(Some(&format!("{name}@origin")), None).unwrap();
         assert!(selected.old_goal.is_none());
-        f.client()
-            .fetch_bookmark(&selected.remote, &selected.name)
-            .unwrap();
+        f.client().fetch_bookmark(&selected.remote, &selected.name).unwrap();
         let error = f.fetched(&selected).unwrap_err().to_string();
         assert!(error.contains("source base is not published"), "{error}");
         assert_eq!(f.id("@"), selected.source.commit_id);
-        assert_eq!(
-            fs::read_to_string(f.source.join("local-work")).unwrap(),
-            "keep this work"
-        );
+        assert_eq!(fs::read_to_string(f.source.join("local-work")).unwrap(), "keep this work");
         // The second pass has an ordinary empty @ above the same local work.
         f.jj(&["new"]);
     }
@@ -504,32 +400,18 @@ fn missing_ref_fetch_cannot_discard_dirty_source_or_unpublished_parent_history()
 #[test]
 fn missing_ref_can_establish_that_previously_unimported_source_history_was_published() {
     let f = Fixture::new();
-    fs::write(
-        f.source.join("published-later"),
-        "work published on new branch",
-    )
-    .unwrap();
+    fs::write(f.source.join("published-later"), "work published on new branch").unwrap();
     f.jj(&["describe", "-m", "published on absent branch"]);
     let published = f.id("@");
     f.jj(&["new"]);
     f.jj(&["git", "export"]);
-    f.git(&[
-        "fetch",
-        f.source.join(".jj/repo/store/git").to_str().unwrap(),
-        &published,
-    ]);
+    f.git(&["fetch", f.source.join(".jj/repo/store/git").to_str().unwrap(), &published]);
     f.git(&["update-ref", "refs/heads/introduced-later", &published]);
     let selected = f.select(Some("introduced-later@origin"), None).unwrap();
     assert_eq!(selected.base, published);
     assert!(selected.source.ordinary_empty_child());
-    assert!(
-        !f.client()
-            .is_ancestor_at(&selected.operation, &selected.base, &f.base)
-            .unwrap()
-    );
-    f.client()
-        .fetch_bookmark(&selected.remote, &selected.name)
-        .unwrap();
+    assert!(!f.client().is_ancestor_at(&selected.operation, &selected.base, &f.base).unwrap());
+    f.client().fetch_bookmark(&selected.remote, &selected.name).unwrap();
     assert_eq!(f.fetched(&selected).unwrap(), published);
     assert_eq!(f.id("@"), selected.source.commit_id);
 }
@@ -537,13 +419,7 @@ fn missing_ref_can_establish_that_previously_unimported_source_history_was_publi
 #[test]
 fn missing_ref_native_auto_tracking_cannot_hide_local_bookmark_work() {
     let f = Fixture::new();
-    f.jj(&[
-        "config",
-        "set",
-        "--repo",
-        "remotes.origin.auto-track-bookmarks",
-        "glob:*",
-    ]);
+    f.jj(&["config", "set", "--repo", "remotes.origin.auto-track-bookmarks", "glob:*"]);
     f.jj(&["new", "-r", &f.base, "-m", "unpublished future branch"]);
     fs::write(f.source.join("local-work"), "unpublished future").unwrap();
     f.jj(&["status"]);
@@ -556,17 +432,9 @@ fn missing_ref_native_auto_tracking_cannot_hide_local_bookmark_work() {
     // A local bookmark appears after intent capture. Native auto-tracking on
     // import must not turn that unpublished history into permission to advance.
     f.jj(&["bookmark", "create", "future", "-r", &local]);
-    let recorded = f
-        .select(Some("future@origin"), None)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        recorded.contains("already recorded but unresolved or deleted"),
-        "{recorded}"
-    );
-    f.client()
-        .fetch_bookmark(&selected.remote, &selected.name)
-        .unwrap();
+    let recorded = f.select(Some("future@origin"), None).unwrap_err().to_string();
+    assert!(recorded.contains("already recorded but unresolved or deleted"), "{recorded}");
+    f.client().fetch_bookmark(&selected.remote, &selected.name).unwrap();
     let operation = f.client().operation_id().unwrap();
     assert!(
         f.client()

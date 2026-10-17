@@ -139,9 +139,7 @@ pub fn add_workspace_hint(error: Error) -> Error {
 
 fn looks_like_missing_jj_repository(error: &Error) -> bool {
     let text = format!("{error:#}").to_ascii_lowercase();
-    text.contains("no jj repo")
-        || text.contains("there is no jj repo")
-        || text.contains("not a jj repo")
+    text.contains("no jj repo") || text.contains("there is no jj repo") || text.contains("not a jj repo")
 }
 
 #[derive(Debug, Default)]
@@ -150,16 +148,10 @@ struct GitProbe {
 }
 
 fn probe_git(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> GitProbe {
-    let topology = match run_git(
-        path,
-        ["rev-parse", "--is-inside-work-tree", "--is-bare-repository"],
-    ) {
+    let topology = match run_git(path, ["rev-parse", "--is-inside-work-tree", "--is-bare-repository"]) {
         Ok(output) => output,
         Err(error) => {
-            diagnostics.push(ContextDiagnostic::error(
-                "git_unavailable",
-                format!("could not run git: {}", error.error),
-            ));
+            diagnostics.push(ContextDiagnostic::error("git_unavailable", format!("could not run git: {}", error.error)));
             return GitProbe::default();
         }
     };
@@ -178,10 +170,7 @@ fn probe_git(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> GitProbe 
     if values.len() != 2 {
         diagnostics.push(ContextDiagnostic::error(
             "git_metadata_invalid",
-            format!(
-                "git topology query returned {} fields; expected 2",
-                values.len()
-            ),
+            format!("git topology query returned {} fields; expected 2", values.len()),
         ));
         return GitProbe::default();
     }
@@ -217,9 +206,7 @@ fn probe_git(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> GitProbe 
 // Query paths individually: a path may itself contain line separators.
 fn git_path(path: &Path, field: &str, diagnostics: &mut Vec<ContextDiagnostic>) -> Option<PathBuf> {
     match run_git(path, ["rev-parse", "--path-format=absolute", field]) {
-        Ok(output) if output.status.success() => Some(canonical_or_path(PathBuf::from(
-            path_output(&output.stdout),
-        ))),
+        Ok(output) if output.status.success() => Some(canonical_or_path(PathBuf::from(path_output(&output.stdout)))),
         Ok(output) => {
             diagnostics.push(ContextDiagnostic::error(
                 "git_metadata_invalid",
@@ -249,27 +236,18 @@ impl GitProbe {
     }
 }
 
-fn git_head(
-    path: &Path,
-    diagnostics: &mut Vec<ContextDiagnostic>,
-) -> (Option<String>, Option<String>) {
+fn git_head(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> (Option<String>, Option<String>) {
     let commit = match run_git(path, ["rev-parse", "--verify", "HEAD"]) {
         Ok(output) if output.status.success() => Some(trimmed(&output.stdout)),
         Ok(output) => {
             diagnostics.push(ContextDiagnostic::warning(
                 "git_head_unavailable",
-                format_probe_failure(
-                    "Git HEAD is unavailable (the repository may be unborn or damaged)",
-                    &output,
-                ),
+                format_probe_failure("Git HEAD is unavailable (the repository may be unborn or damaged)", &output),
             ));
             None
         }
         Err(error) => {
-            diagnostics.push(ContextDiagnostic::error(
-                "git_unavailable",
-                format!("could not read Git HEAD: {}", error.error),
-            ));
+            diagnostics.push(ContextDiagnostic::error("git_unavailable", format!("could not read Git HEAD: {}", error.error)));
             None
         }
     };
@@ -297,10 +275,7 @@ fn probe_jj(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> JjProbe {
     let root = match run_jj(path, ["root"]) {
         Ok(output) => output,
         Err(error) => {
-            diagnostics.push(ContextDiagnostic::error(
-                "jj_unavailable",
-                format!("could not run jj: {}", error.error),
-            ));
+            diagnostics.push(ContextDiagnostic::error("jj_unavailable", format!("could not run jj: {}", error.error)));
             return JjProbe::default();
         }
     };
@@ -342,8 +317,7 @@ fn probe_jj(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> JjProbe {
                 .is_some_and(|root| root == workspace_root)
         }),
     };
-    let (primary_checkout, primary_workspace) =
-        find_primary_workspace(path, &names, repository_path.as_deref(), diagnostics);
+    let (primary_checkout, primary_workspace) = find_primary_workspace(path, &names, repository_path.as_deref(), diagnostics);
     let (git_backend_dir, git_backend_common_dir) = jj_git_backend(&workspace_root, diagnostics);
 
     JjProbe {
@@ -360,11 +334,7 @@ fn probe_jj(path: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> JjProbe {
     }
 }
 
-fn discover_primary_from_jj(
-    git: &GitContext,
-    jj: &mut JjContext,
-    diagnostics: &mut Vec<ContextDiagnostic>,
-) {
+fn discover_primary_from_jj(git: &GitContext, jj: &mut JjContext, diagnostics: &mut Vec<ContextDiagnostic>) {
     let Some(repository_path) = jj.repository_path.as_deref() else {
         return;
     };
@@ -404,11 +374,7 @@ fn clear_primary(jj: &mut JjContext) {
     jj.primary_workspace = None;
 }
 
-fn discover_primary_from_git(
-    git: &GitContext,
-    jj: &mut JjContext,
-    diagnostics: &mut Vec<ContextDiagnostic>,
-) {
+fn discover_primary_from_git(git: &GitContext, jj: &mut JjContext, diagnostics: &mut Vec<ContextDiagnostic>) {
     let Some(common_dir) = git.common_dir.as_deref() else {
         return;
     };
@@ -452,10 +418,7 @@ fn find_primary_workspace(
         let Ok(metadata) = fs::symlink_metadata(&pointer) else {
             continue;
         };
-        if metadata.is_dir()
-            && expected_repository_path
-                .is_none_or(|expected| repository_path(&root).ok().as_deref() == Some(expected))
-        {
+        if metadata.is_dir() && expected_repository_path.is_none_or(|expected| repository_path(&root).ok().as_deref() == Some(expected)) {
             return (Some(root), Some(name.clone()));
         }
     }
@@ -468,10 +431,7 @@ fn find_primary_workspace(
     (None, None)
 }
 
-fn jj_git_backend(
-    workspace_root: &Path,
-    diagnostics: &mut Vec<ContextDiagnostic>,
-) -> (Option<PathBuf>, Option<PathBuf>) {
+fn jj_git_backend(workspace_root: &Path, diagnostics: &mut Vec<ContextDiagnostic>) -> (Option<PathBuf>, Option<PathBuf>) {
     let output = match run_jj(workspace_root, ["git", "root"]) {
         Ok(output) => output,
         Err(_) => return (None, None),
@@ -497,10 +457,7 @@ fn jj_git_backend(
     let common_dir = match git_common_dir_for_backend(&git_dir) {
         Ok(path) => Some(path),
         Err(message) => {
-            diagnostics.push(ContextDiagnostic::warning(
-                "jj_git_backend_invalid",
-                message,
-            ));
+            diagnostics.push(ContextDiagnostic::warning("jj_git_backend_invalid", message));
             None
         }
     };
@@ -508,16 +465,10 @@ fn jj_git_backend(
 }
 
 fn git_common_dir_for_backend(git_dir: &Path) -> Result<PathBuf, String> {
-    let output = run_git_backend(
-        git_dir,
-        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .map_err(|error| format!("could not query Git backend: {error}"))?;
+    let output = run_git_backend(git_dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .map_err(|error| format!("could not query Git backend: {error}"))?;
     if !output.status.success() {
-        return Err(format_probe_failure(
-            "Git backend common directory query failed",
-            &output,
-        ));
+        return Err(format_probe_failure("Git backend common directory query failed", &output));
     }
     let common_dir = path_output(&output.stdout);
     if common_dir.is_empty() {
@@ -545,22 +496,16 @@ fn workspace_names(path: &Path) -> Result<Vec<(String, bool)>, String> {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
-            let (name, current) = line
-                .split_once('\t')
-                .ok_or_else(|| format!("invalid JJ workspace record: {line:?}"))?;
-            let name = serde_json::from_str(name)
-                .map_err(|error| format!("invalid JJ workspace name: {error}"))?;
-            let current = current
-                .parse()
-                .map_err(|error| format!("invalid JJ current-workspace flag: {error}"))?;
+            let (name, current) = line.split_once('\t').ok_or_else(|| format!("invalid JJ workspace record: {line:?}"))?;
+            let name = serde_json::from_str(name).map_err(|error| format!("invalid JJ workspace name: {error}"))?;
+            let current = current.parse().map_err(|error| format!("invalid JJ current-workspace flag: {error}"))?;
             Ok((name, current))
         })
         .collect()
 }
 
 fn workspace_root_for(path: &Path, name: &str) -> Result<PathBuf, String> {
-    let output = run_jj(path, ["workspace", "root", "--name", name])
-        .map_err(|error| format!("could not read JJ workspace root: {}", error.error))?;
+    let output = run_jj(path, ["workspace", "root", "--name", name]).map_err(|error| format!("could not read JJ workspace root: {}", error.error))?;
     if !output.status.success() {
         return Err(format_probe_failure("JJ workspace root failed", &output));
     }
@@ -573,40 +518,21 @@ fn workspace_root_for(path: &Path, name: &str) -> Result<PathBuf, String> {
 
 pub(crate) fn repository_path(workspace_root: &Path) -> Result<PathBuf, String> {
     let pointer = workspace_root.join(".jj/repo");
-    let metadata = fs::symlink_metadata(&pointer).map_err(|error| {
-        format!(
-            "could not inspect JJ repository pointer {}: {error}",
-            pointer.display()
-        )
-    })?;
+    let metadata = fs::symlink_metadata(&pointer).map_err(|error| format!("could not inspect JJ repository pointer {}: {error}", pointer.display()))?;
     if metadata.is_dir() {
         return Ok(canonical_or_path(pointer));
     }
     if !metadata.is_file() {
-        return Err(format!(
-            "JJ repository pointer is not a file or directory: {}",
-            pointer.display()
-        ));
+        return Err(format!("JJ repository pointer is not a file or directory: {}", pointer.display()));
     }
-    let value = fs::read_to_string(&pointer).map_err(|error| {
-        format!(
-            "could not read JJ repository pointer {}: {error}",
-            pointer.display()
-        )
-    })?;
+    let value = fs::read_to_string(&pointer).map_err(|error| format!("could not read JJ repository pointer {}: {error}", pointer.display()))?;
     let value = value.trim();
     if value.is_empty() {
-        return Err(format!(
-            "JJ repository pointer is empty: {}",
-            pointer.display()
-        ));
+        return Err(format!("JJ repository pointer is empty: {}", pointer.display()));
     }
     let target = pointer.parent().expect(".jj/repo has a parent").join(value);
     if !target.is_dir() {
-        return Err(format!(
-            "JJ repository pointer target is not a directory: {}",
-            target.display()
-        ));
+        return Err(format!("JJ repository pointer target is not a directory: {}", target.display()));
     }
     Ok(canonical_or_path(target))
 }
@@ -624,13 +550,7 @@ where
 {
     let mut command = Command::new("git");
     // Explicit PATH inspection must not follow a caller's Git-hook environment.
-    for variable in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_CEILING_DIRECTORIES",
-    ] {
+    for variable in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES"] {
         command.env_remove(variable);
     }
     command
@@ -638,10 +558,7 @@ where
         .arg("-C")
         .arg(crate::paths::external_command_path(path).as_ref())
         .args(args);
-    command.output().map_err(|error| ProbeError {
-        program: "git",
-        error,
-    })
+    command.output().map_err(|error| ProbeError { program: "git", error })
 }
 
 fn run_git_backend<I, S>(git_dir: &Path, args: I) -> Result<Output, ProbeError>
@@ -651,13 +568,7 @@ where
 {
     let mut command = Command::new("git");
     // Explicit PATH inspection must not follow a caller's Git-hook environment.
-    for variable in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_CEILING_DIRECTORIES",
-    ] {
+    for variable in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES"] {
         command.env_remove(variable);
     }
     command
@@ -665,10 +576,7 @@ where
         .arg("--git-dir")
         .arg(crate::paths::external_command_path(git_dir).as_ref())
         .args(args);
-    command.output().map_err(|error| ProbeError {
-        program: "git",
-        error,
-    })
+    command.output().map_err(|error| ProbeError { program: "git", error })
 }
 
 fn run_jj<I, S>(path: &Path, args: I) -> Result<Output, ProbeError>
@@ -679,17 +587,11 @@ where
     let mut command = Command::new("jj");
     command
         .current_dir(path)
-        .args([
-            OsString::from("--no-pager"),
-            OsString::from("--color=never"),
-        ])
+        .args([OsString::from("--no-pager"), OsString::from("--color=never")])
         .args([OsString::from("--at-operation"), OsString::from("@")])
         .args([OsString::from("--ignore-working-copy")])
         .args(args);
-    command.output().map_err(|error| ProbeError {
-        program: "jj",
-        error,
-    })
+    command.output().map_err(|error| ProbeError { program: "jj", error })
 }
 
 fn normalize_path(path: Option<&Path>) -> (PathBuf, Vec<ContextDiagnostic>) {
@@ -709,10 +611,7 @@ fn normalize_path(path: Option<&Path>) -> (PathBuf, Vec<ContextDiagnostic>) {
         match env::current_dir() {
             Ok(current) => current.join(supplied),
             Err(error) => {
-                diagnostics.push(ContextDiagnostic::error(
-                    "path_unavailable",
-                    format!("could not make path absolute: {error}"),
-                ));
+                diagnostics.push(ContextDiagnostic::error("path_unavailable", format!("could not make path absolute: {error}")));
                 supplied
             }
         }
@@ -725,21 +624,15 @@ fn canonical_or_path(path: PathBuf) -> PathBuf {
 }
 
 fn has_git_metadata(path: &Path) -> bool {
-    path.ancestors()
-        .any(|ancestor| ancestor.join(".git").exists())
+    path.ancestors().any(|ancestor| ancestor.join(".git").exists())
 }
 
 fn has_jj_metadata(path: &Path) -> bool {
-    path.ancestors()
-        .any(|ancestor| ancestor.join(".jj").exists())
+    path.ancestors().any(|ancestor| ancestor.join(".jj").exists())
 }
 
 fn nonempty_lines(bytes: &[u8]) -> Vec<&str> {
-    std::str::from_utf8(bytes)
-        .unwrap_or_default()
-        .lines()
-        .filter(|line| !line.is_empty())
-        .collect()
+    std::str::from_utf8(bytes).unwrap_or_default().lines().filter(|line| !line.is_empty()).collect()
 }
 
 // CLI path output adds one line terminator; whitespace belongs to the path.

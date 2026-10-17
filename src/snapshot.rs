@@ -13,12 +13,7 @@ pub struct SnapshotEnvelope {
 }
 
 impl SnapshotEnvelope {
-    pub fn new(
-        command: SnapshotCommand,
-        repository: RepositorySnapshot,
-        workspaces: Vec<WorkspaceSnapshot>,
-        warnings: Vec<SnapshotWarning>,
-    ) -> Self {
+    pub fn new(command: SnapshotCommand, repository: RepositorySnapshot, workspaces: Vec<WorkspaceSnapshot>, warnings: Vec<SnapshotWarning>) -> Self {
         Self {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             command,
@@ -90,14 +85,8 @@ pub enum ManagementState {
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum WorkingCopyStatus {
     Empty,
-    Modified {
-        files: u32,
-        added: u32,
-        removed: u32,
-    },
-    Conflicted {
-        conflicts: u32,
-    },
+    Modified { files: u32, added: u32, removed: u32 },
+    Conflicted { conflicts: u32 },
     Stale,
     Unknown,
 }
@@ -110,10 +99,7 @@ pub struct Hazard {
 
 impl Hazard {
     pub fn new(id: HazardId, message: impl Into<String>) -> Self {
-        Self {
-            id,
-            message: message.into(),
-        }
+        Self { id, message: message.into() }
     }
 }
 
@@ -204,10 +190,7 @@ mod tests {
             SnapshotCommand::List,
             repository(),
             vec![workspace(WorkingCopyStatus::Empty)],
-            vec![SnapshotWarning::new(
-                "refresh-skipped",
-                "working copy was not refreshed",
-            )],
+            vec![SnapshotWarning::new("refresh-skipped", "working copy was not refreshed")],
         );
 
         let value = serde_json::to_value(&envelope).unwrap();
@@ -216,16 +199,10 @@ mod tests {
         assert_eq!(value["repository"]["operation_id"], "op-1");
         assert_eq!(value["repository"]["trunk"]["revset"], "trunk()");
         assert_eq!(value["workspaces"][0]["management"], "managed");
-        assert_eq!(
-            value["workspaces"][0]["role"],
-            json!({ "current": true, "previous": false, "default": true })
-        );
+        assert_eq!(value["workspaces"][0]["role"], json!({ "current": true, "previous": false, "default": true }));
         assert_eq!(value["workspaces"][0]["path"], "/repo/.workspaces/solver");
         assert_eq!(value["workspaces"][0]["working_copy_refreshed"], true);
-        assert_eq!(
-            value["workspaces"][0]["working_copy"],
-            json!({ "state": "empty" })
-        );
+        assert_eq!(value["workspaces"][0]["working_copy"], json!({ "state": "empty" }));
         assert_eq!(value["warnings"][0]["id"], "refresh-skipped");
     }
 
@@ -249,32 +226,20 @@ mod tests {
         entry.creation_operation_id = None;
         entry.creation_base_commit_id = None;
         entry.intended_remote = None;
-        entry.hazards.push(Hazard::new(
-            HazardId::TrunkMultipleRevisions,
-            "trunk revset resolved to multiple revisions",
-        ));
+        entry
+            .hazards
+            .push(Hazard::new(HazardId::TrunkMultipleRevisions, "trunk revset resolved to multiple revisions"));
 
-        let envelope = SnapshotEnvelope::new(
-            SnapshotCommand::Status,
-            repository(),
-            vec![entry],
-            Vec::new(),
-        );
+        let envelope = SnapshotEnvelope::new(SnapshotCommand::Status, repository(), vec![entry], Vec::new());
         let value = serde_json::to_value(&envelope).unwrap();
         let entry = &value["workspaces"][0];
 
         assert_eq!(value["command"], "status");
-        assert_eq!(
-            entry["role"],
-            json!({ "current": false, "previous": true, "default": false })
-        );
+        assert_eq!(entry["role"], json!({ "current": false, "previous": true, "default": false }));
         assert_eq!(entry["management"], "unmanaged");
         assert_eq!(entry["path"], Value::Null);
         assert_eq!(entry["working_copy_refreshed"], false);
-        assert_eq!(
-            entry["working_copy"],
-            json!({ "state": "modified", "files": 3, "added": 18, "removed": 4 })
-        );
+        assert_eq!(entry["working_copy"], json!({ "state": "modified", "files": 3, "added": 18, "removed": 4 }));
         assert_eq!(entry["associated_bookmark"], Value::Null);
         assert_eq!(entry["created_at_unix_ms"], Value::Null);
         assert_eq!(entry["creation_operation_id"], Value::Null);
@@ -292,9 +257,6 @@ mod tests {
             serde_json::to_value(WorkingCopyStatus::Conflicted { conflicts: 2 }).unwrap(),
             json!({ "state": "conflicted", "conflicts": 2 })
         );
-        assert_eq!(
-            serde_json::to_value(SnapshotCommand::Doctor).unwrap(),
-            json!("doctor")
-        );
+        assert_eq!(serde_json::to_value(SnapshotCommand::Doctor).unwrap(), json!("doctor"));
     }
 }

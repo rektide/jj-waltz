@@ -41,23 +41,14 @@ impl Policy {
             Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
         }
     }
-    pub fn resolve(
-        cli: Option<&[String]>,
-        local: Option<&[String]>,
-        global: Option<&[String]>,
-        disabled: bool,
-    ) -> Self {
+    pub fn resolve(cli: Option<&[String]>, local: Option<&[String]>, global: Option<&[String]>, disabled: bool) -> Self {
         if disabled {
             return Self {
                 patterns: Vec::new(),
                 origin: Origin::Disabled,
             };
         }
-        for (patterns, origin) in [
-            (cli, Origin::Cli),
-            (local, Origin::Local),
-            (global, Origin::Global),
-        ] {
+        for (patterns, origin) in [(cli, Origin::Cli), (local, Origin::Local), (global, Origin::Global)] {
             if let Some(patterns) = patterns {
                 return Self {
                     patterns: patterns.to_vec(),
@@ -78,12 +69,7 @@ impl Policy {
             return Ok(Self::resolve(cli, local, None, disabled));
         }
         let config = Config::load()?;
-        Ok(Self::resolve(
-            None,
-            None,
-            config.copy_ignored.as_deref(),
-            false,
-        ))
+        Ok(Self::resolve(None, None, config.copy_ignored.as_deref(), false))
     }
 
     pub fn describe(&self) -> String {
@@ -127,17 +113,14 @@ pub(crate) fn validate_selected<'a>(
         return Ok(());
     }
     if !fs::symlink_metadata(source)?.is_dir() {
-        bail!(
-            "ignored-copy source is not a real directory: {}",
-            source.display()
-        );
+        bail!("ignored-copy source is not a real directory: {}", source.display());
     }
     let tracked = tracked.into_iter().collect();
     for root in roots {
         if root.as_os_str().is_empty()
-            || root.components().any(
-                |part| !matches!(part, Component::Normal(name) if name != ".jj" && name != ".git"),
-            )
+            || root
+                .components()
+                .any(|part| !matches!(part, Component::Normal(name) if name != ".jj" && name != ".git"))
         {
             bail!("unsafe recorded ignored root: {}", root.display());
         }
@@ -145,19 +128,13 @@ pub(crate) fn validate_selected<'a>(
         for component in root.components() {
             let child = parent.join(component);
             if !fs::symlink_metadata(&child)?.is_dir() {
-                bail!(
-                    "recorded ignored root/parent is not a real directory: {}",
-                    child.display()
-                );
+                bail!("recorded ignored root/parent is not a real directory: {}", child.display());
             }
             super::validate_same_mount(&parent, &child)?;
             parent = child;
         }
         if !is_ignored(root)? {
-            bail!(
-                "recorded ignored source root is no longer ignored: {}",
-                root.display()
-            );
+            bail!("recorded ignored source root is no longer ignored: {}", root.display());
         }
         require_untracked(root, &tracked)?;
     }
@@ -165,12 +142,8 @@ pub(crate) fn validate_selected<'a>(
 }
 
 pub(crate) fn require_untracked(path: &Path, tracked: &BTreeSet<&Path>) -> Result<()> {
-    let descendant = tracked
-        .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
-        .next();
-    if descendant.is_some_and(|tracked| tracked.starts_with(path))
-        || path.ancestors().any(|ancestor| tracked.contains(ancestor))
-    {
+    let descendant = tracked.range::<Path, _>((Bound::Included(path), Bound::Unbounded)).next();
+    if descendant.is_some_and(|tracked| tracked.starts_with(path)) || path.ancestors().any(|ancestor| tracked.contains(ancestor)) {
         bail!("ignored root overlaps tracked files: {}", path.display());
     }
     Ok(())
@@ -190,16 +163,10 @@ impl Patterns {
             let normalized = pattern.trim_end_matches('/');
             if normalized.is_empty()
                 || pattern.contains(['[', ']', '\\', '\0'])
-                || normalized
-                    .split('/')
-                    .any(|part| part.is_empty() || matches!(part, "." | ".." | ".jj" | ".git"))
-                || Path::new(normalized)
-                    .components()
-                    .any(|part| !matches!(part, Component::Normal(_)))
+                || normalized.split('/').any(|part| part.is_empty() || matches!(part, "." | ".." | ".jj" | ".git"))
+                || Path::new(normalized).components().any(|part| !matches!(part, Component::Normal(_)))
             {
-                bail!(
-                    "unsafe ignored directory selection {pattern:?}; use relative literal components, *, ?, and ** (optional trailing /)"
-                );
+                bail!("unsafe ignored directory selection {pattern:?}; use relative literal components, *, ?, and ** (optional trailing /)");
             }
             if !seen.insert(normalized.to_owned()) {
                 continue;
@@ -235,17 +202,9 @@ impl Patterns {
             return Ok(Selection::default());
         }
         if !fs::symlink_metadata(source)?.is_dir() {
-            bail!(
-                "ignored-copy source is not a real directory: {}",
-                source.display()
-            );
+            bail!("ignored-copy source is not a real directory: {}", source.display());
         }
-        let states = self.close(
-            self.patterns
-                .iter()
-                .enumerate()
-                .map(|(pattern, _)| State { pattern, offset: 0 }),
-        );
+        let states = self.close(self.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 }));
         let mut walk = Walk {
             source,
             patterns: self,
@@ -258,10 +217,9 @@ impl Patterns {
         walk.visit(Path::new(""), &states)?;
         for (index, pattern) in self.patterns.iter().enumerate() {
             if !walk.observed[index] && !walk.covered[index] {
-                walk.selected.skipped.push(format!(
-                    "ignored selection {:?} matched no source directories",
-                    pattern.display
-                ));
+                walk.selected
+                    .skipped
+                    .push(format!("ignored selection {:?} matched no source directories", pattern.display));
             }
         }
         walk.selected.roots.sort();
@@ -275,10 +233,7 @@ impl Patterns {
         for mut state in states {
             loop {
                 closed.insert(state);
-                if matches!(
-                    self.patterns[state.pattern].segments.get(state.offset),
-                    Some(Segment::Recursive)
-                ) {
+                if matches!(self.patterns[state.pattern].segments.get(state.offset), Some(Segment::Recursive)) {
                     state.offset += 1;
                 } else {
                     break;
@@ -290,24 +245,18 @@ impl Patterns {
 
     fn advance(&self, states: &[State], name: &str) -> Vec<State> {
         let name = name.chars().collect::<Vec<_>>();
-        self.close(states.iter().filter_map(|state| {
-            match self.patterns[state.pattern].segments.get(state.offset) {
-                Some(Segment::Recursive) => Some(*state),
-                Some(Segment::Component(pattern)) if component_matches(pattern, &name) => {
-                    Some(State {
-                        offset: state.offset + 1,
-                        ..*state
-                    })
-                }
-                _ => None,
-            }
+        self.close(states.iter().filter_map(|state| match self.patterns[state.pattern].segments.get(state.offset) {
+            Some(Segment::Recursive) => Some(*state),
+            Some(Segment::Component(pattern)) if component_matches(pattern, &name) => Some(State {
+                offset: state.offset + 1,
+                ..*state
+            }),
+            _ => None,
         }))
     }
 
     fn can_descend(&self, states: &[State]) -> bool {
-        states
-            .iter()
-            .any(|state| state.offset < self.patterns[state.pattern].segments.len())
+        states.iter().any(|state| state.offset < self.patterns[state.pattern].segments.len())
     }
 }
 
@@ -332,11 +281,7 @@ impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
             if name == ".jj" || name == ".git" || !entry.file_type()?.is_dir() {
                 continue; // Never follow directory symlinks or enter metadata.
             }
-            let next = self.patterns.advance(
-                states,
-                name.to_str()
-                    .context("directory selection entry not UTF-8")?,
-            );
+            let next = self.patterns.advance(states, name.to_str().context("directory selection entry not UTF-8")?);
             if next.is_empty() {
                 continue;
             }
@@ -408,10 +353,7 @@ mod tests {
         let cli = vec!["cli".into()];
         let local = vec!["local".into()];
         let global = vec!["**/target".into()];
-        assert_eq!(
-            Policy::resolve(Some(&cli), Some(&local), Some(&global), false).patterns,
-            cli
-        );
+        assert_eq!(Policy::resolve(Some(&cli), Some(&local), Some(&global), false).patterns, cli);
         assert_eq!(
             Policy::resolve(None, Some(&[]), Some(&global), false),
             Policy {
@@ -419,22 +361,10 @@ mod tests {
                 origin: Origin::Local
             }
         );
-        assert_eq!(
-            Policy::resolve(Some(&[]), Some(&local), Some(&global), false).origin,
-            Origin::Cli
-        );
-        assert_eq!(
-            Policy::resolve(None, None, Some(&global), false).patterns,
-            global
-        );
-        assert_eq!(
-            Policy::resolve(Some(&cli), Some(&local), Some(&global), true).origin,
-            Origin::Disabled
-        );
-        assert_eq!(
-            Policy::resolve(None, None, None, false).origin,
-            Origin::None
-        );
+        assert_eq!(Policy::resolve(Some(&[]), Some(&local), Some(&global), false).origin, Origin::Cli);
+        assert_eq!(Policy::resolve(None, None, Some(&global), false).patterns, global);
+        assert_eq!(Policy::resolve(Some(&cli), Some(&local), Some(&global), true).origin, Origin::Disabled);
+        assert_eq!(Policy::resolve(None, None, None, false).origin, Origin::None);
     }
 
     #[cfg(unix)]
@@ -452,8 +382,7 @@ mod tests {
         ] {
             fs::create_dir_all(temp.path().join(path)).unwrap();
         }
-        std::os::unix::fs::symlink(temp.path().join("packages/a"), temp.path().join("linked"))
-            .unwrap();
+        std::os::unix::fs::symlink(temp.path().join("packages/a"), temp.path().join("linked")).unwrap();
         let patterns = Patterns::compile(&[
             "**/node_modules/".into(),
             "**/target".into(),
@@ -486,18 +415,8 @@ mod tests {
             || path.starts_with("normal/.git")
             || path == Path::new("packages/a/node_modules/deep/target")));
         assert_eq!(selection.skipped.len(), 2);
-        assert!(
-            selection
-                .skipped
-                .iter()
-                .any(|message| message.contains("not ignored"))
-        );
-        assert!(
-            selection
-                .skipped
-                .iter()
-                .any(|message| message.contains("absent/"))
-        );
+        assert!(selection.skipped.iter().any(|message| message.contains("not ignored")));
+        assert!(selection.skipped.iter().any(|message| message.contains("absent/")));
     }
 
     #[cfg(unix)]
@@ -509,47 +428,28 @@ mod tests {
         let patterns = Patterns::compile(&["cache/".into(), "cache/nested".into()]).unwrap();
         assert!(
             patterns
-                .select(temp.path(), tracked.iter().map(PathBuf::as_path), |_| Ok(
-                    true
-                ))
+                .select(temp.path(), tracked.iter().map(PathBuf::as_path), |_| Ok(true))
                 .unwrap_err()
                 .to_string()
                 .contains("overlaps tracked")
         );
         let selection = patterns.select(temp.path(), [], |_| Ok(true)).unwrap();
         assert_eq!(selection.roots, [PathBuf::from("cache")]);
-        assert!(
-            validate_selected(
-                temp.path(),
-                &selection.roots,
-                tracked.iter().map(PathBuf::as_path),
-                |_| Ok(true)
-            )
-            .is_err()
-        );
+        assert!(validate_selected(temp.path(), &selection.roots, tracked.iter().map(PathBuf::as_path), |_| Ok(true)).is_err());
         assert!(validate_selected(temp.path(), &selection.roots, [], |_| Ok(false)).is_err());
         std::os::unix::fs::symlink(temp.path().join("cache"), temp.path().join("linked")).unwrap();
         assert!(
-            validate_selected(temp.path(), &[PathBuf::from("linked/nested")], [], |_| Ok(
-                true
-            ))
-            .unwrap_err()
-            .to_string()
-            .contains("not a real directory")
+            validate_selected(temp.path(), &[PathBuf::from("linked/nested")], [], |_| Ok(true))
+                .unwrap_err()
+                .to_string()
+                .contains("not a real directory")
         );
         let empty = Patterns::compile(&["no-such-root/".into()])
             .unwrap()
             .select(temp.path(), [], |_| Ok(true))
             .unwrap();
         assert!(empty.roots.is_empty());
-        for pattern in [
-            "../*",
-            "**/.jj",
-            "/cache",
-            "packages//cache",
-            "cache/[a]",
-            "cache\\nested",
-        ] {
+        for pattern in ["../*", "**/.jj", "/cache", "packages//cache", "cache/[a]", "cache\\nested"] {
             assert!(Patterns::compile(&[pattern.into()]).is_err(), "{pattern}");
         }
     }
