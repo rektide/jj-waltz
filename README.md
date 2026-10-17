@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
+    title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Deleted prepare and reseed journals, receipts, and resume machinery in favor of explicit out-of-band bookmark recovery
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
@@ -102,7 +104,7 @@ jw add feature tests          # create siblings repo.feature and repo.tests
 jw s feature                  # enter feature, creating it if missing
 jw list
 jw status @
-jw reseed --dry-run            # preview renewing this variant, keeping its work
+jw reseed --dry-run            # preview syncing this variant to the donor's current commit
 ```
 
 In a terminal, bare `jw` opens the interactive manager; `jw ui` selects it
@@ -118,7 +120,7 @@ it can be the primary or an explicitly selected workspace.
 | --- | --- | --- | --- |
 | Outcome | Create; `s` enters existing or creates missing | Renew CoW sharing in place | Select/fetch one upstream, prepare the donor, report the exact commit |
 | Target workspaces | Created or entered | Refilled in place; names/groups select | None — never selects, refills, or advances workers |
-| Target history | Empty child of source `@`, or `--at` | Keep snapshotted work, or reset via `--at` | — |
+| Target history | Empty child of source `@`, or `--at` | Empty child of the donor's current commit, or `--at` override | — |
 | Bare command in a variant | Name/path required | Current variant | Source-only; same meaning anywhere |
 | Bare command at primary | Name/path required | Names/group required | Source-only |
 | Multiple names | Create all; `s` enters last | Refill selected | — |
@@ -127,7 +129,7 @@ it can be the primary or an explicitly selected workspace.
 | `--from` | Creation source and command context | Donor only; caller role stays the same | Source root |
 | `--path` | One exact destination; name can be inferred | — | — |
 | `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion | Upstream goal |
-| `--at` | Explicit creation base | Explicit reset base | — |
+| `--at` | Explicit creation base | Explicit sync-target override | — |
 | Fetch / preparation commands | Never | Never | One pinned upstream / local argv |
 | `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Verify selected payload |
 | `--dry-run` | — | Supported | Supported |
@@ -135,12 +137,14 @@ it can be the primary or an explicitly selected workspace.
 | `--replace-content` | — | Discard unrecorded target contents | — |
 | Bookmarks | Optional creation bookmark | Existing bookmarks stay | No preservation bookmarks; fetch may update refs |
 
-**Renew keeps work checked out; `--at` resets a worker deliberately.** `prepare`
+**Reseed syncs a workspace to the donor's current commit; layer features back
+with `jj duplicate`/`jj rebase` afterward.** `prepare`
 never selects or refills a worker. Creation flags never reset or refill an existing
 workspace selected by `s`. Explicit names/groups suppress the implicit current
 reseed target; empty selection never means all workspaces. Maintenance names are
-literal, not navigation shortcuts. Feature rebasing remains ordinary `jj` work:
-pointing a worker at a new baseline does not rebase its feature commits.
+literal, not navigation shortcuts. Feature layering is ordinary `jj` work:
+`jj duplicate -r <bookmark> --onto <sync-base>` keeps the old line and its dated
+bookmarks, while `jj rebase` drags bookmarks with the commits.
 
 Creation with `--from` can start outside a checkout. Reseed requires a registered
 caller even with `--from`; prepare accepts any registered workspace of the
@@ -211,26 +215,32 @@ with configured colocation keeps colocation, while `--no-colocate` with configur
 CoW keeps CoW. Opposite flags for the same setting conflict. Existing workspaces
 are never converted by switching.
 
-## Renew: keep your feature work
+## Renew: sync a workspace to the donor
 
-Pause donor/target writers, then preview:
+The update flow runs in three steps, in this order:
 
 ```sh
-jw reseed --dry-run
-jw reseed feature --from /path/to/prepared-source --dry-run
+jw prepare --source-at 'dev@origin'     # 1. update the seed: fetch + build in the donor
+jw reseed feature --copy-ignored node_modules   # 2. sync the workspace to the seed
+jj duplicate -r feature-bookmark --onto <sync base>   # 3. layer the feature back, in jj
 ```
 
-Remove `--dry-run` when the plan is right. Reseed snapshots real work, retains the
-target revision, reflinks equal paths from the donor, and lets JJ materialize feature
-differences. The root, `.jj`, registration, bookmarks, and lifecycle identity remain.
-Repeating it renews sharing even when bytes are unchanged. It never fetches or builds.
+Pause donor/target writers, then preview with `--dry-run` before steps 2 and 3.
+Reseed makes the workspace's content **be the donor's content**: it snapshots real
+work, starts a fresh empty child of the donor's current working-copy commit,
+reflinks the whole tracked tree from the donor, lets JJ materialize it, and copies
+selected ignored payload. The root, `.jj`, registration, bookmarks, and lifecycle
+identity remain, and it never fetches or builds. Tracked feature work stays safe
+in JJ history; it is not carried forward into the synced tree. `--at REVSET` is an
+optional explicit override of the sync target; `--source-at REVSET` stays an
+optional assertion that the donor's tracked tree matches a revset.
 
-Fresh reseeds require **bookmarked work by default**, in both keep and `--at`
-modes. A present, unconflicted local or remote bookmark must point at the
-snapshotted work tip or a descendant; a bookmark on an older base does not cover
-new edits. Dry-run reports the covering name and tip, or blocks the batch.
-`jw` never creates or moves a bookmark for this guard. Deliberately name your work
-with JJ, or explicitly bypass only this requirement:
+Fresh reseeds require **bookmarked work by default**. A present, unconflicted
+local or remote bookmark must point at the snapshotted work tip or a descendant;
+a bookmark on an older base does not cover new edits. Dry-run reports the covering
+name and tip, or blocks the batch. `jw` never creates or moves a bookmark for this
+guard. Deliberately name your work with JJ, or explicitly bypass only this
+requirement:
 
 ```sh
 jj bookmark create my-feature -r @       # run inside the feature workspace
@@ -242,16 +252,20 @@ Dry-run can record normal JJ snapshots but does not refill/reset/delete files.
 See [readiness and bookmark coverage](docs/reseed.md#check-readiness-before-refilling).
 
 Donor selection is CLI `--from` → local `source` → verified primary. The optional
-tree assertion is CLI `--source-at` → local `source_at`; otherwise borrowing uses
-the donor's freshly snapshotted `@`. To reset a reusable worker deliberately:
+tree assertion is CLI `--source-at` → local `source_at`; the sync base is otherwise
+the donor's freshly snapshotted `@`.
 
-```sh
-jw reseed worker --source-at 'dev@origin' --at 'dev@origin' --dry-run
-```
+### Layer features back after a sync
 
-This selects an empty child of the base rather than carrying feature edits forward.
-Tracked work remains in JJ history, and reseed never creates preservation bookmarks.
-See the [operator guide](docs/reseed.md#one-off-use).
+Step 3 happens after the sync, in jj, and is not jw's work:
+
+- `jj duplicate -r <bookmark> --onto <sync base>` copies the old feature line
+  onto the synced base; the original line and its dated bookmarks stay put.
+- `jj rebase -r/-b/-d <revs> -d <sync base>` moves the commits and drags their
+  bookmarks; resolve conflicts in jj as usual.
+
+Reseed never creates preservation bookmarks and never rebases feature commits
+itself. See the [operator guide](docs/reseed.md#one-off-use).
 
 ## Prepare the source
 
@@ -279,13 +293,13 @@ The reported commit is frozen. Reuse it directly instead of preparing again:
 
 ```sh
 jw prepare                                       # prints the exact prepared commit
-jw reseed worker-a --at <commit> --copy-ignored node_modules   # reset a worker onto it
-jw reseed feature                                # or keep a feature tree
+jw reseed worker-a --copy-ignored node_modules   # sync a worker onto the donor's current commit
+jw reseed feature --at <commit>                  # or onto an explicitly reported commit
 ```
 
-Feature rebasing stays an ordinary `jj` operation. `--at` starts an empty child of
-the chosen base; it does not rebase the workspace's old feature commits, and
-reseed without `--at` keeps them checked out. See the
+Feature layering stays an ordinary `jj` operation after the sync: `jj duplicate
+-r <bookmark> --onto <base>` keeps the old line and its dated bookmarks, while
+`jj rebase` drags bookmarks with the commits. See the
 [full prepare contract](docs/reseed.md#prepare-the-source).
 
 ### Local preparation and groups

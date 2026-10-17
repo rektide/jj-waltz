@@ -6,9 +6,11 @@ title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
+    title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Replaced recorded recovery with forward-only reseed and deliberate bookmark recovery, and retry-from-start source preparation
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
@@ -55,20 +57,21 @@ supplying files. Verify identity rather than relying on a directory named `defau
 
 | | `add` / `s` (`switch`) | `reseed` | `prepare` |
 | --- | --- | --- | --- |
-| Outcome | Create; `s` enters existing or creates missing | Renew sharing, keep work | Select/fetch one upstream, prepare the donor, report the exact commit |
+| Outcome | Create; `s` enters existing or creates missing | Renew sharing by syncing to the donor | Select/fetch one upstream, prepare the donor, report the exact commit |
 | Target workspaces | Created or entered | Refilled in place; names/groups select | None — only the donor; never selects or refills a worker |
-| Target history | Empty child of source `@`, or `--at` | Keep revision, or reset via `--at` | — |
+| Target history | Empty child of source `@`, or `--at` | Empty child of the donor's current commit, or `--at` override | — |
 | Bare in variant / primary | Name/path required | Current / explicit targets required | Source-only / source-only |
 | Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
 | `--source-at` | Donor tree assertion | Donor tree assertion | Upstream goal |
 | Fetch / preparation | Never | Never | Pinned upstream / local argv |
 | Preview | — | `--dry-run` | `--dry-run` |
 
-If “update” leaves keeping versus advancing work unclear, ask which is intended.
-`prepare` never selects or refills a worker. Consume its exact reported commit with
-`reseed --at <commit>` — no second prepare is needed. Feature rebasing stays an
-ordinary `jj` operation: `--at` starts an empty child of the chosen base and does
-not rebase the workspace's previous feature commits. [Full
+Updating follows three steps in order: `jw prepare` updates the seed (fetch +
+build in the donor), `jw reseed NAME` syncs a workspace onto the donor's current
+commit (whole tree + selected ignored payload), then the feature is layered back
+in jj — `jj duplicate -r <bookmark> --onto <base>` keeps the old line and its
+dated bookmarks, while `jj rebase` drags bookmarks with the commits. `prepare`
+never selects or refills a worker; layering is not jw's work. [Full
 comparison](../../README.md#choose-the-outcome).
 
 ## Establish the relevant context
@@ -144,10 +147,10 @@ Read the [operator guide](../../docs/reseed.md) before an in-place refill. Pause
 source/target writers, builds, monitors, and external JJ processes. Preview the plan:
 
 ```sh
-jw reseed --dry-run                # keep current variant's revision
-jw reseed worker --at <commit> --dry-run   # deliberate reset onto a prepared commit
-jw reseed --group all --dry-run     # all registrations except verified primary/donor
 jw prepare --dry-run               # prospective fetch and preparation commands
+jw reseed --dry-run                # sync current variant onto the donor's current commit
+jw reseed worker --dry-run         # literal target; --at overrides the sync base explicitly
+jw reseed --group all --dry-run    # all registrations except verified primary/donor
 ```
 
 Reseed requires a registered caller, even with `--from`. Names/groups suppress
@@ -161,12 +164,13 @@ Local group `all` definitions are rejected.
 See [all registered workers](../../docs/reseed.md#all-registered-workers).
 
 **Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
-assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
-differences. Explicit `--at` selects an empty child of that base instead. Reseed
+assertion; the sync base is otherwise the donor's freshly snapshotted `@`. Plain
+reseed makes the workspace's content the donor's content — no feature logic, no
+branch restoration. Explicit `--at` overrides the target commit only. Reseed
 never fetches or prepares dependencies.
 
 Fresh reseeds require a present, unconflicted **local or remote bookmark** covering
-the snapshotted work tip (at the tip or a descendant), even in keep mode. An old
+the snapshotted work tip (at the tip or a descendant). An old
 base bookmark cannot cover new work. Ordinary undescribed empty single-parent
 scratch uses its parent; described empty changes and merges count themselves.
 Dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
@@ -192,10 +196,11 @@ the primary prepares the primary donor:
    build; do not guess an installer or use global build commands.
 4. Completion reports the **exact frozen commit**, also in `--format=json`.
    Prepare never selects or refills a worker and creates no worker-preservation
-   bookmarks (native fetch can update refs). Consume the commit with
-   `jw reseed worker --at <commit>`; feature rebasing stays ordinary `jj` work —
-   `--at` does not rebase the worker's previous feature commits, and plain
-   `jw reseed feature` keeps them checked out.
+   bookmarks (native fetch can update refs). Consume the prepared donor with
+   plain `jw reseed worker`; layer the feature back afterward in jj —
+   `jj duplicate -r <bookmark> --onto <base>` keeps the old line and its dated
+   bookmarks, while `jj rebase` drags bookmarks with the commits. Neither step
+   is jw's.
 
 Refills require full, conflict-free eligible JJ-only targets and real CoW.
 `--replace-content` destroys unrecorded target contents, including `.env`, except
@@ -254,10 +259,10 @@ Use the owning app for app-created checkout cleanup. Consult the
 - **Create/switch:** confirm registration/path and actual execution cwd. Use
   `jw current` only inside the target or after shell-integrated navigation. Check
   warnings before claiming CoW or complete payload setup.
-- **Reseed:** confirm retained revision/tree or the requested explicit reset, plus
-  payload/refill completion.
+- **Reseed:** confirm the sync — target `@-` is the pinned base (donor's current
+  commit or `--at`), the tree matches the donor, and payload/refill completed.
 - **Prepare:** confirm the exact reported commit and command/payload completion;
-  a source-only success has no target. Consume it via reseed `--at`
+  a source-only success has no target. Consume it via reseed
   and verify the worker separately.
 - **Recovery:** distinguish completed and failed targets. Recover failed refills
   deliberately before retrying; partial progress is not batch success.

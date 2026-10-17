@@ -5,9 +5,11 @@ description: Release history and unreleased workspace lifecycle changes.
 resource: /CHANGELOG.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
+    title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Removed all prepare/reseed recorded recovery and legacy preservation code, retained live safeguards, and documented explicit out-of-band recovery
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -34,6 +36,20 @@ sources:
 
 ## Unreleased
 
+- Replace reseed's keep/reset contract with a single sync. Plain `jw reseed NAME`
+  now makes the workspace's content be the donor's content: a fresh empty child
+  of the donor's current working-copy commit (captured at the frozen operation),
+  the whole tracked tree reflinked from the donor, JJ materialization, and the
+  selected ignored payload copied. `--at REVSET` remains only an optional
+  explicit override of the target commit, and `--source-at` remains only a
+  tracked-tree assertion. The keep default and its feature-preservation
+  semantics, keep/reset consequence reporting, and the `Option`al base are
+  deleted; readiness now reports one `SYNC to <commit>` consequence. The update
+  flow is: `jw prepare` updates the seed, `jw reseed` syncs a workspace onto it,
+  then the feature is layered back in jj with `jj duplicate -r <bookmark>
+  --onto <base>` (keeps the old line and its dated bookmarks) or `jj rebase`
+  (drags bookmarks). Bookmark coverage, readiness aggregation, groups, ignored
+  payload, verification, locking, and donor-drift refusal are unchanged.
 - Delete reseed/prepare progress journals, write-ahead phases, receipts, legacy
   readers, recovery reconstruction, and both `--resume` flags. Reseed is one
   forward pass with in-memory commit pinning. Default bookmark coverage remains

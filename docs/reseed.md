@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
+    title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Deleted recorded plans and progress recovery, retained live safeguards, and documented forward-only reseed and retry-from-start preparation
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
@@ -56,6 +58,18 @@ sources:
 builds. `jw prepare` separately fetches and prepares only its donor and reports
 the exact prepared commit. The combined `up` command is gone.
 
+The update flow has three steps, in this order:
+
+1. **Update the seed** — `jw prepare` fetches and builds in the donor.
+2. **Sync a workspace to the seed** — `jw reseed NAME` makes the workspace's
+   content be the donor's content: a fresh empty child of the donor's current
+   commit, the whole tracked tree reflinked from the donor, and selected ignored
+   payload copied. No feature logic runs inside reseed.
+3. **Layer the feature back** — in jj, after the sync: `jj duplicate -r
+   <bookmark> --onto <base>` keeps the old feature line and its dated bookmarks
+   while copying it onto the synced base, or `jj rebase` moves commits and drags
+   their bookmarks. Resolve conflicts in jj. This step is not jw's.
+
 ## One-off use
 
 No groups, configuration, or donor assertion are required:
@@ -66,9 +80,10 @@ jw reseed my-feature           # literal target; primary requires explicit selec
 jw reseed worker-a worker-b --from /path/to/prepared-source --dry-run
 ```
 
-Remove `--dry-run` when the plan is right. By default, reseed snapshots real work
-and keeps that feature revision: equal paths are reflinked from the donor and JJ
-materializes differences. Repeating it renews sharing even when bytes are unchanged.
+Remove `--dry-run` when the plan is right. Reseed snapshots real work and syncs
+the workspace onto the donor's current working-copy commit: equal paths are
+reflinked from the donor and JJ materializes the tree. Repeating it renews
+sharing even when bytes are unchanged.
 
 Donor precedence is CLI `--from` → primary-local `source` → verified primary
 checkout of the same JJ repository. CLI relative paths start at the caller;
@@ -79,19 +94,16 @@ selection; `--from` does not change the process cwd or caller role.
 The optional donor **tracked-tree assertion** is CLI `--source-at` → local
 `source_at` → freshly snapshotted donor `@`. A supplied assertion must resolve to
 one exact commit whose tracked tree matches the donor. Equal trees need not have
-equal commit IDs. A mismatch stops before target snapshots or mutations.
+equal commit IDs. A mismatch stops before target snapshots or mutations. The
+assertion never changes the sync target.
 
-To deliberately reset a worker rather than keep its feature tree:
-
-```sh
-jw reseed worker --source-at 'dev@origin' --at 'dev@origin' --dry-run
-```
-
-`--at` creates a fresh empty child of the selected base. It is **not a rebase** or
-bookmark move. Old tracked work remains in JJ history and must be covered by a
-bookmark unless explicitly opted out below. Names/groups suppress implicit
-current selection, even if they match nothing. Empty selection never means all;
-maintenance names are literal, not navigation tokens.
+`--at REVSET` is an optional explicit override of the target commit; without it
+the target is the donor's current commit. `--at` creates a fresh empty child of
+the selected base. It is **not a rebase** or bookmark move. Old tracked work
+remains in JJ history and must be covered by a bookmark unless explicitly opted
+out below. Names/groups suppress implicit current selection, even if they match
+nothing. Empty selection never means all; maintenance names are literal, not
+navigation tokens.
 
 ## Ignored data
 
@@ -146,7 +158,7 @@ copying validates each entry inline during its single reflink traversal. See
 jw prepare --dry-run
 jw prepare --source-at 'dev@origin'
 jw prepare --from /path/to/donor --format=json
-jw reseed worker --at <reported-commit> --copy-ignored node_modules
+jw reseed worker --copy-ignored node_modules
 ```
 
 Prepare is source-only from any registered workspace. It selects/fetches a pinned
@@ -155,7 +167,8 @@ verifies the tracked tree and selected payload, then reports that exact commit.
 JSON retains `source_commit_id`; installer stdout goes to stderr. It never selects,
 snapshots, refills, or advances other workers, nor creates preservation bookmarks.
 Native fetch may update refs. Reuse the reported commit without preparing again;
-feature rebasing stays an ordinary JJ operation.
+feature layering after a sync stays an ordinary JJ operation (`jj duplicate` keeps
+the old line and its dated bookmarks; `jj rebase` drags bookmarks).
 
 ### Native upstream selection
 
@@ -225,7 +238,7 @@ jw reseed --group workers --dry-run
 
 Array groups contain literal names, including strings such as `"worker-*"`.
 Names and repeated groups can combine; selected workspaces are deduplicated.
-Reset behavior is never configured: supply `--at` for that run.
+The sync target is never configured: supply `--at` to override it for that run.
 
 ### All registered workers
 
@@ -295,14 +308,16 @@ bookmarks, CoW, ignored rules, obstructions, and links.
 
 Preview does not fetch/build/refill/reset/delete, but normal JJ snapshots can
 record real work and auto-track under JJ's policy. Sparse/mid-refill targets are
-refused **before snapshotting**. Output explains new snapshot updates and dirty
-KEEP versus RESET consequences. Unrelated data stays unless selected or erased
+refused **before snapshotting**. Output explains new snapshot updates and the
+single SYNC consequence, including where tracked work is saved in JJ history.
+Unrelated data stays unless selected or erased
 with explicit `--replace-content`.
 
 #### Bookmarked work is required by default
 
 A present, unconflicted named local or remote bookmark must cover the snapshotted
-work tip or a descendant, in both keep and reset modes. An older ancestor/base,
+work tip or a descendant, in the default sync and `--at` modes alike. An older
+ancestor/base,
 equal tree, tag, or arbitrary snapshot does not count. Remote coverage uses JJ's
 recorded view without fetching. An ordinary undescribed empty single-parent
 scratch uses its parent; described empty changes and merges count themselves.
@@ -333,7 +348,7 @@ are tracked; automatic stale-tree updates are disabled.
 ### Interrupted refills
 
 Execution is one forward pass: validate, check bookmarked work, clear sparse
-selection, optionally `jj new` at the pinned base, prefill equal paths with
+selection, `jj new` at the pinned base, prefill equal paths with
 reflinks, reset sparse selection, copy selected ignored roots, apply links, and
 verify. Commit-ID checks between JJ calls remain in memory. There is no durable
 intermediate state and **jw never repairs a partial workspace**.
