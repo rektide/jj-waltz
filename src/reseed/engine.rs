@@ -228,8 +228,76 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 pub(super) fn run(
+    request: RecordedRequest,
+    diagnostic: &mut dyn FnMut(&str),
+) -> Result<ReseedReport> {
+    let aggregate_preview = request.dry_run && !request.prepare && !request.resume;
+    let mut readiness = Readiness::default();
+    match run_inner(request, diagnostic, &mut readiness) {
+        Err(error) if aggregate_preview => match readiness.not_assessed_report(&error) {
+            Some(report) => Ok(report),
+            None => Err(error),
+        },
+        result => result,
+    }
+}
+
+/// Observations from the ordinary planning pipeline, never a second, weaker
+/// preflight implementation. A shared failure cannot turn an unchecked target
+/// into READY; target-local failures do not hide the other targets' checks.
+#[derive(Default)]
+struct Readiness {
+    preview: Option<ReseedReport>,
+    failures: BTreeMap<String, ReseedOutcome>,
+    snapshotted: BTreeMap<String, bool>,
+    details: BTreeMap<String, String>,
+}
+
+impl Readiness {
+    fn block(&mut self, name: &str, error: anyhow::Error) {
+        self.failures
+            .entry(name.to_owned())
+            .or_insert_with(|| ReseedOutcome {
+                name: name.to_owned(),
+                status: ReseedStatus::Failed,
+                message: format!("{error:#}"),
+            });
+    }
+
+    fn require_unblocked(&self) -> Result<()> {
+        if !self.failures.is_empty() {
+            bail!(
+                "reseed preflight blocked; no targets refilled: {}",
+                self.failures
+                    .values()
+                    .map(|target| format!("{}: {}", target.name, target.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        Ok(())
+    }
+
+    fn not_assessed_report(&mut self, error: &anyhow::Error) -> Option<ReseedReport> {
+        let mut report = self.preview.take()?;
+        report.targets.extend(self.failures.values().cloned());
+        for selected in &report.selections {
+            if !self.failures.contains_key(&selected.name) {
+                report.targets.push(ReseedOutcome {
+                    name: selected.name.clone(),
+                    status: ReseedStatus::Failed,
+                    message: format!("not assessed: shared preflight failed: {error:#}"),
+                });
+            }
+        }
+        (!report.targets.is_empty()).then_some(report)
+    }
+}
+
+fn run_inner(
     mut request: RecordedRequest,
     diagnostic: &mut dyn FnMut(&str),
+    readiness: &mut Readiness,
 ) -> Result<ReseedReport> {
     if request.resume && (!request.groups.is_empty() || request.on_unmatched.is_some()) {
         bail!(
@@ -294,11 +362,40 @@ pub(super) fn run(
     if let Some(warning) = selection.warning() {
         diagnostic(&warning);
     }
-    if !source_only {
+    if request.dry_run && !source_only && !request.resume {
+        let raw_source = request
+            .source
+            .as_ref()
+            .or(config.source.as_ref())
+            .unwrap_or(&default);
+        let source = if raw_source.is_absolute() {
+            raw_source.clone()
+        } else if request.source.is_some() {
+            caller_cwd.join(raw_source)
+        } else {
+            default.join(raw_source)
+        };
+        readiness.preview = Some(ReseedReport {
+            dry_run: true,
+            source,
+            source_commit_id: None,
+            preparation_summary: None,
+            targets: Vec::new(),
+            selections: selection.selections.clone(),
+            skipped: selection.skipped.clone(),
+        });
+        for issue in &selection.issues {
+            readiness.failures.insert(issue.name.clone(), issue.clone());
+        }
+    }
+    if !source_only && (!request.dry_run || selection.selections.is_empty()) {
         selection.validate()?;
     }
     if implicit_current && !source_only {
         selection.selections[0].origins = vec!["current".into()];
+        if let Some(preview) = readiness.preview.as_mut() {
+            preview.selections = selection.selections.clone();
+        }
     }
     let names = selection
         .selections
@@ -421,11 +518,16 @@ pub(super) fn run(
     } else {
         // Pending detection precedes every source/target snapshot, even when called inside a target.
         for name in &names {
-            if store.pending(name)?.is_some() {
-                bail!(
-                    "workspace {name} has a pending reseed/refill; use `jw reseed --resume {name}` before snapshotting it",
-                );
+            match store.pending(name) {
+                Ok(Some(_)) => readiness.block(name, anyhow::anyhow!(
+                    "workspace {name} has a pending reseed/refill; use `jw reseed --resume {name}` before snapshotting it"
+                )),
+                Ok(None) => {}
+                Err(error) => readiness.block(name, error),
             }
+        }
+        if !request.dry_run {
+            readiness.require_unblocked()?;
         }
         let raw_source = request
             .source
@@ -490,19 +592,36 @@ pub(super) fn run(
         ensure_quiescence(&source_client)?;
         require_full(&source_client)?;
         validate_contents(&source, true)?;
+        let preparation_blockers = prepare::source_blockers(&store)?;
         let mut roots = BTreeSet::new();
         for name in &names {
-            let root = inventory.root(name)?.canonicalize()?;
-            if !roots.insert(root.clone()) {
-                bail!("multiple selected workspaces alias {}", root.display());
+            if readiness.failures.contains_key(name) {
+                continue;
             }
-            validate_target(&client, &metadata, &default, &source, name, &root)?;
-            ensure_quiescence(&JjClient::new(&root))?;
-            require_full(&JjClient::new(&root))?;
-            validate_contents(&root, false)?;
-            if request.up || request.freshen {
-                cow::probe_between(&source, &root)?;
+            let result = (|| {
+                let root = inventory.root(name)?.canonicalize()?;
+                if let Some(reason) = preparation_blockers.get(&root) {
+                    bail!("target has unfinished preparation: {reason}");
+                }
+                if roots.contains(&root) {
+                    bail!("multiple selected workspaces alias {}", root.display());
+                }
+                validate_target(&client, &metadata, &default, &source, name, &root)?;
+                ensure_quiescence(&JjClient::new(&root))?;
+                require_full(&JjClient::new(&root))?;
+                validate_contents(&root, false)?;
+                if request.up || request.freshen {
+                    cow::probe_between(&source, &root)?;
+                }
+                roots.insert(root);
+                Ok(())
+            })();
+            if let Err(error) = result {
+                readiness.block(name, error);
             }
+        }
+        if !request.dry_run {
+            readiness.require_unblocked()?;
         }
         if request.prepare || request.up || request.freshen {
             let ignored_patterns = ignored_policy.patterns.as_slice();
@@ -676,13 +795,39 @@ pub(super) fn run(
             &source,
             &source_entries,
         )?;
+        if let Some(report) = readiness.preview.as_mut() {
+            report.source = source.clone();
+            report.source_commit_id = Some(source_commit.clone());
+        }
         // Full scans freeze dirty target work only after donor validation.
         if let Some(b) = batch.as_ref() {
             prepare::verify_targets(b)?;
         } else {
-            for root in &roots {
-                snapshot(&JjClient::new(root))?;
+            for name in &names {
+                if readiness.failures.contains_key(name) {
+                    continue;
+                }
+                let result = (|| {
+                    let target = JjClient::new(inventory.root(name)?);
+                    let before = request
+                        .dry_run
+                        .then(|| current_commit(&target))
+                        .transpose()?;
+                    snapshot(&target)?;
+                    if let Some((_, before)) = before {
+                        readiness
+                            .snapshotted
+                            .insert(name.clone(), current_commit(&target)?.1 != before);
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    readiness.block(name, error);
+                }
             }
+        }
+        if !request.dry_run {
+            readiness.require_unblocked()?;
         }
         let operation = client.operation_id()?;
         if source_client.resolve_one_at(&operation, "@")?.commit_id != source_wc
@@ -738,130 +883,161 @@ pub(super) fn run(
         let facts = client.workspace_target_facts_at(&operation)?;
         let mut symlink_commits = BTreeSet::new();
         for name in &names {
-            let root = inventory.root(name)?.canonicalize()?;
-            let fact = facts.get(name).context("selected workspace disappeared")?;
-            if fact.conflicted || fact.divergent {
-                bail!("workspace {name} is conflicted or divergent");
+            if readiness.failures.contains_key(name) {
+                continue;
             }
-            let tree_commit = base.as_ref().unwrap_or(&fact.commit_id);
-            require_unconflicted(&client, &operation, tree_commit)?;
-            let target_entries = entries(&client, &operation, tree_commit)?;
-            let target_rules = IgnoreRules::new(
-                &JjClient::new(&root),
-                &operation,
-                tree_commit,
-                &target_entries,
-                !request.replace_content,
-            )?;
-            for path in &ignored {
-                target_rules.require_ignored(path)?;
-                if target_entries.iter().any(|e| overlap(path, &e.path)) {
-                    bail!("ignored root overlaps tracked files: {}", path.display());
+            let planned = (|| {
+                let root = inventory.root(name)?.canonicalize()?;
+                let fact = facts.get(name).context("selected workspace disappeared")?;
+                if fact.conflicted || fact.divergent {
+                    bail!("workspace {name} is conflicted or divergent");
                 }
-                confined_parents(&root, path)?;
+                let tree_commit = base.as_ref().unwrap_or(&fact.commit_id);
+                require_unconflicted(&client, &operation, tree_commit)?;
+                let target_entries = entries(&client, &operation, tree_commit)?;
+                let target_rules = IgnoreRules::new(
+                    &JjClient::new(&root),
+                    &operation,
+                    tree_commit,
+                    &target_entries,
+                    !request.replace_content,
+                )?;
+                for path in &ignored {
+                    target_rules.require_ignored(path)?;
+                    if target_entries.iter().any(|e| overlap(path, &e.path)) {
+                        bail!("ignored root overlaps tracked files: {}", path.display());
+                    }
+                    confined_parents(&root, path)?;
+                }
+                let changed = changed_paths(&client, &operation, &source_commit, tree_commit)?;
+                let target_paths = target_entries
+                    .iter()
+                    .map(|e| &e.path)
+                    .collect::<BTreeSet<_>>();
+                let clones = source_entries
+                    .iter()
+                    .filter(|e| target_paths.contains(&e.path) && !changed.contains(&e.path))
+                    .map(|e| e.path.clone())
+                    .collect::<Vec<_>>();
+                let old_entries = entries(&client, &operation, &fact.commit_id)?;
+                verify_disk(
+                    &JjClient::new(&root),
+                    &operation,
+                    &fact.commit_id,
+                    &root,
+                    &old_entries,
+                )?;
+                // Symlink extraction is a real CLI capability, not inferred from
+                // file-list typing. Prove both current and future trees before any
+                // target's sparse checkout or pending state is changed.
+                if !symlink_commits.contains(tree_commit) {
+                    verify_symlink_support(&client, &operation, tree_commit, &target_entries)?;
+                    symlink_commits.insert(tree_commit);
+                }
+                preflight_obstructions(
+                    &root,
+                    &old_entries,
+                    &target_entries,
+                    request.replace_content,
+                )?;
+                preflight_links(
+                    &default,
+                    &root,
+                    &target_entries,
+                    &ignored,
+                    request.replace_content,
+                    &target_rules,
+                    &FutureContent {
+                        root: &root,
+                        source: &source,
+                        entries: &target_entries,
+                        old_paths: &old_entries
+                            .iter()
+                            .map(|e| e.path.clone())
+                            .collect::<Vec<_>>(),
+                        ignored: &ignored,
+                        replace: request.replace_content,
+                        client: &client,
+                        operation: &operation,
+                        commit: tree_commit,
+                    },
+                )?;
+                cow::probe_between(&source, &root)?;
+                let mut warnings = skipped.clone();
+                warnings.extend(absolute_links(&source, &ignored)?);
+                if request.dry_run {
+                    readiness.details.insert(
+                        name.clone(),
+                        format!(
+                            "{}; {}",
+                            if readiness.snapshotted.get(name).copied().unwrap_or(false) {
+                                "new working-copy updates snapshotted into JJ history"
+                            } else {
+                                "no new working-copy updates recorded by snapshot"
+                            },
+                            if fact.empty {
+                                "current working-copy tree matches its parent(s)"
+                            } else {
+                                "uncommitted working-copy changes present"
+                            },
+                        ),
+                    );
+                }
+                Ok(Pending {
+                    schema_version: 1,
+                    name: name.clone(),
+                    root: root.clone(),
+                    root_identity: Identity::read(&root)?,
+                    jj_identity: Identity::read(&root.join(".jj"))?,
+                    repository: repository_path.clone(),
+                    source: source.clone(),
+                    source_identity: Identity::read(&source)?,
+                    source_jj_identity: Identity::read(&source.join(".jj"))?,
+                    source_operation: source_operation.clone(),
+                    source_commit: source_commit.clone(),
+                    source_wc_commit: source_wc.clone(),
+                    target_operation: operation.clone(),
+                    old_commit: fact.commit_id.clone(),
+                    desired_commit: fact.commit_id.clone(),
+                    base_commit: base.clone(),
+                    sparse: vec![".".into()],
+                    clones,
+                    entries: target_entries,
+                    old_paths: old_entries.into_iter().map(|e| e.path).collect(),
+                    ignored: ignored.clone(),
+                    skipped: warnings,
+                    replace_content: request.replace_content,
+                    phase: Phase::Prepared,
+                    source_stamp: source_stamp.clone(),
+                    source_payload_digest: source_payload_digest.clone(),
+                    validated_source_wc_commit: source_wc.clone(),
+                    target_stamp: stamp(&root)?,
+                    config_root: default.clone(),
+                    link_config: link_config_bytes(&default)?,
+                    preparation_id: batch.as_ref().map(|b| b.id.clone()),
+                    history: bookmark_names
+                        .as_mut()
+                        .map(|allocator| {
+                            TargetHistory::plan(
+                                &client,
+                                &operation,
+                                &fact.commit_id,
+                                &source_commit,
+                                request.no_freshen_bookmark,
+                                allocator,
+                            )
+                        })
+                        .transpose()?,
+                    execution_diagnostics: Vec::new(),
+                })
+            })();
+            match planned {
+                Ok(plan) => plans.push(plan),
+                Err(error) => readiness.block(name, error),
             }
-            let changed = changed_paths(&client, &operation, &source_commit, tree_commit)?;
-            let target_paths = target_entries
-                .iter()
-                .map(|e| &e.path)
-                .collect::<BTreeSet<_>>();
-            let clones = source_entries
-                .iter()
-                .filter(|e| target_paths.contains(&e.path) && !changed.contains(&e.path))
-                .map(|e| e.path.clone())
-                .collect::<Vec<_>>();
-            let old_entries = entries(&client, &operation, &fact.commit_id)?;
-            verify_disk(
-                &JjClient::new(&root),
-                &operation,
-                &fact.commit_id,
-                &root,
-                &old_entries,
-            )?;
-            // Symlink extraction is a real CLI capability, not inferred from
-            // file-list typing. Prove both current and future trees before any
-            // target's sparse checkout or pending state is changed.
-            if symlink_commits.insert(tree_commit) {
-                verify_symlink_support(&client, &operation, tree_commit, &target_entries)?;
-            }
-            preflight_obstructions(
-                &root,
-                &old_entries,
-                &target_entries,
-                request.replace_content,
-            )?;
-            preflight_links(
-                &default,
-                &root,
-                &target_entries,
-                &ignored,
-                request.replace_content,
-                &target_rules,
-                &FutureContent {
-                    root: &root,
-                    source: &source,
-                    entries: &target_entries,
-                    old_paths: &old_entries
-                        .iter()
-                        .map(|e| e.path.clone())
-                        .collect::<Vec<_>>(),
-                    ignored: &ignored,
-                    replace: request.replace_content,
-                    client: &client,
-                    operation: &operation,
-                    commit: tree_commit,
-                },
-            )?;
-            cow::probe_between(&source, &root)?;
-            let mut warnings = skipped.clone();
-            warnings.extend(absolute_links(&source, &ignored)?);
-            plans.push(Pending {
-                schema_version: 1,
-                name: name.clone(),
-                root: root.clone(),
-                root_identity: Identity::read(&root)?,
-                jj_identity: Identity::read(&root.join(".jj"))?,
-                repository: repository_path.clone(),
-                source: source.clone(),
-                source_identity: Identity::read(&source)?,
-                source_jj_identity: Identity::read(&source.join(".jj"))?,
-                source_operation: source_operation.clone(),
-                source_commit: source_commit.clone(),
-                source_wc_commit: source_wc.clone(),
-                target_operation: operation.clone(),
-                old_commit: fact.commit_id.clone(),
-                desired_commit: fact.commit_id.clone(),
-                base_commit: base.clone(),
-                sparse: vec![".".into()],
-                clones,
-                entries: target_entries,
-                old_paths: old_entries.into_iter().map(|e| e.path).collect(),
-                ignored: ignored.clone(),
-                skipped: warnings,
-                replace_content: request.replace_content,
-                phase: Phase::Prepared,
-                source_stamp: source_stamp.clone(),
-                source_payload_digest: source_payload_digest.clone(),
-                validated_source_wc_commit: source_wc.clone(),
-                target_stamp: stamp(&root)?,
-                config_root: default.clone(),
-                link_config: link_config_bytes(&default)?,
-                preparation_id: batch.as_ref().map(|b| b.id.clone()),
-                history: bookmark_names
-                    .as_mut()
-                    .map(|allocator| {
-                        TargetHistory::plan(
-                            &client,
-                            &operation,
-                            &fact.commit_id,
-                            &source_commit,
-                            request.no_freshen_bookmark,
-                            allocator,
-                        )
-                    })
-                    .transpose()?,
-                execution_diagnostics: Vec::new(),
-            });
+        }
+        if !request.dry_run {
+            readiness.require_unblocked()?;
         }
     }
     if let Some(b) = batch.as_mut()
@@ -882,6 +1058,16 @@ pub(super) fn run(
     });
     let (report_source, report_commit) = match first {
         Some(first) => (first.source.clone(), first.source_commit.clone()),
+        None if request.dry_run && readiness.preview.is_some() => {
+            let preview = readiness.preview.as_ref().unwrap();
+            (
+                preview.source.clone(),
+                preview
+                    .source_commit_id
+                    .clone()
+                    .context("source proof unavailable")?,
+            )
+        }
         None => {
             let b = batch.as_ref().context("select at least one workspace")?;
             if !b.request.names.is_empty() {
@@ -904,12 +1090,37 @@ pub(super) fn run(
         selections: selection.selections,
         skipped: selection.skipped,
     };
+    if request.dry_run {
+        report.targets.extend(readiness.failures.values().cloned());
+    }
     for mut plan in plans {
         if request.dry_run {
+            let consequence = match &plan.base_commit {
+                Some(base) => format!(
+                    "RESET checkout to a new child of {base}; tracked work saved in JJ history at {} (not a feature rebase)",
+                    plan.old_commit
+                ),
+                None => format!(
+                    "KEEP current feature tree and uncommitted work at {}",
+                    plan.old_commit
+                ),
+            };
             report.targets.push(ReseedOutcome {
                 name: plan.name.clone(),
                 status: ReseedStatus::Planned,
-                message: describe(&plan, true),
+                message: if request.resume {
+                    describe(&plan, true)
+                } else {
+                    format!(
+                        "READY; {consequence}; {}; {}",
+                        readiness
+                            .details
+                            .get(&plan.name)
+                            .map(String::as_str)
+                            .unwrap_or("no new target snapshot"),
+                        describe(&plan, true)
+                    )
+                },
             });
             continue;
         }
@@ -971,7 +1182,8 @@ impl Inventory {
                 }
             }
         }
-        let context = checked_context(client)?;
+        let context = checked_context(client)
+            .context("cannot verify primary/caller JJ workspace topology")?;
         let expected_repository = context
             .jj
             .repository_path
@@ -1010,7 +1222,8 @@ impl Inventory {
         {
             bail!("primary JJ workspace discovery disagrees with repository owner registration");
         }
-        let primary = checked_context(&JjClient::new(default))?;
+        let primary = checked_context(&JjClient::new(default))
+            .context("cannot verify primary JJ workspace topology")?;
         if primary.jj.workspace_root.as_ref() != Some(default)
             || primary.jj.workspace_name.as_ref() != Some(primary_name)
             || repository(&JjClient::new(default))? != expected_repository

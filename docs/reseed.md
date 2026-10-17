@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
+    title: Implemented aggregate readiness through the existing preflight pipeline, explicit snapshot and dirty keep/reset consequences, and retained fast journal and repository identity checks
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Replaced the combined up contract with source-only prepare, documented reseed-only worker semantics, legacy journal recovery, and the bounded tracked-tree verification split
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -486,8 +488,38 @@ Symlinked `.gitignore` files are rejected when their rules cannot be verified.
 On Linux, mount-ID verification requires `statx` support (kernel 5.8 or newer);
 unavailable or blocked topology queries fail closed.
 
-`--dry-run` validates and reports the plan without clearing or refilling target
-contents. Planning can snapshot working copies to freeze their tracked work.
+### Check readiness before refilling
+
+```sh
+jw reseed --group workers --dry-run
+jw reseed worker-a worker-b --dry-run
+jw reseed worker-a worker-b --at <exact-commit> --dry-run
+```
+
+For a new reseed, `--dry-run` uses the actual preflight checks and reports each selected
+target as `PLAN …: READY` or `BLOCKED`. One blocked worker does not hide the
+others' results. It exits nonzero if any target is blocked. If the shared donor
+proof fails, targets that could not be checked say **not assessed**, never READY.
+Checks include unfinished refill/preparation, ownership and registration, sparse/stale state,
+conflicts, CoW support, ignored rules, obstructions, and configured links.
+Readiness describes the observed state, not a reservation against later writes;
+the real command checks again and never refills a valid subset of a batch whose
+preflight is blocked.
+
+No fetch, preparation command, refill, checkout reset, or deletion runs during
+this check. **It is not strictly read-only:** normal JJ snapshots can record
+working-copy changes, including auto-tracking under JJ's configured policy.
+Output says whether a snapshot recorded new updates and whether the working-copy
+tree differs from its parents. Unfinished refill/preparation targets are never
+snapshotted by readiness; other unsafe targets fail their prerequisite checks.
+
+Dirty work is not itself a blocker. Without `--at`, `KEEP` preserves the current
+feature tree, including snapshotted uncommitted changes. With `--at`, `RESET`
+means the real run will replace the checkout with a fresh child of the exact
+chosen base, **not rebase the feature**; the old work remains in JJ history at
+the commit printed in the preview. Dry-run does not perform that reset. Unrelated
+ignored/untracked contents are retained unless they are selected payload roots
+(which will be replaced) or `--replace-content` was explicitly requested.
 
 Normal snapshots are intentional: they preserve your real tracked work before
 replacement. Recovery avoids recording only the temporary half-filled tree;

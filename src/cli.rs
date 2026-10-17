@@ -414,7 +414,7 @@ struct ReseedCommand {
     /// Delete unrecorded target contents except .jj before refilling.
     #[arg(long, conflicts_with = "resume")]
     replace_content: bool,
-    /// Validate and explain the selected operation without reseeding files.
+    /// Report READY/BLOCKED for every target without refilling/resetting files; may snapshot working copies.
     #[arg(long)]
     dry_run: bool,
     /// Safely finish an interrupted operation using its frozen pending plan.
@@ -639,6 +639,11 @@ fn run_refill(request: crate::reseed::ReseedRequest) -> Result<()> {
 fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> Result<()> {
     use crate::reseed::ReseedStatus;
     if report.dry_run {
+        if command == "reseed" {
+            println!(
+                "Readiness check: JJ snapshots may record working-copy changes; no fetch, preparation, refill, checkout reset, or deletion is performed."
+            );
+        }
         for selected in &report.selections {
             println!(
                 "SELECT {:?} {:?} via {}",
@@ -655,7 +660,11 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
         report
             .source_commit_id
             .as_deref()
-            .unwrap_or("post-fetch exact commit unknown")
+            .unwrap_or(if command == "reseed" {
+                "source not verified"
+            } else {
+                "post-fetch exact commit unknown"
+            })
     );
     if let Some(summary) = &report.preparation_summary {
         println!("{summary}");
@@ -664,12 +673,28 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
         let label = match target.status {
             ReseedStatus::Planned => "PLAN",
             ReseedStatus::Succeeded => "OK",
+            ReseedStatus::Failed if report.dry_run => "BLOCKED",
             ReseedStatus::Failed => "FAIL",
             ReseedStatus::Pending => "PENDING",
         };
         println!("{label} {}: {}", target.name, target.message);
     }
     if report.has_failures() {
+        if report.dry_run {
+            bail!(
+                "{command} readiness blocked; no targets refilled: {}",
+                report
+                    .targets
+                    .iter()
+                    .filter(|target| matches!(
+                        target.status,
+                        ReseedStatus::Failed | ReseedStatus::Pending
+                    ))
+                    .map(|target| format!("{}: {}", target.name, target.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
         bail!("{command} did not complete for every target; use --resume for pending targets")
     }
     Ok(())

@@ -1,7 +1,10 @@
 //! Snapshot-free group resolution. Membership is a registration fact, never an
 //! inference from a directory basename or a reason to adopt another checkout.
 
-use super::{ReseedRequest, ReseedSelection, ReseedSelectionMiss, UnmatchedPolicy};
+use super::{
+    ReseedOutcome, ReseedRequest, ReseedSelection, ReseedSelectionMiss, ReseedStatus,
+    UnmatchedPolicy,
+};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -35,7 +38,7 @@ pub(super) type Registrations = BTreeMap<String, Option<PathBuf>>;
 pub(super) struct SelectionPlan {
     pub selections: Vec<ReseedSelection>,
     pub skipped: Vec<ReseedSelectionMiss>,
-    errors: Vec<String>,
+    pub issues: Vec<ReseedOutcome>,
 }
 
 impl SelectionPlan {
@@ -50,8 +53,15 @@ impl SelectionPlan {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !self.errors.is_empty() {
-            bail!("reseed selection failed: {}", self.errors.join("; "));
+        if !self.issues.is_empty() {
+            bail!(
+                "reseed selection failed: {}",
+                self.issues
+                    .iter()
+                    .map(|issue| issue.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
         }
         if self.selections.is_empty() {
             bail!("no workspaces selected; nothing reseeded");
@@ -76,6 +86,16 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
+    fn reject(&mut self, name: &str, message: String) {
+        if !self.plan.issues.iter().any(|issue| issue.name == name) {
+            self.plan.issues.push(ReseedOutcome {
+                name: name.to_owned(),
+                status: ReseedStatus::Failed,
+                message,
+            });
+        }
+    }
+
     fn miss(&mut self, candidate: String, reason: &str, policy: UnmatchedPolicy) {
         let strict = self
             .misses
@@ -97,10 +117,10 @@ impl Resolver<'_> {
         };
         // Root lookup errors are hard failures, regardless of group policy.
         let Some(root) = root else {
-            self.plan.errors.push(format!(
-                "workspace {} has no usable recorded root",
-                quote(name)
-            ));
+            self.reject(
+                name,
+                format!("workspace {} has no usable recorded root", quote(name)),
+            );
             return Ok(());
         };
         if let Some(selected) = self.plan.selections.iter_mut().find(|s| s.name == name) {
@@ -157,11 +177,16 @@ impl Resolver<'_> {
         for (candidate, names) in candidates {
             if !names.is_empty() {
                 if let Some(obstruction) = non_directory_ancestor(&candidate)? {
-                    self.plan.errors.push(format!(
-                        "registered workspace path {} is not a real directory: {}",
-                        quote_path(&candidate),
-                        quote_path(&obstruction)
-                    ));
+                    for name in &names {
+                        self.reject(
+                            name,
+                            format!(
+                                "registered workspace path {} is not a real directory: {}",
+                                quote_path(&candidate),
+                                quote_path(&obstruction)
+                            ),
+                        );
+                    }
                 }
                 for name in names {
                     self.name(&name, origin, policy)?;
@@ -256,10 +281,11 @@ pub(super) fn resolve(
     }
     for (miss, strict) in resolver.misses {
         if strict {
-            resolver
-                .plan
-                .errors
-                .push(format!("{} ({})", miss.candidate, miss.reason));
+            resolver.plan.issues.push(ReseedOutcome {
+                name: miss.candidate.clone(),
+                status: ReseedStatus::Failed,
+                message: format!("{} ({})", miss.candidate, miss.reason),
+            });
         } else {
             resolver.plan.skipped.push(miss);
         }

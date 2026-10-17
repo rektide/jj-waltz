@@ -37,6 +37,73 @@ struct Fixture {
     log: PathBuf,
     baseline: String,
 }
+
+#[test]
+fn readiness_blocks_a_target_with_unfinished_preparation_before_snapshotting_it() {
+    let Some(f) = Fixture::new() else { return };
+    if !f.cow_supported() {
+        return;
+    }
+    let ready = f.temp.path().join("ready");
+    f.jj(
+        &f.source,
+        &[
+            "workspace",
+            "add",
+            "--name",
+            "ready",
+            "-r",
+            &f.baseline,
+            ready.to_str().unwrap(),
+        ],
+    );
+    f.script("exit 31\n");
+    fails(
+        f.prepare(&["--from", f.target.to_str().unwrap()]),
+        "configured preparation command failed",
+    );
+    let journal = f.active();
+    let journal_before = fs::read(&journal).unwrap();
+    let log_before = fs::read(&f.log).unwrap();
+    let worker_before = f.id(&f.target, "@");
+    let ready_before = f.id(&ready, "@");
+    fs::write(f.target.join("version"), "unfinished preparation work\n").unwrap();
+    let output = f
+        .jw()
+        .args(["reseed", "worker", "ready", "--from"])
+        .arg(&f.source)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    let output = fails(output, "target has unfinished preparation");
+    assert!(output.contains("BLOCKED worker:"), "{output}");
+    assert!(output.contains("jw prepare --resume"), "{output}");
+    assert!(output.contains("PLAN ready: READY"), "{output}");
+    assert_eq!(f.id(&f.target, "@"), worker_before);
+    assert_eq!(f.id(&ready, "@"), ready_before);
+    assert_eq!(
+        fs::read(f.target.join("version")).unwrap(),
+        b"unfinished preparation work\n"
+    );
+    assert_eq!(fs::read(journal).unwrap(), journal_before);
+    assert_eq!(
+        fs::read(&f.log).unwrap(),
+        log_before,
+        "readiness must not retry preparation"
+    );
+
+    fails(
+        f.jw()
+            .args(["reseed", "ready", "worker", "--from"])
+            .arg(&f.source)
+            .output()
+            .unwrap(),
+        "target has unfinished preparation",
+    );
+    assert_eq!(f.id(&f.target, "@"), worker_before);
+    assert_eq!(f.id(&ready, "@"), ready_before);
+}
+
 impl Fixture {
     fn new() -> Option<Self> {
         Self::with_colocation(false)

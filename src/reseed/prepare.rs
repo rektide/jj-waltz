@@ -324,14 +324,27 @@ fn resume_command(request: &RecordedRequest) -> Result<String> {
 pub(super) fn ensure_available(store: &Store, source: &Path, own: Option<&Batch>) -> Result<()> {
     for batch in batches(store)? {
         if batch.source == source && own.is_none_or(|own| own.id != batch.id) {
-            bail!(
-                "source has an active preparation batch in phase {:?}; use `{}`; source progress was not rolled back",
-                batch.phase,
-                resume_command(&batch.request)?
-            );
+            bail!("{}", unavailable_message(&batch)?);
         }
     }
     Ok(())
+}
+
+fn unavailable_message(batch: &Batch) -> Result<String> {
+    Ok(format!(
+        "source has an active preparation batch in phase {:?}; use `{}`; source progress was not rolled back",
+        batch.phase,
+        resume_command(&batch.request)?,
+    ))
+}
+
+/// Read preparation journals once for the batch, not once per selected worker.
+/// An unfinished donor cannot simultaneously become a refill target.
+pub(super) fn source_blockers(store: &Store) -> Result<BTreeMap<PathBuf, String>> {
+    batches(store)?
+        .into_iter()
+        .map(|batch| Ok((batch.source.clone(), unavailable_message(&batch)?)))
+        .collect()
 }
 
 pub(super) fn preflight(
