@@ -1878,20 +1878,18 @@ fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
         let mut drift = Vec::new();
         if current != plan.validated_source_wc_commit {
             drift.push(format!(
-                "working-copy commit moved from the frozen {} to {} (another jj command snapshotted or edited the donor)",
+                "new jj work was recorded in the donor (its current commit changed from {} to {})",
                 plan.validated_source_wc_commit, current
             ));
         }
         if before != plan.source_stamp {
-            drift.push(format!(
-                "file scan differs from the frozen scan: {}",
-                describe_stamp_delta(&plan.source_stamp, &before)
-            ));
+            drift.push(format!("files changed: {}", describe_stamp_delta(&plan.source_stamp, &before)));
         }
         bail!(
-            "donor {} changed after the refill plan was frozen{}; \
-             pause other writers in the donor and rerun this command, which replans from its current state; \
-             a recorded pending refill is continued with `jw reseed --resume` once the donor is restored to the frozen state",
+            "the donor {} changed while this command was running (an editor, build, or another \
+             jj command wrote to it){}, so reseed stopped rather than guess. Nothing unsafe was \
+             done to your workspaces. Run the same command again once the donor is quiet; if a \
+             workspace then reports a pending refill, finish it with `jw reseed --resume`.",
             plan.source.display(),
             if drift.is_empty() { String::new() } else { format!(": {}", drift.join("; ")) }
         );
