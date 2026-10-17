@@ -5,9 +5,11 @@ description: Release history and unreleased workspace lifecycle changes.
 resource: /CHANGELOG.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
+    title: Removed all prepare/reseed recorded recovery and legacy preservation code, retained live safeguards, and documented explicit out-of-band recovery
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Recorded the prepare/reseed command split — up deleted, source-only prepare with exact frozen commit, reseed-only worker semantics, legacy recovery routing, and the tracked-tree verification change
   - resource: "opencode://ses_ebcf7a55dffeC3pTCPy2RUXq4B"
@@ -32,6 +34,16 @@ sources:
 
 ## Unreleased
 
+- Delete reseed/prepare progress journals, write-ahead phases, receipts, legacy
+  readers, recovery reconstruction, and both `--resume` flags. Reseed is one
+  forward pass with in-memory commit pinning. Default bookmark coverage remains
+  required; mutation errors name the work tip/bookmark and recovery commands:
+  `jj new <bookmark>`, then `jj sparse reset` in the affected root, then re-run
+  reseed. Sparse/mid-refill targets are refused before snapshots; jw never repairs
+  them. Old progress files are ignored without migration or cleanup. Failed
+  prepare runs are retried from the start after operator repair; commands must
+  tolerate retry. Remove donor stamp/digest walks used only for journal reuse;
+  live tracked-tree, ignore-rule, identity, bookmark, and CoW checks remain.
 - Replace the combined `jw up` command with a `prepare`/`reseed` split.
   `jw prepare` is source-only from any registered workspace: it
   selects/fetches one pinned upstream (CLI/local goal, native tracked pair, or
@@ -39,18 +51,14 @@ sources:
   preparation commands, verifies selected ignored payload, and reports the exact
   frozen commit with an optional `--format=json` report. It accepts only
   `--from`, `--source-at`, `--copy-ignored`/`--no-copy-ignored`, `--dry-run`,
-  `--resume`, and `--format`; it has no names, groups, `--at`,
+   and `--format`; it has no names, groups, `--at`,
   `--replace-content`, or `--no-freshen-bookmark`. It never implicitly selects or
   refills a worker — the selected donor, possibly the caller's own checkout, is
   the only workspace it mutates — and it creates no worker-preservation bookmarks
   (native fetch can update refs). `reseed` keeps its worker copying
   semantics: retain the feature tree by default, or reset deliberately with
   `--at <prepared-commit>` to consume a prepared commit without another
-  preparation. Feature rebasing stays ordinary `jj`. New preparation journals are
-  v4 with an explicitly empty target plan; legacy v1/v2 batches and removed-up v3
-  journals recover only through `reseed --resume` with their recorded intent,
-  while `prepare --resume` continues source-only preparation and never
-  reinterprets old target mutation. `[freshen]` configuration and the deprecated
+  preparation. Feature rebasing stays ordinary `jj`. `[freshen]` configuration and the deprecated
   `[prepare]` alias are unchanged.
 - Speed up reseed/prepare verification for intact workspaces: replace the
   per-file byte-extraction proof with a bounded JJ tracked-tree check (one
@@ -58,10 +66,8 @@ sources:
   empty `jj diff --from @ --to <frozen commit> --summary`). The proof is JJ
   tracked-tree equality, not an unconditional raw-byte audit, and a mismatch can
   be reported after that snapshot ran, possibly recording a rejected edit.
-  Partial recovery targets are unchanged: they still reconstruct and raw-verify
-  every recorded byte/type/mode before any snapshot-capable command, and fresh
-  execution no longer enters that reconstruction path when the recorded target
-  phase shows untouched preparation. Preparation command stdout is forwarded to
+  Sparse or mid-refill targets are refused, not reconstructed.
+  Preparation command stdout is forwarded to
   stderr so `--format=json` stays clean.
 - Remove `jw remove` bookmark prompting and the `--keep-bookmark` flag: associated
   bookmarks are kept by default with no interactive ask, and only an explicit
@@ -71,7 +77,7 @@ sources:
   prepare, and advance targets with freshen timestamp bookmarks) is replaced by
   the prepare/reseed split above. The add/s `--source-at` assertion,
   ordinary reseed selection/current-target rules, private ignored payloads,
-  wildcard groups, and legacy recovery contracts described below remain as
+  and wildcard groups described below remain as
   stated.
 - Add optional add/s `--source-at` as a snapshotted donor tracked-tree assertion,
   independent of target `--at`. Equal trees may have different commit IDs; the
@@ -81,10 +87,7 @@ sources:
   donor `@`. Bare reseed selects only the current registered variant; primary
   invocation requires names/groups. Explicit selection suppresses implicit current,
   even when a group matches nothing. Keep target work by default. Resolve
-  current/pending identity without snapshots; resume
-  uses recorded IDs. Complete original target order is required only while source
-  preparation has no frozen target plans; frozen targets/subsets resume independently
-  without refetch/build, and bare resume selects only the current target.
+  identity without snapshots; sparse/mid-refill targets require out-of-band recovery.
 - Add/s now copy selected ignored payloads privately with real CoW independently
   of tracked checkout mode, reject private-link overlap, and clean up owned read-only
   copies on failure. Actual payload selection rejects nested donor destinations
@@ -98,9 +101,8 @@ sources:
   includes reseed/preparation and add/s new-workspace payloads.
 - Add repository-local `[freshen]` single `command` or sequential `commands`
   argv, rejecting both forms even when empty. Retain `[prepare]` as a warned
-  alias and preserve v1 pending preparation recovery. New v2 journals freeze
-  sequence/progress, skip completed steps, and explicitly retry interrupted
-  in-flight commands when needed; arbitrary command execution is not exactly-once.
+  alias. Commands must tolerate retry from the start after failure; arbitrary
+  command execution is not exactly-once.
   No commands means no guessed build, while existing selected ignored payload
   may still be copied and is reported as existing data rather than freshly built.
 - Add shared `add`/`s` `--path DESTINATION` and optional `--from SOURCE`, defaulting
@@ -115,12 +117,12 @@ sources:
   `colocate=true` alone works, while both explicitly true settings conflict unless
   overridden. Ordinary-checkout fallbacks remain and now all report warnings,
   including rejected copied state and Watchman, in CLI and manager output.
-- Add recoverable donor preparation (now activated through `up`): snapshot real
+- Add source-only donor preparation through `prepare`: snapshot real
   work, fetch upstream, select a post-fetch source baseline, and run trusted local
   argv before distribution. Add prospective/no-action
-  previews, source ownership checks, verified dependency payload binding, and
-  recoverable atomic batch handoff with completion receipts. Source preparation
-  blocks unsafe borrowing after failure; settings alone never activate it.
+  previews, source ownership checks, and selected dependency validation.
+  Settings alone never activate it; the operator must fix failed installations
+  before borrowing their payload.
 - Extend reseed groups with `names`, `name_globs`, and `path_globs`. Match exact
   registrations in the current repository, with optional `on_unmatched = "warn"`
   and `--on-unmatched error|warn` overrides. List all skipped unrelated candidates
@@ -131,7 +133,7 @@ sources:
   feature revisions by default, or explicitly start children with `--at`;
   optionally replace named ignored dependency roots or all unrecorded contents.
   Include local source/group shortcuts, dry-run plans, verified public-JJ sparse
-  prefill, and repository-scoped interruption recovery without private JJ state
+  prefill, and explicit out-of-band recovery without private JJ state
   copying. CoW capability and ownership checks fail closed before clearing files.
 - When `--from` and configured `source` are absent, reseed discovers the verified
   primary checkout of the current JJ repository as its donor. Explicit and local

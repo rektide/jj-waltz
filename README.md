@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
+    title: Deleted prepare and reseed journals, receipts, and resume machinery in favor of explicit out-of-band bookmark recovery
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
     title: Added the built-in all group with donor-aware membership, aggregate blockers, and literal recovery guidance
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
@@ -128,7 +130,7 @@ it can be the primary or an explicitly selected workspace.
 | `--at` | Explicit creation base | Explicit reset base | — |
 | Fetch / preparation commands | Never | Never | One pinned upstream / local argv |
 | `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Verify selected payload |
-| `--dry-run`, `--resume` | — | Supported | Supported |
+| `--dry-run` | — | Supported | Supported |
 | `--format=json` | — | — | Machine-readable report |
 | `--replace-content` | — | Discard unrecorded target contents | — |
 | Bookmarks | Optional creation bookmark | Existing bookmarks stay | No preservation bookmarks; fetch may update refs |
@@ -311,7 +313,9 @@ commands = [
 ```
 
 Commands run sequentially as argv in the donor root, without an implicit shell.
-Each must leave tracked files, including lockfiles, unchanged. Use `command = [...]`
+Each must leave tracked files, including lockfiles, unchanged and tolerate retry.
+After failure, fix the source and run prepare again; every command may run again.
+Use `command = [...]`
 for one command or `commands = [[...], ...]`, never both, even when empty. No commands
 means no guessed installer/build: selected existing payload can still be borrowed,
 but is not freshly built. Preparation commands are repository-local, run only via
@@ -385,30 +389,28 @@ permits deleting unrecorded target contents, including `.env`, except `.jj`.
 
 Verifying an intact workspace is a bounded JJ tracked-tree check: it may snapshot
 (and record a rejected edit) before reporting a mismatch, and it never tracks
-additional files; automatic stale-tree updates are disabled. Half-filled recovery
-targets still
-reconstruct and re-verify before any normal snapshot-capable command.
+additional files; automatic stale-tree updates are disabled. Sparse or mid-refill
+targets are refused before snapshotting; `jw` never repairs them.
 
-After interruption, **resume before snapshotting a half-filled target**:
+After an interrupted refill, recover **out of band** in the affected root using
+the covering bookmark printed by the failed command:
 
 ```sh
-jw prepare --resume               # source-only preparation; frozen goal not refetched
-jw reseed feature --resume        # ordinary reseed recovery
-jw reseed worker-a worker-b --resume  # legacy batches, recorded order and intent
+jj new <bookmark>
+jj sparse reset
+# Then run the intended jw reseed command again.
 ```
 
-Recovery uses recorded intent without new donor, revision, copy, replacement, group,
-or bookmark overrides. A frozen goal is not refetched/rebuilt; changed recorded
-source/payload state must be restored rather than adopted. Completed command steps
-are skipped; interrupted in-flight commands may retry after partial side effects.
-Arbitrary commands are not exactly-once. Partial batch progress is reported separately.
+The default bookmark guard keeps your work named before mutation. With explicit
+`--allow-unbookmarked`, use the printed prior commit or JJ's operation log instead.
+Do not run ordinary snapshotting commands on a half-filled checkout before this
+deliberate recovery. Successful peers in a failed batch stay complete.
 
-`reseed --freshen` is removed. Legacy preparation journals — including the
-never-released combined `up` batches — retain their original history intent through
-`reseed --resume`; `prepare --resume` only continues source-only preparation and
-never reinterprets old target mutation. `[prepare]` remains a warned alias for
-`[freshen]`; rename it after pending recovery finishes, since policy bytes are
-frozen. See [recovery details](docs/reseed.md#safety-and-recovery).
+There are no progress journals, receipts, migrations, or `--resume` flags. Old
+files are ignored and left untouched. If prepare fails, fix its donor and run
+prepare again; commands may repeat and the upstream is selected/fetched anew.
+`[prepare]` remains a warned alias for `[freshen]`.
+See [recovery details](docs/reseed.md#safety-and-recovery).
 
 ## Inspect and manage
 

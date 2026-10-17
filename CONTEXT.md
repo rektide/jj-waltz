@@ -5,9 +5,11 @@ description: Workspace lifecycle vocabulary and safety contracts.
 resource: /CONTEXT.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
+    title: Replaced journal-based recovery with forward-only reseed, bookmark-based out-of-band recovery, and preparation retries from the start
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Redefined source preparation as source-only prepare with an exact prepared commit, reseed-only worker semantics, and legacy-journal recovery routing
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -213,9 +215,6 @@ by itself a claim that a command exposing that concept already exists.
   snapshotted donor `@`; tree assertions do not require equal commit identities.
   Differences from a target are handled per path, not treated as a reason to
   discard feature changes.
-  Resume uses recorded IDs, not reevaluated defaults. Source preparation requires
-  the full recorded target order until target plans freeze; frozen targets/subsets
-  can then resume independently. Current selection never infers an entire batch.
 - Prepare selects/pins upstream before fetch: explicit CLI/local goal, otherwise a
   unique applicable tracked pair, otherwise a unique exact remote at the clean
   source base (including untracked refs), otherwise require `--source-at`. No
@@ -223,14 +222,17 @@ by itself a claim that a command exposing that concept already exists.
   work blocks. It is source-only from any registered workspace: no target
   selection, no refill, no `--at`, and no worker-preservation bookmarks; it
   mutates only its selected donor — possibly the caller's own checkout — leaving
-  other workspaces untouched. Completion reports the exact frozen commit and records a
-  receipt with an explicitly empty target plan (v4 journals). `prepare --resume`
-  continues only source-only preparation; legacy v1/v2/v3 batches — including
-  removed-up target mutation — recover solely through `reseed --resume` with
-  their recorded order, history intent, and frozen plans, never through `prepare`.
+  other workspaces untouched. Completion reports the exact commit, including
+  `source_commit_id` in JSON. Failure leaves progress in place; fix the donor and
+  run prepare again. Every configured command may repeat and must tolerate retry.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
-  snapshotted as user work during resume.
+  snapshotted as user work. Default-on bookmark coverage is checked before mutation;
+  `--allow-unbookmarked` explicitly bypasses only coverage. Failed refills name the
+  covered work tip, bookmark, and root: recover there with `jj new <bookmark>` and
+  `jj sparse reset`, then re-run reseed. Sparse/mid-refill targets are refused
+  before snapshots, never repaired. There are no progress journals, receipts,
+  migrations, or `--resume`; old files are ignored without cleanup.
 
 ## Milestone-zero command contract
 

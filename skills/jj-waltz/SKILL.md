@@ -6,9 +6,11 @@ title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
+    title: Replaced recorded recovery with forward-only reseed and deliberate bookmark recovery, and retry-from-start source preparation
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
     title: Documented reserved all selection, donor exclusions, readiness blockers, and literal recovery
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
@@ -60,7 +62,7 @@ supplying files. Verify identity rather than relying on a directory named `defau
 | Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
 | `--source-at` | Donor tree assertion | Donor tree assertion | Upstream goal |
 | Fetch / preparation | Never | Never | Pinned upstream / local argv |
-| Preview / resume | — | `--dry-run` / `--resume` | `--dry-run` / `--resume` |
+| Preview | — | `--dry-run` | `--dry-run` |
 
 If “update” leaves keeping versus advancing work unclear, ask which is intended.
 `prepare` never selects or refills a worker. Consume its exact reported commit with
@@ -155,8 +157,8 @@ navigation tokens. `--from` changes the donor, not the caller's primary/variant 
 Built-in `--group all` needs no configuration. It excludes the verified primary
 and effective donor by root identity, not the name `default`; unsafe or
 unbookmarked registrations remain BLOCKED, and any blocker prevents all refills.
-Local group `all` definitions are rejected. Resume only recorded literal names,
-never a dynamic group. See [all registered workers](../../docs/reseed.md#all-registered-workers).
+Local group `all` definitions are rejected.
+See [all registered workers](../../docs/reseed.md#all-registered-workers).
 
 **Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
 assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
@@ -170,7 +172,7 @@ scratch uses its parent; described empty changes and merges count themselves.
 Dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
 move bookmarks to defeat a refusal. The operator can deliberately name the work
 or explicitly choose `--allow-unbookmarked`; that bypasses only this requirement,
-not ownership, content, pending-state, or CoW checks.
+not ownership, content, sparse-state, or CoW checks.
 
 **Prepare** is source-only from any registered workspace — plain `jw prepare` at
 the primary prepares the primary donor:
@@ -186,9 +188,9 @@ the primary prepares the primary donor:
    abandoning source work to force progress.
 3. Local `[freshen]` provides `command` or ordered `commands`, never both even when
    empty. Run argv sequentially in donor cwd, without an implicit shell. Steps must
-   leave tracked files unchanged. No commands means existing payload, not a fresh
+    leave tracked files unchanged and tolerate retry from the start. No commands means existing payload, not a fresh
    build; do not guess an installer or use global build commands.
-4. Completion reports the **exact frozen commit** and writes a source-only receipt.
+4. Completion reports the **exact frozen commit**, also in `--format=json`.
    Prepare never selects or refills a worker and creates no worker-preservation
    bookmarks (native fetch can update refs). Consume the commit with
    `jw reseed worker --at <commit>`; feature rebasing stays ordinary `jj` work —
@@ -216,30 +218,27 @@ For shared-directory links, `.jwlinks.toml`, or private-copy/link collisions, re
 [links](references/links.md). Reflinks and shared symlink destinations have different
 mutation behavior; do not substitute one for the other or overwrite a conflict.
 
-## Recover before ordinary snapshots
+## Recover out of band
 
 If a refill stops, avoid snapshot-capable JJ commands in a half-filled target.
-Resume the stored workflow without new donor, revision, copying, group, replacement,
-or bookmark overrides:
+`jw` refuses sparse/mid-refill targets and prints the two-command remedy. Use the
+covering bookmark named in the error, in the affected workspace:
 
 ```sh
-jw prepare --resume               # source-only preparation; frozen goal not refetched
-jw reseed feature --resume        # reseed recovery
-jw reseed worker-a worker-b --resume  # legacy batches, recorded order and intent
+jj new <bookmark>
+jj sparse reset
+# Then re-run the intended jw reseed command.
 ```
 
-Frozen recovery uses exact recorded intent and receipts, without refetching,
-rebuilding, or reallocating recorded bookmarks. Restore recorded source/payload
-state when
-validation refuses; do not borrow partially installed dependencies or use
-repository-wide undo. Completed command steps are skipped; interrupted in-flight
-commands may retry after side effects, not exactly-once.
+The default bookmark guard preserves named work before mutation. For an explicit
+`--allow-unbookmarked` run, recover the printed prior commit or use JJ's operation
+log. `jw` never repairs partial contents. There are no journals, receipts,
+migrations, or `--resume`; old files are ignored without cleanup.
 
-`reseed --freshen` is removed. Legacy preparation journals — including removed
-combined-up batches — still use `reseed --resume` with
-their original history intent; `prepare --resume` never reinterprets them.
-Rename legacy `[prepare]` only after recovery;
-frozen local policy bytes must match. [Recovery contract](../../docs/reseed.md#safety-and-recovery).
+If prepare fails, fix the source and run prepare again. Every configured command
+may repeat; do not borrow incomplete dependencies. No command execution is
+exactly-once. `[prepare]` remains a deprecated alias for `[freshen]`.
+[Recovery contract](../../docs/reseed.md#safety-and-recovery).
 
 ## Inspect, adopt, repair, or clean up
 
@@ -257,11 +256,11 @@ Use the owning app for app-created checkout cleanup. Consult the
   warnings before claiming CoW or complete payload setup.
 - **Reseed:** confirm retained revision/tree or the requested explicit reset, plus
   payload/refill completion.
-- **Prepare:** confirm the exact reported commit, command/payload completion, and
-  the receipt; a source-only success has no target. Consume it via reseed `--at`
+- **Prepare:** confirm the exact reported commit and command/payload completion;
+  a source-only success has no target. Consume it via reseed `--at`
   and verify the worker separately.
-- **Recovery:** distinguish completed, failed, pending, and already-receipted work
-  before resuming normal snapshots. Partial progress is not batch success.
+- **Recovery:** distinguish completed and failed targets. Recover failed refills
+  deliberately before retrying; partial progress is not batch success.
 - **Links/lifecycle:** use the branch reference's completion checks; directory,
   bookmark, and ownership state must match the requested outcome.
 
