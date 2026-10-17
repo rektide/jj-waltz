@@ -66,6 +66,13 @@ pub(crate) fn validate_tree(root: &Path) -> Result<()> {
     imp::validate_tree(root)
 }
 
+/// One preflight traversal of a selected ignored payload root: the full
+/// [`validate_tree`] checks plus a warning for every source-bound absolute
+/// symlink found along the way, instead of a second dedicated walk.
+pub(crate) fn validate_payload_root(source: &Path, root: &Path, warnings: &mut Vec<String>) -> Result<()> {
+    imp::validate_payload_root(source, root, warnings)
+}
+
 /// Check that `child` lives on the same mounted filesystem as `parent`.
 ///
 /// Both paths are inspected without traversing symlinks, so a symlinked child
@@ -80,15 +87,15 @@ pub(crate) fn validate_same_mount(parent: &Path, child: &Path) -> Result<()> {
 
 /// Strictly clone the tree at `source` to the not-yet-existing `destination`.
 ///
-/// Validation runs first and fails closed on nested repositories, special
-/// entries, mounted children, and a symlinked source root. Regular files are
-/// reflinked with their permission bits and modification times restored,
-/// symlinks are recreated as links and never traversed, and directories are
-/// created fresh: an existing destination is an error, so callers clear the
-/// selected path first. Directory modes are applied only after their contents
-/// are copied, so restrictive source directories clone cleanly. A failed
-/// reflink is an error; there is no ordinary-copy fallback. Administrative
-/// names are skipped defensively even though validation already rejected them.
+/// Every entry is validated inline during the single clone traversal and the
+/// clone fails closed on nested repositories, special entries, mounted
+/// children, and a symlinked source root. Regular files are reflinked with
+/// their permission bits and modification times restored, symlinks are
+/// recreated as links and never traversed, and directories are created fresh:
+/// an existing destination is an error, so callers clear the selected path
+/// first. Directory modes are applied only after their contents are copied, so
+/// restrictive source directories clone cleanly. A failed reflink is an error;
+/// there is no ordinary-copy fallback.
 pub(crate) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
     imp::clone_tree(source, destination)
 }
@@ -233,10 +240,18 @@ mod imp {
         let metadata = fs::symlink_metadata(root).with_context(|| format!("failed to inspect {}", root.display()))?;
         ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", root.display());
         ensure!(metadata.is_dir(), "refusing {}: it is not a directory", root.display());
-        validate_directory(root)
+        validate_directory(root, None)
     }
 
-    fn validate_directory(directory: &Path) -> Result<()> {
+    pub(super) fn validate_payload_root(source: &Path, root: &Path, warnings: &mut Vec<String>) -> Result<()> {
+        let path = source.join(root);
+        let metadata = fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {}", path.display()))?;
+        ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", path.display());
+        ensure!(metadata.is_dir(), "refusing {}: it is not a directory", path.display());
+        validate_directory(&path, Some((source, warnings)))
+    }
+
+    fn validate_directory(directory: &Path, mut links: Option<(&Path, &mut Vec<String>)>) -> Result<()> {
         for entry in fs::read_dir(directory).with_context(|| format!("failed to read {}", directory.display()))? {
             let entry = entry.with_context(|| format!("failed to read {}", directory.display()))?;
             let path = entry.path();
@@ -244,12 +259,23 @@ mod imp {
             ensure!(!is_admin_name(&entry.file_name()), "refusing {}: it is an administrative entry", path.display());
             let file_type = metadata.file_type();
             if file_type.is_symlink() {
-                // Cloned as a link; its target is never inspected.
+                // Cloned as a link; its target is never inspected, but an
+                // absolute one is reported as not self-contained.
+                if let Some((base, warnings)) = links.as_mut() {
+                    let target = fs::read_link(&path).with_context(|| format!("failed to read {}", path.display()))?;
+                    if target.is_absolute() {
+                        warnings.push(format!(
+                            "absolute dependency symlink {} -> {} (not self-contained)",
+                            path.strip_prefix(*base).expect("walk starts at base").display(),
+                            target.display()
+                        ));
+                    }
+                }
                 continue;
             }
             validate_same_mount(directory, &path)?;
             if file_type.is_dir() {
-                validate_directory(&path)?;
+                validate_directory(&path, links.as_mut().map(|(base, warnings)| (*base, &mut **warnings)))?;
             } else {
                 ensure!(file_type.is_file(), "refusing {}: it is an unsupported special file", path.display());
             }
@@ -303,8 +329,21 @@ mod imp {
     }
 
     pub(super) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
-        validate_tree(source)?;
-        clone_directory(source, destination)
+        let metadata = fs::symlink_metadata(source).with_context(|| format!("failed to inspect {}", source.display()))?;
+        ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", source.display());
+        ensure!(metadata.is_dir(), "refusing {}: it is not a directory", source.display());
+        let preexisting = fs::symlink_metadata(destination).is_ok();
+        // Validation happens inline during the single clone traversal. A failure
+        // removes a freshly created destination best-effort so a rejected tree
+        // leaves nothing behind, without a second validation walk; a destination
+        // that already existed is never touched by cleanup.
+        if let Err(error) = clone_directory(source, destination) {
+            if !preexisting {
+                let _ = super::remove_path(destination);
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn clone_directory(source_directory: &Path, destination_directory: &Path) -> Result<()> {
@@ -313,11 +352,7 @@ mod imp {
         for entry in fs::read_dir(source_directory).with_context(|| format!("failed to read {}", source_directory.display()))? {
             let entry = entry.with_context(|| format!("failed to read {}", source_directory.display()))?;
             let name = entry.file_name();
-            // validate_tree already rejected administrative entries; skipping
-            // them here too keeps the clone safe if validation ever loosens.
-            if is_admin_name(&name) {
-                continue;
-            }
+            ensure!(!is_admin_name(&name), "refusing {}: it is an administrative entry", entry.path().display());
             let from = entry.path();
             let to = destination_directory.join(&name);
             let metadata = fs::symlink_metadata(&from).with_context(|| format!("failed to inspect {}", from.display()))?;
@@ -325,14 +360,17 @@ mod imp {
             if file_type.is_symlink() {
                 let link = fs::read_link(&from).with_context(|| format!("failed to read {}", from.display()))?;
                 symlink(&link, &to).with_context(|| format!("failed to create {}", to.display()))?;
-            } else if file_type.is_dir() {
-                clone_directory(&from, &to)?;
-            } else if file_type.is_file() {
-                reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
-                preserve_mode(&to, &metadata)?;
-                preserve_modified_time(&to, &metadata)?;
             } else {
-                bail!("refusing {}: it is an unsupported special file", from.display());
+                validate_same_mount(source_directory, &from)?;
+                if file_type.is_dir() {
+                    clone_directory(&from, &to)?;
+                } else if file_type.is_file() {
+                    reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
+                    preserve_mode(&to, &metadata)?;
+                    preserve_modified_time(&to, &metadata)?;
+                } else {
+                    bail!("refusing {}: it is an unsupported special file", from.display());
+                }
             }
         }
         // Restrictive source modes are applied only after the directory is
@@ -448,6 +486,10 @@ mod imp {
 
     pub(super) fn validate_same_mount(_parent: &Path, _child: &Path) -> Result<()> {
         bail!("mount boundary validation is supported on macOS and Linux only")
+    }
+
+    pub(super) fn validate_payload_root(_source: &Path, _root: &Path, _warnings: &mut Vec<String>) -> Result<()> {
+        bail!("tree validation is supported on macOS and Linux only")
     }
 
     pub(super) fn clone_tree(_source: &Path, _destination: &Path) -> Result<()> {

@@ -390,10 +390,13 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         .as_ref()
         .map(|rev| client.resolve_one_at(&operation, rev).map(|r| r.commit_id))
         .transpose()?;
-    let source_rules = IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries, true)?;
+    let source_rules = IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries)?;
     let (ignored, skipped) = select_ignored(&source, &ignored_policy.patterns, &source_rules, &source_entries)?;
+    // One traversal per selected ignored root: tree validation plus the
+    // source-bound absolute-symlink warnings, shared by every target.
+    let mut payload_warnings = Vec::new();
     for path in &ignored {
-        cow::validate_tree(&source.join(path))?;
+        cow::validate_payload_root(&source, path, &mut payload_warnings)?;
     }
     if current_commit(&source_client)?.1 != source_wc {
         bail!("source changed during initial verified capture; pause writers before retrying");
@@ -428,7 +431,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             let tree_commit = base.as_ref().unwrap_or(&fact.commit_id);
             require_unconflicted(&client, &operation, tree_commit)?;
             let target_entries = entries(&client, &operation, tree_commit)?;
-            let target_rules = IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries, !request.replace_content)?;
+            let target_rules = IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries)?;
             for path in &ignored {
                 target_rules.require_ignored(path)?;
                 if target_entries.iter().any(|e| overlap(path, &e.path)) {
@@ -474,7 +477,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             )?;
             cow::probe_between(&source, &root)?;
             let mut warnings = skipped.clone();
-            warnings.extend(absolute_links(&source, &ignored)?);
+            warnings.extend(payload_warnings.iter().cloned());
             if request.dry_run {
                 readiness.details.insert(
                     name.clone(),
@@ -1315,32 +1318,6 @@ fn validate_selected_ignored(source: &Path, roots: &[PathBuf], rules: &IgnoreRul
     })
 }
 
-fn absolute_links(source: &Path, roots: &[PathBuf]) -> Result<Vec<String>> {
-    fn visit(source: &Path, path: &Path, warnings: &mut Vec<String>) -> Result<()> {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                visit(source, &entry.path(), warnings)?;
-            } else if entry.file_type()?.is_symlink() {
-                let target = fs::read_link(entry.path())?;
-                if target.is_absolute() {
-                    warnings.push(format!(
-                        "absolute dependency symlink {} -> {} (not self-contained)",
-                        entry.path().strip_prefix(source)?.display(),
-                        target.display()
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-    let mut warnings = Vec::new();
-    for root in roots {
-        visit(source, &source.join(root), &mut warnings)?;
-    }
-    Ok(warnings)
-}
-
 fn validate_identities(plan: &Plan) -> Result<()> {
     plan.root_identity.verify(&plan.root)?;
     plan.jj_identity.verify(&plan.root.join(".jj"))?;
@@ -1385,7 +1362,7 @@ fn validate_source(plan: &Plan) -> Result<()> {
     verify_disk(&source, &plan.source_operation, &plan.source_commit, &plan.source, &[])?;
     if !plan.ignored.is_empty() {
         let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
-        let rules = IgnoreRules::new(&source, &plan.source_operation, &plan.source_commit, &entries, true)?;
+        let rules = IgnoreRules::new(&source, &plan.source_operation, &plan.source_commit, &entries)?;
         validate_selected_ignored(&plan.source, &plan.ignored, &rules, &entries)?;
     }
     if current_commit(&source)?.1 != plan.source_wc_commit {
@@ -1504,7 +1481,7 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
         if current_commit(&client)?.1 != plan.desired_commit {
             bail!("materialization verification changed the desired WC commit");
         }
-        let rules = IgnoreRules::new(&client, &plan.target_operation, &plan.desired_commit, &plan.entries, !plan.replace_content)?;
+        let rules = IgnoreRules::new(&client, &plan.target_operation, &plan.desired_commit, &plan.entries)?;
         for path in &plan.ignored {
             rules.require_ignored(path)?;
         }
@@ -1979,7 +1956,7 @@ mod tests {
         snapshot(&client).unwrap();
         let (operation, commit) = current_commit(&client).unwrap();
         let entries = entries(&client, &operation, &commit).unwrap();
-        let rules = IgnoreRules::new(&client, &operation, &commit, &entries, true).unwrap();
+        let rules = IgnoreRules::new(&client, &operation, &commit, &entries).unwrap();
         rules.require_ignored(Path::new("packages/p/node_modules")).unwrap();
         rules.require_ignored(Path::new("backend-cache")).unwrap();
         assert!(rules.require_ignored(Path::new("unignored")).is_err());
@@ -1994,7 +1971,7 @@ mod tests {
             };
             let client = JjClient::new(&plan.source);
             let entries = entries(&client, &plan.source_operation, &plan.source_commit).unwrap();
-            let rules = IgnoreRules::new(&client, &plan.source_operation, &plan.source_commit, &entries, true).unwrap();
+            let rules = IgnoreRules::new(&client, &plan.source_operation, &plan.source_commit, &entries).unwrap();
             rules.require_ignored(Path::new("cache")).unwrap();
             assert_eq!(
                 fs::read(std::env::var_os("JW_RESEED_TEMPLATE_MARKER").unwrap()).unwrap(),

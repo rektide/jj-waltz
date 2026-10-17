@@ -137,7 +137,7 @@ pub(super) fn execute(
         let goal = selected.resolve_fetched(&client, &operation)?;
         require_unconflicted(&client, &operation, &goal)?;
         let goal_entries = entries(&client, &operation, &goal)?;
-        let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries, true)?;
+        let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries)?;
         select_ignored(source, ignored_patterns, &rules, &goal_entries)?;
         verify_symlink_support(&client, &operation, &goal, &goal_entries)?;
         identity.verify(&client)?;
@@ -185,7 +185,7 @@ pub(super) fn execute(
             verify_command_result(&identity, &client, &goal, &goal_entries, &change_id)?;
         }
         let operation = client.operation_id()?;
-        let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries, true)?;
+        let rules = IgnoreRules::new(&client, &operation, &goal, &goal_entries)?;
         let (ignored, _) = select_ignored(source, ignored_patterns, &rules, &goal_entries)?;
         for path in ignored {
             cow::validate_tree(&source.join(path))?;

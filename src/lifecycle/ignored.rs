@@ -63,7 +63,7 @@ impl IgnoredPlan {
 mod unix {
     use super::*;
     use crate::cow::ignored::{require_untracked, validate_selected};
-    use crate::cow::payload::{self, Entry, IgnoreRules, Stamp};
+    use crate::cow::payload::{self, Entry, IgnoreRules};
     use crate::{cow, jj::JjClient, links};
     use anyhow::{Context, bail};
     use std::collections::BTreeSet;
@@ -82,8 +82,6 @@ mod unix {
         source_rules: IgnoreRules,
         target_rules: IgnoreRules,
         pub(super) roots: Vec<PathBuf>,
-        stamp: Vec<Stamp>,
-        digest: String,
         base: String,
     }
 
@@ -108,7 +106,7 @@ mod unix {
             bail!("source changed since --source-at was asserted; pause writers and retry");
         }
         let source_entries = payload::entries(&client, &operation, &source_commit)?;
-        let source_rules = IgnoreRules::new(&client, &operation, &source_commit, &source_entries, true)?;
+        let source_rules = IgnoreRules::new(&client, &operation, &source_commit, &source_entries)?;
         let selected = patterns.select(source, source_entries.iter().map(|entry| entry.path.as_path()), |path| {
             source_rules.is_ignored_directory(path)
         })?;
@@ -137,7 +135,7 @@ mod unix {
             }
         }
         let target_entries = payload::entries(&client, &operation, &base.commit_id)?;
-        let target_rules = IgnoreRules::new(&client, &operation, &base.commit_id, &target_entries, false)?;
+        let target_rules = IgnoreRules::new(&client, &operation, &base.commit_id, &target_entries)?;
         let tracked = target_entries.iter().map(|entry| entry.path.as_path()).collect::<BTreeSet<_>>();
         for path in &selected.roots {
             require_untracked(path, &tracked).context("ignored payload overlaps the desired target tree")?;
@@ -145,8 +143,6 @@ mod unix {
                 .require_ignored(path)
                 .context("ignored payload is not ignored in the desired target tree")?;
         }
-        let digest = payload::payload_digest(source, &selected.roots)?;
-        let stamp = payload::stamp(source)?;
         plan.proof = Some(Proof {
             source: source.to_owned(),
             source_identity,
@@ -157,8 +153,6 @@ mod unix {
             source_rules,
             target_rules,
             roots: selected.roots,
-            stamp,
-            digest,
             base: base.commit_id.clone(),
         });
         Ok(plan)
@@ -174,7 +168,7 @@ mod unix {
             }
             let client = JjClient::new(&self.source);
             let operation = client.operation_id()?;
-            if client.resolve_one_at(&operation, "@")?.commit_id != self.source_commit || payload::stamp(&self.source)? != self.stamp {
+            if client.resolve_one_at(&operation, "@")?.commit_id != self.source_commit {
                 bail!("source changed since the ignored payload was frozen; pause writers and retry");
             }
             validate_selected(
@@ -183,9 +177,6 @@ mod unix {
                 self.source_entries.iter().map(|entry| entry.path.as_path()),
                 |path| self.source_rules.is_ignored_directory(path),
             )?;
-            if payload::payload_digest(&self.source, &self.roots)? != self.digest {
-                bail!("source ignored payload changed since the creation plan");
-            }
             Ok(())
         }
 
@@ -237,11 +228,9 @@ mod unix {
                 let destination = target.join(path);
                 fs::create_dir_all(destination.parent().context("ignored root has no parent")?)?;
                 payload::confined_parents(target, path)?;
+                // clone_tree validates every entry inline as it clones; a failed
+                // or partial copy surfaces as an error for lifecycle rollback.
                 cow::clone_tree(&self.source.join(path), &destination)?;
-            }
-            self.validate_source()?;
-            if payload::payload_digest(target, &self.roots)? != self.digest {
-                bail!("copied ignored payload differs from the frozen source");
             }
             Ok(())
         }

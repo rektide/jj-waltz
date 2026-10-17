@@ -1,11 +1,10 @@
-//! Frozen native ignore rules and payload proofs shared by creation and reseeding.
-use crate::{cow, jj::JjClient};
+//! Frozen native ignore rules and shared tree/identity primitives for creation and reseeding.
+use crate::jj::JjClient;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::{ErrorKind, Read, Write};
+use std::fs;
+use std::io::{ErrorKind, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -17,23 +16,14 @@ pub(crate) struct IgnoreRules {
     pub(crate) directory: tempfile::TempDir,
 }
 impl IgnoreRules {
-    pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry], retain_untracked: bool) -> Result<Self> {
+    pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         checked_git(directory.path(), ["init", "--quiet", "--template="])?;
         fs::create_dir_all(directory.path().join(".git/info"))?;
         let mut ignores = BTreeMap::new();
-        // On-disk untracked nested ignores are part of a retained checkout's
-        // semantics; tracked files are subsequently overridden by the desired tree.
-        let old_commit = client.resolve_one_at(operation, "@")?.commit_id;
-        let old_entries = self::entries(client, operation, &old_commit)?;
-        for item in if retain_untracked { stamp(client.cwd())? } else { Vec::new() } {
-            if item.path.file_name().is_some_and(|n| n == ".gitignore") && !entries.iter().chain(&old_entries).any(|e| e.path == item.path) {
-                let path = client.cwd().join(&item.path);
-                if fs::symlink_metadata(&path)?.is_file() {
-                    ignores.insert(item.path, fs::read(path)?);
-                }
-            }
-        }
+        // Ignore classification uses the frozen tracked .gitignore files of the
+        // pinned tree plus backend/global excludes; the checkout's untracked
+        // .gitignore files are deliberately not hunted with a tree walk.
         for entry in entries.iter().filter(|e| e.path.file_name().is_some_and(|n| n == ".gitignore")) {
             if entry.kind != "file" {
                 bail!("symlinked ignore files cannot be verified safely");
@@ -175,19 +165,6 @@ pub(crate) struct Entry {
     pub(crate) executable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Stamp {
-    pub(crate) path: PathBuf,
-    pub(crate) device: u64,
-    pub(crate) inode: u64,
-    pub(crate) size: u64,
-    pub(crate) mode: u32,
-    pub(crate) mtime: i64,
-    pub(crate) mtime_ns: i64,
-    pub(crate) ctime: i64,
-    pub(crate) ctime_ns: i64,
-}
-
 pub(crate) fn directory_identity(path: &Path) -> Result<(u64, u64)> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_dir() {
@@ -266,89 +243,4 @@ pub(crate) fn confined_parents(root: &Path, path: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-pub(crate) fn stamp(root: &Path) -> Result<Vec<Stamp>> {
-    fn visit(root: &Path, path: &Path, stamps: &mut Vec<Stamp>) -> Result<()> {
-        let mut children = fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
-        children.sort_by_key(|c| c.file_name());
-        for child in children {
-            let path = child.path();
-            if path.parent() == Some(root) && [".jj", ".git"].iter().any(|n| child.file_name() == *n) {
-                continue;
-            }
-            let m = fs::symlink_metadata(&path)?;
-            stamps.push(Stamp {
-                path: path.strip_prefix(root)?.to_path_buf(),
-                device: m.dev(),
-                inode: m.ino(),
-                size: m.len(),
-                mode: m.mode(),
-                mtime: m.mtime(),
-                mtime_ns: m.mtime_nsec(),
-                ctime: m.ctime(),
-                ctime_ns: m.ctime_nsec(),
-            });
-            if m.is_dir() {
-                visit(root, &path, stamps)?;
-            }
-        }
-        Ok(())
-    }
-    let mut stamps = Vec::new();
-    visit(root, root, &mut stamps)?;
-    Ok(stamps)
-}
-
-/// Logical dependency snapshot identity survives inode/ctime changes when an
-/// operator restores the frozen source. Administrative and special files never
-/// become digest input (the same strict validation precedes hashing and copying).
-pub(crate) fn payload_digest(root: &Path, paths: &[PathBuf]) -> Result<String> {
-    fn visit(root: &Path, relative_path: &Path, hash: &mut Sha256) -> Result<()> {
-        use std::os::unix::ffi::OsStrExt;
-        relative(relative_path)?;
-        confined_parents(root, relative_path)?;
-        let path = root.join(relative_path);
-        let m = fs::symlink_metadata(&path)?;
-        let name = relative_path.as_os_str().as_bytes();
-        hash.update((name.len() as u64).to_le_bytes());
-        hash.update(name);
-        hash.update((m.mode() & 0o7777).to_le_bytes());
-        if m.is_dir() {
-            hash.update(b"D");
-            let mut children = fs::read_dir(&path)?.collect::<std::io::Result<Vec<_>>>()?;
-            children.sort_by_key(|e| e.file_name());
-            hash.update((children.len() as u64).to_le_bytes());
-            for child in children {
-                visit(root, &relative_path.join(child.file_name()), hash)?;
-            }
-        } else if m.is_file() {
-            hash.update(b"F");
-            hash.update(m.len().to_le_bytes());
-            let mut file = File::open(path)?;
-            let mut buffer = [0; 65536];
-            loop {
-                let count = file.read(&mut buffer)?;
-                if count == 0 {
-                    break;
-                }
-                hash.update(&buffer[..count]);
-            }
-        } else if m.file_type().is_symlink() {
-            hash.update(b"L");
-            let target = fs::read_link(path)?;
-            let target = target.as_os_str().as_bytes();
-            hash.update((target.len() as u64).to_le_bytes());
-            hash.update(target);
-        } else {
-            bail!("unsupported dependency entry: {}", path.display());
-        }
-        Ok(())
-    }
-    let mut hash = Sha256::new();
-    for path in paths {
-        cow::validate_tree(&root.join(path))?;
-        visit(root, path, &mut hash)?;
-    }
-    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
