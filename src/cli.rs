@@ -371,7 +371,7 @@ struct ReseedCommand {
     /// Donor tree assertion (CLI > local source_at > snapshotted @).
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    /// Start a fresh empty change at this base instead of keeping target revisions.
+    /// Sync to this revset instead of the donor's current commit.
     #[arg(long, value_name = "REVSET")]
     at: Option<String>,
     /// Select eligible ignored source roots (repeatable; replaces local/global selection).
@@ -1235,6 +1235,22 @@ mod reseed_cli_tests {
         assert_eq!(cmd.names, ["feature"]);
         assert!(cmd.groups.is_empty());
         assert!(cmd.at.is_none());
+    }
+
+    #[test]
+    fn plain_reseed_is_the_default_path_and_at_only_overrides_the_target() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert!(cmd.at.is_none(), "plain reseed syncs to the donor; --at is not required");
+        assert!(cmd.source_at.is_none(), "--source-at stays an optional assertion");
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--at", "dev@origin"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert_eq!(cmd.at.as_deref(), Some("dev@origin"));
+        assert!(cmd.source_at.is_none());
     }
 
     #[test]

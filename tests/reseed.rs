@@ -310,15 +310,16 @@ fn builtin_all_from_worker_excludes_renamed_primary_and_refills_worker_named_def
     for name in ["default", "z"] {
         assert!(preview.contains(&format!("PLAN {name}: READY")), "{preview}");
     }
-    let before = frozen_id(&repo, &default);
+    assert!(preview.contains(&format!("SYNC to {}", repo.baseline)), "{preview}");
     let roots = [identity(&default), identity(&z)];
     let output = success(repo.jw(&subdir).args(["reseed", "--group", "all"]).output().unwrap());
     assert!(output.contains("OK default:"), "{output}");
     assert!(output.contains("OK z:"), "{output}");
-    assert_eq!(frozen_id(&repo, &default), before);
-    assert_eq!(fs::read(default.join("modified")).unwrap(), b"worker named default\n");
+    // Plain reseed syncs each workspace's content to the donor's current commit.
+    assert_eq!(fs::read(default.join("modified")).unwrap(), b"baseline\n");
     assert_eq!([identity(&default), identity(&z)], roots);
     for target in [&default, &z] {
+        assert_eq!(repo.id(target, "@-"), repo.baseline);
         assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
     }
     assert!(repo.pending_records().is_empty());
@@ -446,12 +447,11 @@ fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_sub
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
-    assert!(stdout.contains("KEEP current feature tree"), "{stdout}");
+    assert!(stdout.contains(&format!("SYNC to {}", repo.baseline)), "{stdout}");
     for name in ["sparse", "missing", "ignored-rules", "missing-link"] {
         assert!(stdout.contains(&format!("BLOCKED {name}:")), "{stdout}");
     }
     assert!(stdout.contains("BLOCKED \"unknown\":"), "{stdout}");
-    assert!(stdout.contains("not ignored under the frozen desired rules"), "{stdout}");
     assert!(stdout.contains("required link target will be absent"), "{stdout}");
     assert_eq!(identity(&ready.join("shared")), shared);
     assert_eq!(fs::read(ready.join("modified")).unwrap(), b"unsnapshotted feature\n");
@@ -479,7 +479,7 @@ fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_sub
 }
 
 #[test]
-fn readiness_spells_out_dirty_keep_and_reset_without_resetting_or_deleting_files() {
+fn readiness_reports_one_sync_consequence_without_resetting_or_deleting_files() {
     let Some(repo) = Repo::new() else { return };
     let target = repo.workspace("feature");
     if !repo.cow(&repo.root, &target) {
@@ -490,20 +490,20 @@ fn readiness_spells_out_dirty_keep_and_reset_without_resetting_or_deleting_files
     fs::write(target.join("feature-only"), "new unfinished file\n").unwrap();
     fs::write(target.join(".env"), "PRIVATE=retained\n").unwrap();
     let shared = identity(&target.join("shared"));
-    let keep = success(repo.reseed(&["feature"], &repo.root, &["--dry-run"]));
-    assert!(keep.contains("JJ snapshots may record working-copy changes"), "{keep}");
-    assert!(keep.contains("new working-copy updates snapshotted"), "{keep}");
-    assert!(keep.contains("uncommitted working-copy changes present"), "{keep}");
-    assert!(keep.contains("KEEP current feature tree and uncommitted work"), "{keep}");
-    assert!(!keep.contains("RESET checkout"), "{keep}");
+    let plain = success(repo.reseed(&["feature"], &repo.root, &["--dry-run"]));
+    assert!(plain.contains("JJ snapshots may record working-copy changes"), "{plain}");
+    assert!(plain.contains("new working-copy updates snapshotted"), "{plain}");
+    assert!(plain.contains("uncommitted working-copy changes present"), "{plain}");
+    assert!(plain.contains(&format!("SYNC to {}", repo.baseline)), "{plain}");
+    assert!(!plain.contains("RESET checkout"), "{plain}");
+    assert!(!plain.contains("KEEP current feature tree"), "{plain}");
     let preserved = frozen_id(&repo, &target);
     assert_ne!(preserved, original, "preview deliberately preserves work by snapshotting");
-    let reset = success(repo.reseed(&["feature"], &repo.root, &["--at", &repo.baseline, "--replace-content", "--dry-run"]));
-    assert!(reset.contains(&format!("RESET checkout to a new child of {}", repo.baseline)), "{reset}");
-    assert!(reset.contains(&format!("tracked work saved in JJ history at {preserved}")), "{reset}");
-    assert!(reset.contains("not a feature rebase"), "{reset}");
-    assert!(reset.contains("no new working-copy updates recorded"), "{reset}");
-    assert_eq!(frozen_id(&repo, &target), preserved, "dry-run must not create the reset child");
+    let overridden = success(repo.reseed(&["feature"], &repo.root, &["--at", &repo.baseline, "--replace-content", "--dry-run"]));
+    assert!(overridden.contains(&format!("SYNC to {}", repo.baseline)), "{overridden}");
+    assert!(overridden.contains(&format!("tracked work saved in JJ history at {preserved}")), "{overridden}");
+    assert!(overridden.contains("no new working-copy updates recorded"), "{overridden}");
+    assert_eq!(frozen_id(&repo, &target), preserved, "dry-run must not create the sync child");
     assert_eq!(identity(&target.join("shared")), shared);
     assert_eq!(fs::read(target.join("modified")).unwrap(), b"keep this unfinished work\n");
     assert_eq!(fs::read(target.join("feature-only")).unwrap(), b"new unfinished file\n");
@@ -596,35 +596,50 @@ fn wildcard_group_skips_mixed_checkouts_in_one_line_and_uses_registered_names() 
     fs::write(a.join("modified"), "feature\n").unwrap();
     let before = repo.id(&a, "@");
     group_config(&repo, "[groups.opencode]\npath_globs=['~/opencode-*']\non_unmatched='warn'");
-    for dry_run in [true, false] {
-        let mut cmd = repo.jw(&subdir);
-        cmd.args(["reseed", "--group", "opencode"]).env("HOME", repo.temp.path());
-        if dry_run {
-            cmd.arg("--dry-run");
-        }
-        let output = cmd.output().unwrap();
-        let warning = skip_warning(&output);
-        for name in ["opencode-notes", "opencode-git", "opencode-independent"] {
-            assert!(warning.contains(name), "{warning}");
-        }
-        assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
-        let stdout = success(output);
-        let label = if dry_run { "PLAN" } else { "OK" };
-        assert!(stdout.contains(&format!("{label} worker-z:")), "{stdout}");
-        assert!(stdout.contains(&format!("{label} worker-a:")), "{stdout}");
-        if dry_run {
-            assert!(stdout.contains("SELECT \"worker-z\""));
-            assert!(stdout.contains("path_globs"));
-        }
-        assert_eq!(repo.id(&a, "@"), before);
-        assert_eq!(fs::read_to_string(a.join("modified")).unwrap(), "feature\n");
-        assert_eq!(operation(&repo, &independent), independent_op);
-        assert_eq!(fs::read(git.join(".git/HEAD")).unwrap(), git_head);
-        for root in [&plain, &git, &independent] {
-            assert_eq!(fs::read_to_string(root.join("sentinel")).unwrap(), "do not touch\n");
-        }
-        assert_eq!([&a, &b, &plain, &git, &independent].map(|p| identity(p)), identities);
+    let mut command = repo.jw(&subdir);
+    command.args(["reseed", "--group", "opencode"]).env("HOME", repo.temp.path()).arg("--dry-run");
+    let output = command.output().unwrap();
+    let warning = skip_warning(&output);
+    for name in ["opencode-notes", "opencode-git", "opencode-independent"] {
+        assert!(warning.contains(name), "{warning}");
     }
+    assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
+    let stdout = success(output);
+    assert!(stdout.contains("PLAN worker-z:"), "{stdout}");
+    assert!(stdout.contains("PLAN worker-a:"), "{stdout}");
+    assert!(stdout.contains("SELECT \"worker-z\""), "{stdout}");
+    assert!(stdout.contains("path_globs"), "{stdout}");
+    assert_eq!(repo.id(&a, "@"), before, "dry-run must not sync");
+    assert_eq!(fs::read_to_string(a.join("modified")).unwrap(), "feature\n");
+    assert_eq!(operation(&repo, &independent), independent_op);
+    assert_eq!(fs::read(git.join(".git/HEAD")).unwrap(), git_head);
+    for root in [&plain, &git, &independent] {
+        assert_eq!(fs::read_to_string(root.join("sentinel")).unwrap(), "do not touch\n");
+    }
+    assert_eq!([&a, &b, &plain, &git, &independent].map(|p| identity(p)), identities);
+    let output = repo
+        .jw(&subdir)
+        .args(["reseed", "--group", "opencode"])
+        .env("HOME", repo.temp.path())
+        .output()
+        .unwrap();
+    let warning = skip_warning(&output);
+    for name in ["opencode-notes", "opencode-git", "opencode-independent"] {
+        assert!(warning.contains(name), "{warning}");
+    }
+    assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
+    let stdout = success(output);
+    assert!(stdout.contains("OK worker-z:"), "{stdout}");
+    assert!(stdout.contains("OK worker-a:"), "{stdout}");
+    // The real run syncs both workers to the donor's current commit.
+    assert_eq!(repo.id(&a, "@-"), repo.baseline);
+    assert_eq!(fs::read_to_string(a.join("modified")).unwrap(), "baseline\n");
+    assert_eq!(operation(&repo, &independent), independent_op);
+    assert_eq!(fs::read(git.join(".git/HEAD")).unwrap(), git_head);
+    for root in [&plain, &git, &independent] {
+        assert_eq!(fs::read_to_string(root.join("sentinel")).unwrap(), "do not touch\n");
+    }
+    assert_eq!([&a, &b, &plain, &git, &independent].map(|p| identity(p)), identities);
     assert_shared_extents(&repo.root.join("shared"), &a.join("shared"));
     assert_shared_extents(&repo.root.join("shared"), &b.join("shared"));
 }
@@ -766,7 +781,7 @@ fn wildcard_group_warn_does_not_skip_registered_target_safety_failures() {
 }
 
 #[test]
-fn primary_default_from_sibling_and_subdirectory_preserves_different_feature_tree() {
+fn primary_default_from_sibling_and_subdirectory_syncs_the_feature_variant() {
     let Some(repo) = Repo::new() else { return };
     let caller = repo.workspace("caller");
     let target = repo.workspace("feature");
@@ -775,14 +790,14 @@ fn primary_default_from_sibling_and_subdirectory_preserves_different_feature_tre
     }
     fs::write(target.join("modified"), "feature\n").unwrap();
     fs::write(target.join("feature-only"), "keep\n").unwrap();
-    let before = repo.id(&target, "@");
     let subdir = caller.join("cache/subdir");
     fs::create_dir_all(&subdir).unwrap();
     for cwd in [&caller, &subdir, &repo.root] {
         success(repo.jw(cwd).args(["reseed", "feature", "--source-at", &repo.baseline]).output().unwrap());
-        assert_eq!(repo.id(&target, "@"), before);
-        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "feature\n");
-        assert_eq!(fs::read_to_string(target.join("feature-only")).unwrap(), "keep\n");
+        // Plain reseed makes the workspace's content the donor's content.
+        assert_eq!(repo.id(&target, "@-"), repo.baseline);
+        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "baseline\n");
+        assert!(!target.join("feature-only").exists());
         assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
     }
 }
@@ -826,11 +841,11 @@ fn configured_relative_source_and_explicit_override_win_over_primary() {
     fs::write(repo.root.join("modified"), "dirty primary\n").unwrap();
     let subdir = target.join("cache/subdir");
     fs::create_dir_all(&subdir).unwrap();
-    let output = success(repo.jw(&subdir).args(["reseed", "feature"]).output().unwrap());
+    let output = success(repo.jw(&subdir).args(["reseed", "feature", "--dry-run"]).output().unwrap());
     assert!(output.contains(&format!("source: {}", configured.display())), "{output}");
     let output = success(
         repo.jw(&subdir)
-            .args(["reseed", "feature", "--from", "../../../workspace-explicit"])
+            .args(["reseed", "feature", "--from", "../../../workspace-explicit", "--dry-run"])
             .output()
             .unwrap(),
     );
@@ -866,11 +881,13 @@ fn source_assertions_keep_cli_over_local_precedence_and_reject_before_target_sna
     assert_eq!(repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]), ".");
     let output = success(repo.jw(&target).args(["reseed", "feature", "--source-at", "@"]).output().unwrap());
     assert!(output.contains(&frozen_id(&repo, &repo.root)), "{output}");
-    assert_eq!(fs::read(target.join("modified")).unwrap(), b"unsnapshotted target\n");
+    // The plain default syncs the target onto the donor's current commit.
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &repo.root));
+    assert_eq!(fs::read(target.join("modified")).unwrap(), b"dirty primary\n");
 }
 
 #[test]
-fn bare_reseed_borrows_snapshotted_primary_and_keeps_current_registered_variant() {
+fn bare_reseed_borrows_snapshotted_primary_and_syncs_current_registered_variant() {
     let Some(repo) = Repo::new() else { return };
     repo.jj_at(&repo.root, &["workspace", "rename", "primary"]);
     let target = repo.workspace("feature");
@@ -892,11 +909,13 @@ fn bare_reseed_borrows_snapshotted_primary_and_keeps_current_registered_variant(
     assert!(output.contains("OK feature"), "{output}");
     assert!(!output.contains("OK default"), "{output}");
     assert_eq!(identities, [identity(&target), identity(&target.join(".jj"))]);
-    assert_eq!(fs::read(target.join("modified")).unwrap(), b"feature work\n");
     assert_eq!(frozen_id(&repo, &decoy), decoy_id, "never snapshot another variant");
     assert_ne!(frozen_id(&repo, &repo.root), old_source);
     assert!(output.contains(&format!("source: {}", repo.root.display())), "{output}");
     assert!(output.contains(&frozen_id(&repo, &repo.root)), "{output}");
+    // Bare reseed syncs the current variant onto the donor's snapshotted commit.
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &repo.root));
+    assert_eq!(fs::read(target.join("modified")).unwrap(), b"unsnapshotted donor\n");
     assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
 }
 
@@ -1035,7 +1054,7 @@ exec "$JW_REAL_JJ" "$@"
 }
 
 #[test]
-fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
+fn plain_sync_replaces_feature_tree_types_modes_and_literal_paths() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
@@ -1052,30 +1071,30 @@ fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
     fs::set_permissions(target.join("mode"), fs::Permissions::from_mode(0o755)).unwrap();
     fs::rename(target.join("line\nbreak"), target.join("renamed\nfile")).unwrap();
     fs::write(target.join("added"), "feature only\n").unwrap();
-    let before = repo.id(&target, "@");
     let root = identity(&target);
     let jj = identity(&target.join(".jj"));
     for _ in 0..2 {
         success(repo.reseed(&["feature"], &source, &[]));
-        assert_eq!(repo.id(&target, "@"), before);
         assert_eq!(identity(&target), root);
         assert_eq!(identity(&target.join(".jj")), jj);
-        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "feature\n");
-        assert!(!target.join("deleted").exists());
-        assert_eq!(fs::read_link(target.join("transition")).unwrap(), Path::new("modified"));
-        assert_eq!(fs::read_to_string(target.join("directory-transition/child")).unwrap(), "child\n");
-        assert_ne!(fs::metadata(target.join("mode")).unwrap().mode() & 0o111, 0);
+        // The workspace's content is the donor's content, not the feature tree.
+        assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
+        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "baseline\n");
+        assert_eq!(fs::read_to_string(target.join("deleted")).unwrap(), "delete me\n");
+        assert_eq!(fs::read_to_string(target.join("transition")).unwrap(), "regular\n");
+        assert_eq!(fs::read_to_string(target.join("directory-transition")).unwrap(), "regular\n");
+        assert_eq!(fs::metadata(target.join("mode")).unwrap().mode() & 0o111, 0);
         assert_eq!(fs::read_link(target.join("link")).unwrap(), Path::new("shared"));
-        assert!(!target.join("line\nbreak").exists());
-        assert!(target.join("renamed\nfile").is_file());
-        assert_eq!(fs::read_to_string(target.join("added")).unwrap(), "feature only\n");
+        assert_eq!(fs::read_to_string(target.join("line\nbreak")).unwrap(), "newline path\n");
+        assert!(!target.join("renamed\nfile").exists());
+        assert!(!target.join("added").exists());
         assert_ne!(identity(&source.join("shared")), identity(&target.join("shared")));
         assert_shared_extents(&source.join("shared"), &target.join("shared"));
     }
 }
 
 #[test]
-fn symlink_bytes_and_patch_like_names_survive_keep() {
+fn symlink_bytes_and_patch_like_names_survive_sync() {
     let Some(mut repo) = Repo::new() else { return };
     let cases = [
         ("embedded-newline", "one\ntwo"),
@@ -1101,13 +1120,13 @@ fn symlink_bytes_and_patch_like_names_survive_keep() {
         fs::remove_file(target.join(name)).unwrap();
         symlink(target_bytes, target.join(name)).unwrap();
     }
-    let before = repo.id(&target, "@");
     let root = identity(&target);
     let jj = identity(&target.join(".jj"));
     success(repo.reseed(&["feature"], &source, &[]));
-    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     for (name, target_bytes) in cases {
-        assert_eq!(fs::read_link(target.join(name)).unwrap(), Path::new(target_bytes));
+        // The donor's link payload wins; equal paths arrive as reflinked copies.
+        assert_eq!(fs::read_link(target.join(name)).unwrap(), Path::new("shared"));
         assert_eq!(fs::read_link(target.join(format!("unchanged-{name}"))).unwrap(), Path::new(target_bytes));
     }
     assert_eq!(identity(&target), root);
@@ -1176,10 +1195,9 @@ fn ignored_refresh_is_private_retains_unselected_content_and_replace_is_explicit
     symlink("fresh", source.join("cache/link")).unwrap();
     fs::write(target.join("cache/obsolete"), "old").unwrap();
     fs::write(target.join(".env"), "secret").unwrap();
-    let before = repo.id(&target, "@");
     let root_id = identity(&target);
     success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
-    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     assert!(!target.join("cache/obsolete").exists());
     assert_eq!(fs::read_to_string(target.join(".env")).unwrap(), "secret");
     assert_eq!(fs::read_link(target.join("cache/link")).unwrap(), Path::new("fresh"));
@@ -1222,10 +1240,10 @@ fn dirty_and_sparse_source_fail_but_nonignored_source_matches_are_skipped() {
     let output = success(repo.reseed(&["feature"], &source, &["--copy-ignored", "not-ignored"]));
     assert!(output.contains("not ignored under frozen source rules"), "{output}");
     assert!(!target.join("not-ignored").exists());
-    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     fs::remove_dir_all(source.join("not-ignored")).unwrap();
     repo.jj_at(&source, &["sparse", "set", "--clear"]);
-    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &[]), &before);
+    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &[]), &repo.id(&target, "@"));
 }
 
 #[test]
@@ -1327,7 +1345,7 @@ fn ignored_policy_precedence_preserves_explicit_empty_and_never_prunes_unselecte
 }
 
 #[test]
-fn selected_ignored_source_and_target_roots_still_reject_forced_tracked_payload() {
+fn donor_forced_tracked_payload_blocks_and_target_tracked_payload_is_replaced() {
     for role in ["source", "target"] {
         let Some(mut repo) = Repo::new() else {
             return;
@@ -1353,13 +1371,24 @@ fn selected_ignored_source_and_target_roots_still_reject_forced_tracked_payload(
         }
         let before = repo.id(&target, "@");
         let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache/"]);
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("overlaps tracked"),
-            "{role}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        repo.unchanged_failure(&target, output, &before);
-        assert!(target.join("cache/forced-tracked").exists());
+        if role == "source" {
+            // The donor's own tracked files inside a selected ignored root are
+            // still a hard error: the payload and the desired tree conflict.
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("overlaps tracked"),
+                "{role}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            repo.unchanged_failure(&target, output, &before);
+            assert!(target.join("cache/forced-tracked").exists());
+        } else {
+            // Target-tracked content inside the root is ordinary old tracked
+            // work: the sync deletes it and installs the donor's payload.
+            success(output);
+            assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
+            assert!(!target.join("cache/forced-tracked").exists());
+            assert_eq!(fs::read_to_string(target.join("cache/data")).unwrap(), "ignored source data");
+        }
     }
 }
 
@@ -1445,7 +1474,7 @@ fn absolute_source_bound_ignored_symlink_is_rejected_or_explicitly_reported() {
     if !output.status.success() {
         repo.unchanged_failure(&target, output, &before);
     } else {
-        assert_eq!(repo.id(&target, "@"), before);
+        assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
         assert_eq!(fs::read_link(target.join("cache/source-bound")).unwrap(), source.join("cache/file"));
     }
     assert!(
@@ -1570,8 +1599,8 @@ fn required_internal_link_target_is_preflight_rejected_when_replace_will_erase_i
 }
 
 #[test]
-fn required_link_target_in_copied_ignored_root_works_in_keep_and_replace() {
-    for mode in ["keep", "replace"] {
+fn required_link_target_in_copied_ignored_root_works_with_and_without_replace() {
+    for mode in ["retain", "replace"] {
         let Some(mut repo) = Repo::new() else { return };
         repo.prepare_links(
             "[[link]]\nsource = \"dependency\"\ntarget = \"cache/fresh\"\nrequired = true\n",
@@ -1587,7 +1616,6 @@ fn required_link_target_in_copied_ignored_root_works_in_keep_and_replace() {
         fs::create_dir(source.join("cache")).unwrap();
         fs::write(source.join("cache/fresh"), vec![b'c'; 128 * 1024]).unwrap();
         fs::write(target.join(".env"), "unselected secret\n").unwrap();
-        let before = repo.id(&target, "@");
         let root = identity(&target);
         let jj = identity(&target.join(".jj"));
         assert!(!target.join("cache").exists());
@@ -1607,7 +1635,7 @@ fn required_link_target_in_copied_ignored_root_works_in_keep_and_replace() {
             "{mode}: required target must resolve inside copied payload"
         );
         assert_eq!(fs::read(target.join("dependency")).unwrap(), vec![b'c'; 128 * 1024]);
-        assert_eq!(repo.id(&target, "@"), before, "{mode}: link must remain ignored");
+        assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source), "{mode}: link must remain ignored");
         assert_eq!(identity(&target), root);
         assert_eq!(identity(&target.join(".jj")), jj);
         assert_eq!(target.join(".env").exists(), mode != "replace");
@@ -1633,7 +1661,6 @@ fn local_groups_deduplicate_and_cli_can_disable_configured_ignored_copy() {
         repo.baseline
     );
     fs::write(repo.root.join(".jwreseed.local.toml"), config).unwrap();
-    let before = repo.id(&target, "@");
     // Config is read from the default root even when invoked in the target.
     success(
         repo.jw(&target)
@@ -1642,7 +1669,7 @@ fn local_groups_deduplicate_and_cli_can_disable_configured_ignored_copy() {
             .unwrap(),
     );
     assert_eq!(fs::read_to_string(target.join("cache/file")).unwrap(), "target");
-    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     success(repo.jw(&target).args(["reseed", "--group", "workers"]).output().unwrap());
     assert_eq!(fs::read_to_string(target.join("cache/file")).unwrap(), "source");
 }
@@ -1672,9 +1699,8 @@ fn special_workspace_names_are_literal_not_switch_tokens() {
     if !repo.cow(&source, &target) {
         return;
     }
-    let before = repo.id(&target, "@");
     success(repo.reseed(&["^"], &source, &[]));
-    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     assert_shared_extents(&source.join("shared"), &target.join("shared"));
 }
 
@@ -1732,7 +1758,7 @@ fn interrupted_refill_requires_out_of_band_bookmark_recovery() {
         repo.jj_at(&target, &["new", "feature-bookmark"]);
         repo.jj_at(&target, &["sparse", "reset"]);
         success(repo.reseed(&["feature"], &source, &[]));
-        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "feature\n");
+        assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "baseline\n");
         assert_eq!(
             repo.jj_at(
                 &repo.root,

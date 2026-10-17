@@ -94,15 +94,15 @@ impl Fixture {
 }
 
 #[test]
-fn default_guard_blocks_unbookmarked_keep_and_reset_without_refilling_a_valid_peer() {
+fn default_guard_blocks_unbookmarked_work_without_refilling_a_valid_peer() {
     let Some(f) = Fixture::new() else { return };
     f.bookmark(&f.source, "old-base", &f.base);
     fs::write(f.a.join("file"), b"unfinished work\n").unwrap();
     let peer_inode = fs::metadata(f.b.join("file")).unwrap().ino();
-    for reset in [false, true] {
+    for overridden in [false, true] {
         for dry_run in [true, false] {
             let mut args = Vec::new();
-            if reset {
+            if overridden {
                 args.extend(["--at", f.base.as_str()]);
             }
             if dry_run {
@@ -135,8 +135,12 @@ fn existing_named_change_follows_normal_dirty_snapshots_and_guard_never_creates_
     assert!(preview.contains("bookmark \"feature\" covers work tip"), "{preview}");
     let preserved = f.id(&f.a, "@");
     assert_eq!(f.id(&f.a, "feature"), preserved);
+    // The plain default syncs the workspace onto the donor's current commit;
+    // the bookmarked work itself stays in JJ history at the preserved tip.
     ok(f.reseed(&["a"], &[]));
-    assert_eq!(f.id(&f.a, "@"), preserved);
+    assert_eq!(f.id(&f.a, "@-"), f.base, "sync child of the donor's base");
+    assert_eq!(f.id(&f.a, "feature"), preserved);
+    assert_eq!(fs::read(f.a.join("file")).unwrap(), b"baseline\n");
     ok(f.reseed(&["a"], &["--at", &f.base]));
     assert_eq!(fs::read(f.a.join("file")).unwrap(), b"baseline\n");
     assert_eq!(f.id(&f.a, "feature"), preserved);

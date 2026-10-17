@@ -432,7 +432,7 @@ fn ignored_selection_is_proved_and_no_command_does_not_claim_a_build() {
 }
 
 #[test]
-fn reseed_after_prepare_keeps_feature_tree_and_copies_private_payload() {
+fn reseed_after_prepare_syncs_worker_and_copies_private_payload() {
     let Some(f) = Fixture::new() else { return };
     if !f.cow_supported() {
         return;
@@ -442,10 +442,14 @@ fn reseed_after_prepare_keeps_feature_tree_and_copies_private_payload() {
     let worker = f.id(&f.target, "@");
     f.advance();
     ok(f.prepare(&[]));
+    // The donor's current commit is the prepared empty child of the goal.
+    let donor = f.id(&f.source, "@");
+    assert_eq!(f.id(&f.source, "@-"), f.id(&f.source, "dev@origin"));
     ok(f.jw().args(["reseed", "worker", "--copy-ignored", "node_modules"]).output().unwrap());
-    assert_eq!(f.id(&f.target, "@"), worker);
-    assert_eq!(fs::read_to_string(f.target.join("version")).unwrap(), "old\n");
-    assert_eq!(fs::read_to_string(f.target.join("feature")).unwrap(), "keep feature\n");
+    assert_eq!(f.id(&f.target, "@-"), donor);
+    assert_ne!(f.id(&f.target, "@"), worker);
+    assert_eq!(fs::read_to_string(f.target.join("version")).unwrap(), "fresh\n");
+    assert!(!f.target.join("feature").exists());
     assert_ne!(
         identity(&f.source.join("node_modules/package")),
         identity(&f.target.join("node_modules/package"))

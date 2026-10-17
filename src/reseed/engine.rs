@@ -71,7 +71,7 @@ struct Plan {
     target_operation: String,
     old_commit: String,
     desired_commit: String,
-    base_commit: Option<String>,
+    base_commit: String,
     clones: Vec<PathBuf>,
     entries: Vec<Entry>,
     old_paths: Vec<PathBuf>,
@@ -385,11 +385,12 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     }
     // Pin the source and target trees at the final shared operation.
     let source_operation = operation.clone();
-    let base = request
-        .at
-        .as_ref()
-        .map(|rev| client.resolve_one_at(&operation, rev).map(|r| r.commit_id))
-        .transpose()?;
+    // The sync target is the donor's current working-copy commit unless --at
+    // explicitly overrides it; --source-at stays a tree assertion only.
+    let base = match request.at.as_ref() {
+        Some(rev) => client.resolve_one_at(&operation, rev)?.commit_id,
+        None => source_wc.clone(),
+    };
     let source_rules = IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries)?;
     let (ignored, skipped) = select_ignored(&source, &ignored_policy.patterns, &source_rules, &source_entries)?;
     // One traversal per selected ignored root: tree validation plus the
@@ -428,7 +429,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             } else {
                 bookmark_coverage.as_ref().context("missing bookmark preflight")?.require(&fact.commit_id)?
             };
-            let tree_commit = base.as_ref().unwrap_or(&fact.commit_id);
+            let tree_commit = &base;
             require_unconflicted(&client, &operation, tree_commit)?;
             let target_entries = entries(&client, &operation, tree_commit)?;
             let target_rules = IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries)?;
@@ -559,13 +560,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     }
     for mut plan in plans {
         if request.dry_run {
-            let consequence = match &plan.base_commit {
-                Some(base) => format!(
-                    "RESET checkout to a new child of {base}; tracked work saved in JJ history at {} (not a feature rebase)",
-                    plan.old_commit
-                ),
-                None => format!("KEEP current feature tree and uncommitted work at {}", plan.old_commit),
-            };
+            let consequence = format!("SYNC to {}; tracked work saved in JJ history at {}", plan.base_commit, plan.old_commit);
             report.targets.push(ReseedOutcome {
                 name: plan.name.clone(),
                 status: ReseedStatus::Planned,
@@ -1269,11 +1264,7 @@ fn node_on_disk(path: &Path) -> Result<FutureNode> {
 }
 
 fn describe(plan: &Plan, planned: bool) -> String {
-    let mode = plan
-        .base_commit
-        .as_ref()
-        .map(|id| format!("new child of {id}"))
-        .unwrap_or_else(|| format!("keep {}", plan.old_commit));
+    let mode = format!("sync {}", plan.base_commit);
     let description = format!(
         "root {}; {mode}; {} {} tracked paths, {} {} paths; {} ignored roots [{}]; {}{}",
         plan.root.display(),
@@ -1424,7 +1415,8 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
         for path in plan.old_paths.iter().chain(plan.entries.iter().map(|e| &e.path)) {
             remove_recorded_file(&plan.root, path)?;
         }
-        if let Some(base) = plan.base_commit.clone() {
+        {
+            let base = plan.base_commit.clone();
             if current_commit(&client)?.1 != plan.desired_commit {
                 bail!("target changed before jj new");
             }
@@ -1510,9 +1502,10 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
         }
         require_full(&client)?;
         validate_identities(plan)?;
-        if let Some(base) = &plan.base_commit {
+        {
+            let base = plan.base_commit.clone();
             let (operation, current) = current_commit(&client)?;
-            if !exact_empty_child(&client, &operation, &current, base)? {
+            if !exact_empty_child(&client, &operation, &current, &base)? {
                 bail!("desired child no longer has the exact frozen parent");
             }
         }
@@ -1835,7 +1828,7 @@ mod tests {
         preflight_links(&default, &root, &entries, &ignored, false, &rules, &future).unwrap();
     }
 
-    fn fixture(reset: bool) -> Option<(tempfile::TempDir, Store, Plan)> {
+    fn fixture() -> Option<(tempfile::TempDir, Store, Plan)> {
         if Command::new("jj").arg("--version").output().is_err() {
             return None;
         }
@@ -1886,10 +1879,12 @@ mod tests {
         let operation = client.operation_id().unwrap();
         let source_commit = client.resolve_one_at(&operation, "@").unwrap().commit_id;
         let old = target_client.resolve_one_at(&operation, "@").unwrap().commit_id;
-        let desired_tree = if reset { &source_commit } else { &old };
+        // The default sync contract: base is the donor's current commit, the
+        // desired tree is that base, and old_paths are the target's own
+        // tracked paths that sparse clearing deletes.
         let source_entries = entries(&client, &operation, &source_commit).unwrap();
-        let target_entries = entries(&target_client, &operation, desired_tree).unwrap();
-        let changed = changed_paths(&client, &operation, &source_commit, desired_tree).unwrap();
+        let target_entries = entries(&target_client, &operation, &source_commit).unwrap();
+        let changed = changed_paths(&client, &operation, &source_commit, &source_commit).unwrap();
         let clones = source_entries.iter().filter(|e| !changed.contains(&e.path)).map(|e| e.path.clone()).collect();
         let pending = Plan {
             name: "worker".into(),
@@ -1906,10 +1901,10 @@ mod tests {
             target_operation: operation.clone(),
             old_commit: old.clone(),
             desired_commit: old.clone(),
-            base_commit: reset.then_some(source_commit.clone()),
+            base_commit: source_commit.clone(),
             clones,
             entries: target_entries,
-            old_paths: entries(&target_client, &operation, desired_tree).unwrap().into_iter().map(|e| e.path).collect(),
+            old_paths: entries(&target_client, &operation, &old).unwrap().into_iter().map(|e| e.path).collect(),
             ignored: vec!["cache".into()],
             skipped: Vec::new(),
             replace_content: false,
@@ -1924,7 +1919,7 @@ mod tests {
 
     #[test]
     fn identity_recheck_refuses_replaced_repository_pointer_and_new_git_metadata() {
-        let Some((_temporary, _store, plan)) = fixture(false) else {
+        let Some((_temporary, _store, plan)) = fixture() else {
             return;
         };
         validate_identities(&plan).unwrap();
@@ -1944,7 +1939,7 @@ mod tests {
 
     #[test]
     fn ignore_rules_use_desired_nested_files_and_backend_excludes() {
-        let Some((_temporary, _store, plan)) = fixture(false) else {
+        let Some((_temporary, _store, plan)) = fixture() else {
             return;
         };
         let client = JjClient::new(&plan.source);
@@ -1966,7 +1961,7 @@ mod tests {
     #[test]
     fn adversarial_git_template_cannot_escape_ignore_probe() {
         if std::env::var_os("JW_RESEED_TEMPLATE_CHILD").is_some() {
-            let Some((_temporary, _store, plan)) = fixture(false) else {
+            let Some((_temporary, _store, plan)) = fixture() else {
                 return;
             };
             let client = JjClient::new(&plan.source);
@@ -2010,7 +2005,7 @@ mod tests {
 
     #[test]
     fn fresh_execute_refuses_new_unsnapshotted_target_edits() {
-        let Some((_temporary, _store, mut plan)) = fixture(false) else {
+        let Some((_temporary, _store, mut plan)) = fixture() else {
             return;
         };
         let default = plan.source.clone();
@@ -2022,7 +2017,7 @@ mod tests {
 
     #[test]
     fn native_unmanaged_workspaces_initialize_only_repository_manifest() {
-        let Some((_temporary, _store, mut plan)) = fixture(false) else {
+        let Some((_temporary, _store, mut plan)) = fixture() else {
             return;
         };
         let client = JjClient::new(&plan.source);
@@ -2040,7 +2035,7 @@ mod tests {
 
     #[test]
     fn native_reset_type_transitions_preserve_unrelated_and_external_secrets() {
-        let Some((temporary, _store, mut plan)) = fixture(false) else {
+        let Some((temporary, _store, mut plan)) = fixture() else {
             return;
         };
         let source = JjClient::new(&plan.source);
@@ -2067,7 +2062,7 @@ mod tests {
         plan.target_operation = operation;
         plan.source_commit = source_commit.clone();
         plan.source_wc_commit = source_commit.clone();
-        plan.base_commit = Some(source_commit);
+        plan.base_commit = source_commit;
         plan.old_commit = old_commit.clone();
         plan.desired_commit = old_commit;
         plan.clones = desired_entries.iter().map(|e| e.path.clone()).collect();
@@ -2085,7 +2080,7 @@ mod tests {
 
     #[test]
     fn reseed_store_never_repairs_corrupt_or_nonempty_manifestless_metadata() {
-        let Some((_temporary, _store, plan)) = fixture(false) else {
+        let Some((_temporary, _store, plan)) = fixture() else {
             return;
         };
         let client = JjClient::new(&plan.source);
@@ -2101,7 +2096,7 @@ mod tests {
 
     #[test]
     fn live_source_validation_rechecks_backend_ignored_rules() {
-        let Some((_temporary, _store, mut plan)) = fixture(false) else {
+        let Some((_temporary, _store, mut plan)) = fixture() else {
             return;
         };
         let source = JjClient::new(&plan.source);
