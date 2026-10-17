@@ -88,7 +88,7 @@ offline.
   eligible-root selector; command adapters supply frozen source rules and tracked
   paths instead of implementing their own pattern traversal.
   `cow::payload` owns the shared native frozen-ignore adapter, operation-bound
-  tree entries, filesystem stamps, confinement and logical payload digests.
+  tree entries, and confinement/identity primitives.
 - `reseed` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and out-of-band failure guidance. Plans exist only in memory. It uses
@@ -398,19 +398,22 @@ named `default`. Creation reads only `copy_ignored` from that owner's existing
 overrides. Explicit CLI selection/disable bypasses local-policy loading.
 
 The donor is snapshotted independently of the exact target base. Shared
-`cow::payload` primitives bind its current commit, filesystem stamp, frozen source
-ignore rules and selected payload digest. Selected roots also require the exact
-base's frozen ignore rules and no overlap with its tracked paths. An empty
-selection returns before clone capability is required. Nonempty plans recheck
-source identity/content around copying, compare the new target revision with its
-frozen base, and reject target obstructions and parent symlinks.
+`cow::payload` primitives bind its current commit and frozen ignore rules.
+Selected roots also require the exact base's frozen ignore rules and no overlap
+with its tracked paths. An empty selection returns before clone capability is
+required. Nonempty plans recheck source/repository identity and the pinned
+source commit before copying, compare the new target revision with its frozen
+base, and reject target obstructions and parent symlinks. No digest or stamp of
+the payload is captured or compared: cloning validates every entry inline during
+its single traversal, and a failed or partial copy is an error for lifecycle
+rollback rather than a hashing problem.
 
 Nonempty payload plans preflight every prospective destination against the
 canonical donor root, resolving existing parent aliases. A nested destination is
-rejected before any workspace/bookmark is created: creation itself would change
-the whole-donor stamp, and a destination inside a selected root risks recursive
-copying. The proof does not exempt destination subtrees or ancestor metadata.
-Disabled copying and no-match selections retain ordinary nested placement.
+rejected before any workspace/bookmark is created: a destination inside a
+selected root risks recursive copying. The proof does not exempt destination
+subtrees or ancestor metadata. Disabled copying and no-match selections retain
+ordinary nested placement.
 
 Tracked creation remains free to use ordinary checkout or its established warned
 fallback. The separate ignored phase requires actual reflinks and has no fallback.

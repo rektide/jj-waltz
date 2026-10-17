@@ -135,9 +135,9 @@ policy for you. There are no global build commands.
 
 The same selector and policy apply to new `add`/`s` workspaces, reseed, and prepare.
 Creation inherits only the local copy list, not donor or preparation settings.
-Existing switches never refill payloads. Creation has additional live-copy proofs;
-its digest/stamp checks are separate from reseed, which does not hash an entire
-dependency tree for recorded-plan reuse. See
+Existing switches never refill payloads. Neither path hashes or stat-stamps the
+payload: rules come from the pinned tree's tracked `.gitignore` files, and
+copying validates each entry inline during its single reflink traversal. See
 [creation's private dependencies](../README.md#private-dependencies-on-creation).
 
 ## Prepare the source
@@ -387,11 +387,20 @@ and is outside this change. Formatting and all-target/all-feature Clippy with
 `-D warnings` passed; the existing Cargo manifest homepage warning remains.
 
 The requested native synthetic fixture (8,555 files, 43 symlinks, two workers,
-100 × 4,096-byte payload files) measured **5.93s** for reseed, versus the supplied
-6.64s baseline. A matched preserved-binary run measured 7.46s before / 5.93s after;
-prepare measured 5.39s / 2.78s. Instrumented 100 → 8,555-file scaling passed with
-zero JJ, Git, and `file show` call growth. See
+100 × 4,096-byte payload files) measured **5.93s** for reseed after journal
+deletion, versus the supplied 6.64s baseline. A matched preserved-binary run
+measured 7.46s before / 5.93s after; prepare measured 5.39s / 2.78s.
+Instrumented 100 → 8,555-file scaling passed with zero JJ, Git, and
+`file show` call growth. See
 [retained measurement evidence](../tools/performance/README.md#journal-deletion-checkpoint).
+
+A follow-up pass removed payload hashing and stat-stamping entirely (creation
+digest/stamp walks, the untracked-`.gitignore` tree hunt, double-walk cloning,
+and the per-target symlink scan): 269 native cases passed under the same
+requirements, `jw add --copy-ignored` dropped from 3.56s to 1.53s on a
+30,000-file/123 MB payload, and the same fixture measured **5.08s** reseed and
+2.42s prepare. That pass responds to `jw add`/`reseed --dry-run` timeouts
+against a large real `node_modules` donor.
 
 Historical release-matrix results predate this deletion; they are not a new matrix
 verification. Watchman mutation, sparse targets, and colocated targets remain

@@ -44,6 +44,18 @@ sources:
   prepare runs are retried from the start after operator repair; commands must
   tolerate retry. Remove donor stamp/digest walks used only for journal reuse;
   live tracked-tree, ignore-rule, identity, bookmark, and CoW checks remain.
+- Stop hashing and stat-stamping ignored payloads everywhere. Creation no longer
+  SHA256s the donor payload before, between, and after copying, and no longer
+  stat-stamps the whole donor; the copy itself validates every entry inline
+  during its single reflink traversal, and a failure is an error for rollback.
+  Ignore-rule assembly no longer walks the entire checkout hunting untracked
+  `.gitignore` files: rules come from the pinned tree's tracked `.gitignore`
+  files plus backend/global excludes. The per-target absolute-symlink warning
+  scan is folded into the single preflight payload walk, and cloning validates
+  inline instead of walking each tree twice. On a 30,000-file/123 MB payload,
+  `jw add --copy-ignored` dropped from 3.56s to 1.53s warm-cache; on the
+  8,555-file harness, two-worker reseed dropped from 5.93s to 5.08s (7.46s
+  before the journal deletion).
 - Replace the combined `jw up` command with a `prepare`/`reseed` split.
   `jw prepare` is source-only from any registered workspace: it
   selects/fetches one pinned upstream (CLI/local goal, native tracked pair, or

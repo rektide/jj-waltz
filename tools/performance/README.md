@@ -160,21 +160,30 @@ and the forward-only reseed/prepare implementation sequentially. Both native
 runs passed all correctness checks with 8,555 tracked data files, 43 symlinks,
 two workers, and 100 payload files of 4,096 bytes:
 
-| Phase | Preserved pre-cut | Journal-free |
-| --- | ---: | ---: |
-| Prepare | 5.387s | 2.778s |
-| Reseed preview | 2.223s | 1.918s |
-| Reseed | 7.456s | 5.926s |
-| Total | 15.066s | 10.622s |
+| Phase | Preserved pre-cut | Journal-free | + payload-walk removal |
+| --- | ---: | ---: | ---: |
+| Prepare | 5.387s | 2.778s | 2.418s |
+| Reseed preview | 2.223s | 1.918s | 1.768s |
+| Reseed | 7.456s | 5.926s | 5.080s |
+| Total | 15.066s | 10.622s | 9.267s |
 
-Reseed is about 11% below the separately supplied 6.64s/two-worker baseline;
-the matched run is about 21% faster. These are warm-cache native synthetic
-observations, not isolated measurements of digest cost or production latency.
-Native result files retain executable hashes and the matching JJ/Git/Python,
-host, filesystem, harness, and fixture identities:
+The third column removes payload hashing/stat-stamping, the untracked-
+`.gitignore` tree hunt, double-walk cloning, and the per-target symlink scan.
+Reseed lands about 24% below the separately supplied 6.64s/two-worker baseline;
+the matched run is about 32% faster. These are warm-cache native synthetic
+observations, not isolated measurements of any single cost or production
+latency. Native result files retain executable hashes and the matching
+JJ/Git/Python, host, filesystem, harness, and fixture identities:
 
 - Before: `.test-agent/performance/files-8555-er11c5f8/result.json`
 - After: `.test-agent/performance/files-8555-1nmrhylp/result.json`
+- Payload-walk removal: `.test-agent/performance/files-8555-3wcbnecv/result.json`
+
+The payload-walk pass also timed `jw add --copy-ignored` on a separate
+30,000-file/123 MB donor (`python3 .test-agent/speed/demo.py`): 3.56s with the
+preserved executable versus 1.53s after, both copying all 30,000 files. This
+responds to reported `jw add` and `reseed --dry-run` timeouts against a large
+real `node_modules` donor, where three full byte-read passes dominated.
 
 Instrumented scaling used the same journal-free executable with 100 then 8,555
 files, keeping symlink/worker/payload dimensions fixed. Comparison passed
