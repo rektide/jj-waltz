@@ -376,6 +376,203 @@ fn group_config(repo: &Repo, body: &str) {
 }
 
 #[test]
+fn builtin_all_from_worker_excludes_renamed_primary_and_refills_worker_named_default() {
+    let Some(repo) = Repo::new() else { return };
+    repo.jj_at(&repo.root, &["workspace", "rename", "primary"]);
+    let z = repo.workspace("z");
+    let default = repo.workspace("default");
+    if !repo.cow(&repo.root, &default) {
+        return;
+    }
+    fs::write(default.join("modified"), "worker named default\n").unwrap();
+    let subdir = z.join("cache/subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    let preview = success(
+        repo.jw(&subdir)
+            .args(["reseed", "--group", "all", "--dry-run"])
+            .output()
+            .unwrap(),
+    );
+    let selected = preview
+        .lines()
+        .filter(|line| line.starts_with("SELECT "))
+        .collect::<Vec<_>>();
+    assert_eq!(selected.len(), 2, "{preview}");
+    assert!(selected[0].starts_with("SELECT \"default\""), "{preview}");
+    assert!(selected[1].starts_with("SELECT \"z\""), "{preview}");
+    assert!(!preview.contains("SELECT \"primary\""), "{preview}");
+    for name in ["default", "z"] {
+        assert!(
+            preview.contains(&format!("PLAN {name}: READY")),
+            "{preview}"
+        );
+    }
+    let before = frozen_id(&repo, &default);
+    let roots = [identity(&default), identity(&z)];
+    let output = success(
+        repo.jw(&subdir)
+            .args(["reseed", "--group", "all"])
+            .output()
+            .unwrap(),
+    );
+    assert!(output.contains("OK default:"), "{output}");
+    assert!(output.contains("OK z:"), "{output}");
+    assert_eq!(frozen_id(&repo, &default), before);
+    assert_eq!(
+        fs::read(default.join("modified")).unwrap(),
+        b"worker named default\n"
+    );
+    assert_eq!([identity(&default), identity(&z)], roots);
+    let config = PathBuf::from(repo.jj_at(
+        &repo.root,
+        &["--ignore-working-copy", "config", "path", "--repo"],
+    ));
+    let mut receipts = fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".receipt.json")
+        })
+        .map(|path| serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    receipts.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[0]["name"], "default");
+    assert_eq!(receipts[1]["name"], "z");
+    for receipt in receipts {
+        assert_eq!(receipt["source"], repo.root.to_str().unwrap());
+    }
+    for target in [&default, &z] {
+        assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
+    }
+    assert!(repo.pending_records().is_empty());
+}
+
+#[test]
+fn builtin_all_excludes_effective_configured_or_cli_aliased_donor() {
+    let Some(repo) = Repo::new() else { return };
+    let configured = repo.workspace("configured");
+    let explicit = repo.workspace("explicit");
+    let target = repo.workspace("feature");
+    if !repo.cow(&configured, &target) {
+        return;
+    }
+    let alias = repo.temp.path().join("donor-alias");
+    symlink(&explicit, &alias).unwrap();
+    group_config(&repo, "source='../workspace-configured'");
+    for cli_override in [false, true] {
+        let mut command = repo.jw(&target);
+        command.args(["reseed", "--group", "all", "--dry-run"]);
+        if cli_override {
+            command.args(["--from", "../donor-alias"]);
+        }
+        let preview = success(command.output().unwrap());
+        let (excluded, included, donor) = if cli_override {
+            ("explicit", "configured", &explicit)
+        } else {
+            ("configured", "explicit", &configured)
+        };
+        assert!(
+            !preview.contains(&format!("SELECT {excluded:?}")),
+            "{preview}"
+        );
+        assert!(!preview.contains("SELECT \"default\""), "{preview}");
+        assert!(
+            preview.contains(&format!("PLAN {included}: READY")),
+            "{preview}"
+        );
+        assert!(preview.contains("PLAN feature: READY"), "{preview}");
+        assert!(
+            preview.contains(&format!("Dry-run source: {}", donor.display())),
+            "{preview}"
+        );
+    }
+}
+
+#[test]
+fn builtin_all_keeps_bad_members_blocked_and_never_refills_ready_subset() {
+    let Some(repo) = Repo::new() else { return };
+    let ready = repo.workspace("ready");
+    let missing = repo.workspace("missing");
+    let sparse = repo.workspace("sparse");
+    let colocated = repo.workspace("colocated");
+    let unbookmarked = repo.workspace("unbookmarked");
+    if !repo.cow(&repo.root, &ready) {
+        return;
+    }
+    fs::rename(missing, repo.temp.path().join("moved-missing")).unwrap();
+    repo.jj_at(&sparse, &["sparse", "set", "--clear", "--add", "shared"]);
+    fs::write(colocated.join(".git"), "gitdir: /nonexistent\n").unwrap();
+    repo.jj_at(&unbookmarked, &["new"]);
+    fs::write(
+        unbookmarked.join("modified"),
+        "work without a covering bookmark\n",
+    )
+    .unwrap();
+    let ready_shared = identity(&ready.join("shared"));
+    let ready_commit = frozen_id(&repo, &ready);
+    let output = repo
+        .jw(&ready)
+        .args([
+            "reseed",
+            "--group",
+            "all",
+            "--on-unmatched",
+            "warn",
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
+    for name in ["missing", "sparse", "colocated", "unbookmarked"] {
+        assert!(stdout.contains(&format!("BLOCKED {name}:")), "{stdout}");
+    }
+    assert!(stdout.contains("unbookmarked work tip"), "{stdout}");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("warning: skipped"));
+    let output = repo
+        .jw(&ready)
+        .args(["reseed", "--group", "all"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(identity(&ready.join("shared")), ready_shared);
+    assert_eq!(frozen_id(&repo, &ready), ready_commit);
+    assert!(repo.pending_records().is_empty());
+}
+
+#[test]
+fn builtin_all_rejects_local_collision_dynamic_resume_and_empty_membership() {
+    let Some(repo) = Repo::new() else { return };
+    let output = repo
+        .jw(&repo.root)
+        .args(["reseed", "--group", "all", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no workspaces selected"));
+    group_config(&repo, "[groups]\nall=['default']");
+    let output = repo
+        .jw(&repo.root)
+        .args(["reseed", "--group", "all", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("reserved"));
+    let output = repo
+        .jw(&repo.root)
+        .args(["reseed", "--group", "all", "--resume"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used"));
+}
+
+#[test]
 fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_subset() {
     let Some(mut repo) = Repo::new() else { return };
     repo.prepare_links(

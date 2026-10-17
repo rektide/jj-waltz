@@ -216,7 +216,9 @@ pub(super) fn resolve(
     registrations: &Registrations,
     base: &Path,
     home: Option<&Path>,
+    source: &Path,
 ) -> Result<SelectionPlan> {
+    validate_groups(groups)?;
     if request.names.is_empty() && request.groups.is_empty() {
         bail!("reseed requires literal workspace names or --group; never selects all implicitly");
     }
@@ -229,10 +231,25 @@ pub(super) fn resolve(
         resolver.name(name, "positional", UnmatchedPolicy::Error)?;
     }
     for group_name in &request.groups {
+        let origin = format!("group {}", quote(group_name));
+        if group_name == "all" {
+            for (name, root) in registrations {
+                // Exclude identities, not names or target eligibility. Broken
+                // registrations stay selected as readiness failures.
+                let excluded = root.as_ref().is_some_and(|root| {
+                    let canonical = root.canonicalize().ok();
+                    let root = canonical.as_deref().unwrap_or(root);
+                    root == base || root == source
+                });
+                if !excluded {
+                    resolver.name(name, &origin, UnmatchedPolicy::Error)?;
+                }
+            }
+            continue;
+        }
         let group = groups
             .get(group_name)
             .with_context(|| format!("unknown reseed group {}", quote(group_name)))?;
-        let origin = format!("group {}", quote(group_name));
         let (names, name_globs, path_globs, default_policy) = match group {
             Group::Names(names) => (names.as_slice(), &[][..], &[][..], UnmatchedPolicy::Error),
             Group::Selectors(group) => (
@@ -291,6 +308,15 @@ pub(super) fn resolve(
         }
     }
     Ok(resolver.plan)
+}
+
+pub(super) fn validate_groups(groups: &BTreeMap<String, Group>) -> Result<()> {
+    if groups.contains_key("all") {
+        bail!(
+            "reseed group \"all\" is reserved for all registered workers; remove its local definition"
+        );
+    }
+    Ok(())
 }
 
 fn validate_glob(pattern: &str) -> Result<()> {
@@ -543,7 +569,7 @@ mod tests {
         base: &Path,
     ) -> Result<SelectionPlan> {
         let config: Config = toml::from_str(config)?;
-        resolve(&request, &config.groups, registered, base, Some(base))
+        resolve(&request, &config.groups, registered, base, Some(base), base)
     }
 
     fn request(groups: &[&str]) -> ReseedRequest {
@@ -558,6 +584,81 @@ mod tests {
             .iter()
             .map(|name| ((*name).into(), Some(base.join(name))))
             .collect()
+    }
+
+    #[test]
+    fn builtin_all_excludes_root_identities_and_retains_unavailable_registrations() {
+        let temp = tempdir();
+        let primary = temp.path().join("primary");
+        let donor = temp.path().join("donor");
+        fs::create_dir(&primary).unwrap();
+        fs::create_dir(&donor).unwrap();
+        let alias = temp.path().join("donor-alias");
+        symlink(&donor, &alias).unwrap();
+        let mut registered = registrations(temp.path(), &["z", "default", "a", "all"]);
+        registered.insert("renamed-primary".into(), Some(primary.clone()));
+        registered.insert("donor".into(), Some(alias));
+        registered.insert("unavailable".into(), None);
+        let mut req = request(&["all", "workers", "all"]);
+        req.names.push("z".into());
+        req.on_unmatched = Some(UnmatchedPolicy::Warn);
+        let config: Config = toml::from_str("[groups]\nworkers=['a','z']").unwrap();
+        let result = resolve(&req, &config.groups, &registered, &primary, None, &donor).unwrap();
+        assert_eq!(
+            result
+                .selections
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            ["z", "a", "all", "default"]
+        );
+        assert_eq!(
+            result.selections[0].origins,
+            ["positional", "group \"all\"", "group \"workers\" names"]
+        );
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(result.issues[0].name, "unavailable");
+        assert!(result.skipped.is_empty());
+        assert!(result.validate().is_err());
+        let literal = resolve(
+            &ReseedRequest {
+                names: vec!["all".into()],
+                ..Default::default()
+            },
+            &BTreeMap::new(),
+            &registered,
+            &primary,
+            None,
+            &donor,
+        )
+        .unwrap();
+        assert_eq!(literal.selections.len(), 1);
+        assert_eq!(literal.selections[0].name, "all");
+    }
+
+    #[test]
+    fn builtin_all_rejects_local_collision_and_empty_membership() {
+        let base = Path::new("/repo");
+        let registered = BTreeMap::from([("renamed-primary".into(), Some(base.to_path_buf()))]);
+        assert!(
+            plan(
+                "[groups]\nall=['renamed-primary']",
+                request(&["all"]),
+                &registered,
+                base
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("reserved")
+        );
+        let result = plan("[groups]", request(&["all"]), &registered, base).unwrap();
+        assert!(
+            result
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("no workspaces selected")
+        );
     }
 
     #[test]

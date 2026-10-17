@@ -390,7 +390,7 @@ struct ReseedCommand {
     /// Literal targets (default: current variant; primary requires names or --group).
     #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
     names: Vec<String>,
-    /// Select a named group from .jwreseed.local.toml (repeatable).
+    /// Select a local group, or built-in all (registered workers except primary/donor; repeatable).
     #[arg(long = "group", value_name = "GROUP")]
     groups: Vec<String>,
     /// Override group selection misses: error (default) or warn and skip; names stay strict.

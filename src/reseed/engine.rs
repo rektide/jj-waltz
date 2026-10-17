@@ -352,6 +352,21 @@ fn run_inner(
     } else {
         load_config(&default)?
     };
+    // Resolve donor path once, before dynamic membership. Keep a failed lookup
+    // for shared preflight so dry-run can still report the selected candidates.
+    let raw_source = request
+        .source
+        .as_ref()
+        .or(config.source.as_ref())
+        .unwrap_or(&default);
+    let source_path = if raw_source.is_absolute() {
+        raw_source.clone()
+    } else if request.source.is_some() {
+        caller_cwd.join(raw_source)
+    } else {
+        default.join(raw_source)
+    };
+    let mut resolved_source = source_path.canonicalize();
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut selection = if source_only {
         selection::SelectionPlan::default()
@@ -362,27 +377,16 @@ fn run_inner(
             &inventory.registered,
             &default,
             home.as_deref(),
+            resolved_source.as_deref().unwrap_or(&source_path),
         )?
     };
     if let Some(warning) = selection.warning() {
         diagnostic(&warning);
     }
     if request.dry_run && !source_only && !request.resume {
-        let raw_source = request
-            .source
-            .as_ref()
-            .or(config.source.as_ref())
-            .unwrap_or(&default);
-        let source = if raw_source.is_absolute() {
-            raw_source.clone()
-        } else if request.source.is_some() {
-            caller_cwd.join(raw_source)
-        } else {
-            default.join(raw_source)
-        };
         readiness.preview = Some(ReseedReport {
             dry_run: true,
-            source,
+            source: source_path,
             source_commit_id: None,
             preparation_summary: None,
             targets: Vec::new(),
@@ -425,6 +429,7 @@ fn run_inner(
     let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
     if recovering_preparation {
         let record = batch.as_ref().unwrap();
+        resolved_source = prepare::source(record).canonicalize();
         prepare::validate_resume_request(&request)?;
         // Source preparation is still shared batch work. Once target plans
         // freeze, each recorded target/receipt can instead resume independently.
@@ -535,19 +540,7 @@ fn run_inner(
         if !request.dry_run {
             readiness.require_unblocked()?;
         }
-        let raw_source = request
-            .source
-            .as_ref()
-            .or(config.source.as_ref())
-            .unwrap_or(&default);
-        let source = if raw_source.is_absolute() {
-            raw_source.clone()
-        } else if request.source.is_some() {
-            caller_cwd.join(raw_source)
-        } else {
-            default.join(raw_source)
-        }
-        .canonicalize()?;
+        let source = resolved_source?;
         let source_client = JjClient::new(&source);
         prepare::ensure_available(&store, &source, batch.as_ref())?;
         let root = source_client.run(["--ignore-working-copy", "workspace", "root"])?;
@@ -1340,6 +1333,7 @@ fn load_config(default: &Path) -> Result<(LocalConfig, Option<Vec<u8>>)> {
         Ok(bytes) => {
             let mut config: LocalConfig = toml::from_str(std::str::from_utf8(&bytes)?)
                 .with_context(|| format!("invalid {}", path.display()))?;
+            selection::validate_groups(&config.groups)?;
             if config.freshen.is_some() && config.prepare.is_some() {
                 bail!("[freshen] and legacy [prepare] cannot both be present; keep only [freshen]");
             }
