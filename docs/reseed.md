@@ -11,6 +11,8 @@ updated:
   by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
+    title: Added navigation to the proposed inline-payload-guard design and its explicit preflight-timing tradeoff
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
     title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -380,6 +382,9 @@ Each new prepare/reseed resolves its own policy and source selection.
 - [Architecture](architecture.md#in-place-reseeding): ownership and live safety boundaries.
 - [Performance assessment](../tools/performance/README.md): retained fixtures and process-count gates.
 - [Command-split decision](../design/up-performance/prepare0.gpt6a.md): why preparation and worker copying are separate.
+- [Inline payload-guard proposal](../design/up-performance/inline-policy0.gpt6a.md):
+  proposed frozen-rule reuse and diff-dirs integration, with streaming versus
+  strict preflight alternatives. The safety contract above remains current.
 - [Incident handoff](../design/up-performance/handoff0.glm53m.md): preserved measurement evidence.
 - [Earlier reseed design](../design/workspace-reseed/reseed0.gpt6a.md) and [source design](../design/workspace-reseed/source-freshen0.gpt61sol.md): historical rationale, not the current recovery contract.
 - [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md): selection rationale.
