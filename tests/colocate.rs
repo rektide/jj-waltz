@@ -165,28 +165,67 @@ impl Fixture {
         admin
     }
     #[cfg(unix)]
-    fn shim(&self, script: &str) -> PathBuf {
+    fn executable(&self, dir: &str, name: &str, script: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let bin = self.temp.path().join("bin");
-        fs::create_dir_all(&bin).unwrap();
-        let shim = bin.join("jj");
-        fs::write(&shim, script).unwrap();
-        fs::set_permissions(shim, fs::Permissions::from_mode(0o755)).unwrap();
-        bin
+        let dir = self.temp.path().join(dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
     }
     #[cfg(unix)]
+    fn shim(&self, script: &str) -> PathBuf {
+        self.executable("bin", "jj", script);
+        self.temp.path().join("bin")
+    }
+    /// Intercepts the command's PATH `jj` lookups with `script`, which
+    /// delegates through `JW_REAL_JJ`. That delegate is a launcher rather
+    /// than the captured executable: version-manager shims (mise) resolve
+    /// `jj` through PATH at run time, so delegating under the interception
+    /// PATH would resolve the interceptor again and recurse forever. The
+    /// launcher restores the delegation PATH and execs the first `jj`
+    /// captured from it, keeping interception active only for the outer
+    /// invocation.
+    #[cfg(unix)]
     fn with_shim(&self, command: &mut Command, script: &str) {
+        self.with_shim_delegating(command, script, std::env::var_os("PATH").unwrap());
+    }
+    /// Like [`Fixture::with_shim`], but `delegated` is the full PATH the
+    /// launcher restores for delegation — the runner PATH by default, or a
+    /// fully controlled tool environment when a test stages
+    /// version-manager-style shims. The interception directory is never part
+    /// of it.
+    #[cfg(unix)]
+    fn with_shim_delegating(
+        &self,
+        command: &mut Command,
+        script: &str,
+        delegated: std::ffi::OsString,
+    ) {
         let bin = self.shim(script);
-        let search = std::env::var_os("PATH").unwrap();
-        let real = std::env::split_paths(&search)
+        let real = std::env::split_paths(&delegated)
             .map(|p| p.join("jj"))
             .find(|p| p.is_file())
             .unwrap();
-        command.env("JW_REAL_JJ", real).env(
-            "PATH",
-            std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&search)))
-                .unwrap(),
+        let launcher = self.executable(
+            "real",
+            "jj",
+            r#"#!/bin/sh
+PATH="$JW_REAL_JJ_PATH"
+export PATH
+exec "$JW_REAL_JJ_EXE" "$@"
+"#,
         );
+        command
+            .env("JW_REAL_JJ", launcher)
+            .env("JW_REAL_JJ_PATH", &delegated)
+            .env("JW_REAL_JJ_EXE", real)
+            .env(
+                "PATH",
+                std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&delegated)))
+                    .unwrap(),
+            );
     }
 }
 
@@ -360,6 +399,76 @@ fn auto_colocation_keeps_jj_only_when_primary_setting_is_unreadable() {
         command.args(["add", name]).assert().success();
         assert!(!f.path(name).join(".git").exists());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn with_shim_delegates_under_the_delegated_path_without_recursing() {
+    let f = Fixture::new();
+    // A version-manager-style `jj` shim: like mise's system fallback, it
+    // re-resolves `jj` through PATH, skipping only its own directory, and
+    // execs the winner. If delegation ever ran under the interception PATH,
+    // this shim would resolve the interceptor again and cycle forever; the
+    // depth guard bounds that cycle so a regression fails fast instead of
+    // wedging the runner.
+    let shims = f.executable(
+        "version-shims",
+        "jj",
+        r#"#!/bin/sh
+depth=$((${JW_SHIM_DEPTH:-0} + 1))
+if [ "$depth" -gt 8 ]; then
+  echo "jj delegation re-entered the interception PATH" >&2
+  exit 90
+fi
+export JW_SHIM_DEPTH=$depth
+echo "$*" >> "$JW_SHIM_LOG"
+self=${0%/*}
+saved_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+  IFS=$saved_ifs
+  if [ "$dir" != "$self" ] && [ -x "$dir/jj" ]; then
+    exec "$dir/jj" "$@"
+  fi
+done
+echo "no jj beyond the version-manager shim" >&2
+exit 127
+"#,
+    );
+    // The resolved end of delegation: the "real" jj a version manager would
+    // finally hand off to.
+    let stub = f.executable("stub-bin", "jj", "#!/bin/sh\necho 'jj 0.0.0-stub'\n");
+    let delegated = std::env::join_paths([
+        shims.parent().unwrap().to_path_buf(),
+        stub.parent().unwrap().to_path_buf(),
+    ])
+    .unwrap();
+    let mut cmd = f.command("jj", &f.root);
+    f.with_shim_delegating(
+        &mut cmd,
+        "#!/bin/sh\necho \"$*\" >> \"$JW_INTERCEPTED\"; exec \"$JW_REAL_JJ\" \"$@\"\n",
+        delegated,
+    );
+    let intercepted = f.temp.path().join("intercepted");
+    let resolved = f.temp.path().join("resolved");
+    // JjClient resolves `jj` through PATH; this is the exact outer invocation
+    // the interceptor must serve exactly once before handing off.
+    cmd.env("JW_INTERCEPTED", &intercepted)
+        .env("JW_SHIM_LOG", &resolved)
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("jj 0.0.0-stub"));
+    assert_eq!(
+        fs::read_to_string(&intercepted).unwrap().lines().count(),
+        1,
+        "the interceptor must serve the outer lookup exactly once"
+    );
+    assert_eq!(
+        fs::read_to_string(&resolved).unwrap().lines().count(),
+        1,
+        "delegation must resolve past the version-manager shim, not back into the interceptor"
+    );
 }
 
 #[test]
