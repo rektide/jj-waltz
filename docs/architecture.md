@@ -8,6 +8,8 @@ updated:
   by: model:zai-coding-plan/glm-5.3-flash#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb8a7487affeE2smndZ914OQMS"
+    title: Reviewed command isolation and clarified legacy-only source recovery routing
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Documented the prepare/reseed command split, v4 source-only journals, legacy recovery routing, and the bounded tracked-tree verification split
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -332,9 +334,9 @@ registered workspace with the same source-only meaning. A new source-only
 journal uses empty names/targets and an explicitly verified empty `plans` array,
 not an empty group or fake target. Its receipt records the same final
 source/payload proof. `prepare --resume` finds the unique active v4 journal
-before any snapshot, even for an alternate donor; bare `reseed --resume` at the
-primary remains a compatibility path into that same source-only recovery, while
-legacy target batches require their recorded names. A second unfinished
+before any snapshot, even for an alternate donor. Bare `reseed --resume` at the
+primary recovers legacy source-only v3 journals; it does not resume v4 preparation.
+Legacy target batches require their recorded names. A second unfinished
 source-only operation is refused. Frozen source-only completion revalidates the
 verified donor before finalizing its receipt.
 
@@ -770,8 +772,10 @@ services own creation and switching; doctor supplies read-only health results.
 
 ## JSON schema version 1
 
-Any command that offers JSON uses one versioned envelope and writes only JSON to
-stdout. Diagnostics and warnings that are not envelope data go to stderr.
+Snapshot JSON from `list` and `status` uses a versioned envelope and writes only
+JSON to stdout. Diagnostics and warnings go to stderr. `prepare --format=json`
+currently serializes its source-only report directly, including `source_commit_id`,
+without this snapshot envelope or a schema-version field.
 
 ```json
 {
