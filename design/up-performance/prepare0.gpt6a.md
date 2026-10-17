@@ -9,7 +9,7 @@ generated:
   at: 2026-10-17
 sources:
   - resource: "opencode://ses_eb8a7487affeE2smndZ914OQMS"
-    title: Operator selected prepare, explicitly deleted up, and prioritized core reseed performance over build and command-policy expansion
+    title: Operator selected prepare, deleted up, prioritized core reseed performance, and required checked-in performance assessment tools
   - resource: /design/up-performance/handoff0.glm53m.md
     title: Incident evidence identifying per-file verification, phantom recovery, repeated scans, and test shim recursion
   - resource: /src/reseed/engine.rs
@@ -18,6 +18,8 @@ sources:
     title: Existing native upstream preparation and persisted command progress
   - resource: /docs/reseed.md
     title: Maintained keep-feature refill and source preparation contracts before the command split
+  - resource: https://github.com/jj-vcs/jj/blob/803ef00a0a6ee4ddc275d3138d5f9e7326399906/docs/technical/architecture.md#treestate
+    title: JJ's tracked-tree snapshot uses recorded file mtimes and sizes; read from the matching local archive
 ---
 
 # Separate donor preparation from workspace refill
@@ -57,6 +59,16 @@ fixing the core algorithm.
 Repeated payload hashing, ignore-rule construction, recursive stamps, journal
 size, and per-file reflink costs remain separate measurable costs. Removing the
 dominant subprocess multiplier does not itself establish a five-second refill.
+
+## Repeatable assessment
+
+The operator explicitly requires checked-in performance tools. Promote fixture
+generation, process counting, and result comparison into `tools/performance/`.
+Keep generated repositories, logs, and raw results in ignored scratch storage.
+Record binary identities, JJ version, fixture dimensions, per-operation elapsed
+time, and subprocess counts. Compare like-shaped runs and test process scaling
+without imposing noisy universal wall-clock thresholds. Preparation must run
+once, with worker materialization consuming its exact reported commit.
 
 ## Persisted state
 
