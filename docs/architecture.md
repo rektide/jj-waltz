@@ -5,9 +5,13 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Documented the prepare/reseed command split, v4 source-only journals, legacy recovery routing, and the bounded tracked-tree verification split
+  - resource: /design/up-performance/prepare0.gpt6a.md
+    title: Command-split decision record and first performance slice adopted by this architecture
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Integrated native source selection into shared preparation, v3 up mode and source-only receipts, and atomic target-history planning
   - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
@@ -87,11 +91,13 @@ offline.
   `links`. Historical lifecycle metadata is not rewritten by reseeding.
 - `freshen::source` owns operation-bound upstream selection and post-fetch graph
   proofs. This foundation does not fetch, advance, or refill workspaces itself;
-  preparation/reseed coordination owns those mutations and their journals.
+  `prepare` owns those mutations and their journals, and legacy recovery replays
+  recorded intent without reselecting.
 - `freshen::history` owns target work-tip/publication planning, timestamp bookmark
   allocation, and create-only verification of a previously journaled name/tip.
-  The reseed executor checks this optional frozen intent before clearing or
-  advancing; up populates it before atomic batch-plan freeze, including opt-out.
+  No new command plans preservation: `prepare` never allocates history bookmarks.
+  The retained semantics serve legacy v3 journals, whose recorded intent the
+  `reseed --resume` executor checks create-only before clearing or advancing.
 - `links` owns config merging, path confinement, link classification, preflight,
   and filesystem changes.
 - `shell` owns shared shell behavior. Each shell adapter varies syntax, not policy.
@@ -277,22 +283,26 @@ Up uses native source selection instead of ordinary reseed's tree assertion.
 Snapshot-free `Inventory` retains the caller's verified registered name. With no
 names/groups, `run` inserts that one non-primary literal target before pending
 lookup or source/target snapshots and reports origin `current`. At the primary it
-requires explicit selection for reseed; bare up at primary is source-only.
-Explicit names/groups suppress this default even for
+requires explicit selection for reseed. `prepare` is separate and source-only
+from any registered workspace. Explicit names/groups suppress this default even for
 an empty group result. No navigation-token semantics or implicit-all selection is
 introduced. Resume uses recorded source IDs and ignores newly configured defaults.
-While source preparation has no frozen target plans, recovery requires the complete
-recorded target order. After plans freeze, each selected target/receipt is recovered
-independently against its frozen identity, without refetching or rebuilding. Bare
-current selection never expands to the rest of the batch in either phase.
+While legacy source preparation has no frozen target plans, recovery requires the
+complete recorded target order. After plans freeze, each selected target/receipt is
+recovered independently against its frozen identity, without refetching or
+rebuilding. Bare current selection never expands to the rest of the batch in
+either phase.
 
-With explicit `up`, `reseed::prepare` first snapshots real source/target
-work, freezes native upstream selection, fetches only that bookmark/remote through
-`JjClient::fetch_bookmark`, validates/pins the source goal, selects
-its empty child, and runs trusted configured argv in the donor. Preparation settings
-alone never activate it. The source-keyed journal stays active through target
-handoff and blocks new borrowing or freshening that would invalidate unfinished
-work, including older unselected target records depending on the donor.
+`prepare` snapshots the source, freezes native upstream selection, fetches only
+that bookmark/remote through `JjClient::fetch_bookmark`, validates/pins the source
+goal, selects its empty child, and runs trusted configured argv in the donor. It
+then records an explicitly empty target plan (journal v4), finalizes the
+completion receipt, and reports the exact frozen source commit. It never enters
+target planning, never snapshots the invoking workspace, and never allocates
+history bookmarks. Preparation settings alone never activate it. The source-keyed
+journal stays active until its receipt and blocks new borrowing or preparation
+that would invalidate unfinished work, including older unselected target records
+depending on the donor.
 
 Verified preparation binds the source change/goal, root identities, selected
 ignored roots, and logical payload digest. Normal JJ restoration may change a
@@ -301,32 +311,62 @@ accepting unrelated tree-equivalent changes. Source ownership and trusted policy
 are rechecked before resumed mutation or installer execution. Shared baseline-owned
 link configuration is captured after preparation, not mistaken for policy tampering.
 
-All target plans are atomically stored in the preparation batch before individual
-pending records are installed. Preparation IDs and immutable plan comparisons
-associate pending records/receipts, while mutable runtime link diagnostics are
-separate from planned warnings. Lost handoff recreates only missing recorded
-intent; completed receipts prevent rerunning finished targets or preparation.
-Target checks refuse changed/stale work rather than snapshotting installer changes
-into it. No second preparation/refill engine was introduced. Up v3 journals freeze
-`SourceSelection` and the request's bookmark opt-out before preparation; legacy
-v1/v2 records have no native selection and remain resume-only reseed operations,
-using their recorded remote/revset/base rather than acquiring up reset semantics.
+Legacy batches store all target plans atomically in the preparation batch before
+individual pending records are installed. Preparation IDs and immutable plan
+comparisons associate pending records/receipts, while mutable runtime link
+diagnostics are separate from planned warnings. Lost handoff recreates only
+missing recorded intent; completed receipts prevent rerunning finished targets or
+preparation. Target checks refuse changed/stale work rather than snapshotting
+installer changes into it. No second preparation/refill engine was introduced.
+New prepare journals are v4 and freeze `SourceSelection` before commands. Legacy
+v3 up journals, v2, and v1 records have their recorded selection/semantics and
+are resume-only through `reseed --resume`, using their recorded
+remote/revset/base and target plans rather than acquiring prepare's source-only
+shape.
 
-Caller inventory is resolved before donor selection; `--from` never changes process
-cwd or reinterprets a bare variant invocation as donor-only. Both commands require
-a registered caller in the repository. Source-only up uses empty names/targets and
-an explicitly verified empty `plans` array, not an empty group or fake target. Its
-receipt records the same final source/payload proof. Bare primary `up --resume`
-finds the unique active source-only journal before any snapshot, even for an
-alternate donor; a second unfinished source-only operation is refused. Frozen
-source-only completion revalidates the verified donor before finalizing its receipt.
+Caller inventory is resolved before donor selection; `--from` never changes
+process cwd. Reseed requires a registered caller; `prepare` accepts any
+registered workspace with the same source-only meaning. A new source-only
+journal uses empty names/targets and an explicitly verified empty `plans` array,
+not an empty group or fake target. Its receipt records the same final
+source/payload proof. `prepare --resume` finds the unique active v4 journal
+before any snapshot, even for an alternate donor; bare `reseed --resume` at the
+primary remains a compatibility path into that same source-only recovery, while
+legacy target batches require their recorded names. A second unfinished
+source-only operation is refused. Frozen source-only completion revalidates the
+verified donor before finalizing its receipt.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
-prefills tree-identical paths, expands sparsity, and verifies the exact target
-revision. Configured ignored roots are copied only after tracked verification.
-An interrupted target is resumed from its pending record before ordinary
-snapshotting; partial prefill must never become intended user history. Batch
-recovery does not use repository-wide undo.
+prefills tree-identical paths, expands sparsity, and verifies the target against
+its desired revision. Configured ignored roots are copied only after tracked
+verification. An interrupted target is resumed from its pending record before
+ordinary snapshotting; partial prefill must never become intended user history.
+Batch recovery does not use repository-wide undo.
+
+### Tracked-tree verification split
+
+Normal-path verification of an intact, full-sparse workspace
+(`engine::verify_disk`) is a bounded JJ tracked-tree proof: one snapshot with
+`fsmonitor.backend=none`, `snapshot.auto-track=none()`, and
+`snapshot.auto-update-stale=false`, then a single
+`jj diff --from @ --to <frozen commit> --summary` whose empty output proves
+tracked-tree equality under JJ's semantics, including its normal
+[mtime/size stat cache](https://github.com/jj-vcs/jj/blob/803ef00a0a6ee4ddc275d3138d5f9e7326399906/docs/technical/architecture.md#treestate).
+This deliberately replaces the former per-file byte-extraction audit. It is not
+an unconditional raw-byte promise, and because the snapshot runs first, a
+mismatch can be reported after a snapshot was taken, possibly recording a
+rejected edit; the earlier "no snapshot performed" rejection promise is retired
+on this path. Auto-tracking stays off, so a snapshot never adds files, and stale
+workspaces are never auto-updated by a proof.
+
+Recovery keeps the strict path. A target that crossed the `Prepared` boundary —
+or any sparse-incomplete tree — cannot be trusted to an empty diff, so
+`engine::verify_reconstructed_disk` retains per-file byte/type/mode verification
+against pinned immutable data before any snapshot-capable command. Fresh
+execution is decided by the recorded target mutation phase
+(`reconstruct = phase != Prepared`), not by preparation-ID presence, so an
+untouched preparation handoff no longer enters phantom reconstruction while a
+half-filled target still reconstructs before snapshots.
 
 Stock JJ rejects sparse mutation with `--ignore-working-copy`. Recovery therefore
 reconstructs and verifies the entire recorded desired tracked tree before a normal
@@ -348,8 +388,7 @@ missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
 replace in CLI > local > global order. Global config is read only when inherited,
 and never written. `Policy::recorded` represents frozen recovery selection instead
 of reading current defaults. Current command exposure includes add/s creation,
-reseed and legacy source preparation. Up orchestration remains a separate
-commissioned stage.
+reseed, prepare payload verification, and legacy source preparation recovery.
 
 `Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
 unsupported syntax, deduplicates equivalent selectors, and compiles components.
@@ -382,7 +421,7 @@ Selection diagnostics are optional proof metadata; older records default to none
 
 This optimizes matching, not every filesystem operation. Frozen ignore assembly,
 source/target stamps, recursive validation, payload digest, capability probes and
-copying retain independent correctness passes. New/unverified freshening compiles
+copying retain independent correctness passes. New/unverified preparation compiles
 syntax before fetch and selects against the exact frozen goal before commands and
 at source-proof capture. Verified recovery validates frozen roots instead. It
 does not reject a missing literal directory
@@ -446,14 +485,16 @@ The local loader retains `[prepare]` as a deprecated, warned alias and rejects
 both table names together. This preserves frozen legacy policy bytes during
 recovery instead of silently ignoring old settings or forcing a mid-flight edit.
 
-Preparation journals v2/v3 freeze a `command_sequence` containing `argv`, `completed`,
+Preparation journals v2/v3/v4 freeze a `command_sequence` containing `argv`, `completed`,
 and `in_flight`. Before spawning a command, the engine durably marks it in flight.
 After successful exit, it checks source ownership/policy, the same selected source
 change and exact goal parent, the unchanged tracked tree (including new tracked
 paths), disk materialization, and frozen targets before acknowledging completion.
-Commands execute sequentially in donor cwd without an implicit shell. Any failed
-command/proof stops before later commands or target refill. Final source/payload
-proof capture remains the prerequisite for target planning and handoff.
+Commands execute sequentially in donor cwd without an implicit shell, and command
+stdout is forwarded to stderr so jw's own stdout stays reserved for its report.
+Any failed command/proof stops before later commands or target refill. Final
+source/payload proof capture remains the prerequisite for target planning, handoff,
+or, for `prepare`, receipt finalization.
 
 Resume skips durable completed steps; an in-flight step may retry after failure
 or interruption, including a lost acknowledgement after successful side effects.
@@ -471,20 +512,24 @@ malformed completion positions, or conflicting legacy/v2 command fields fail
 closed. Target pending/receipt schemas are unchanged.
 
 No commands means fetch/advance only, not a guessed build. Existing selected
-ignored payload may still be copied, explicitly reported as existing rather than
-freshly built. There is no automatic payload pruning. Up reuses this engine;
-`reseed --freshen` is removed, while old preparation uses `reseed --resume` and
-retains its original target policy. See
-[operator configuration and retry guidance](reseed.md#freshen-the-source).
+ignored payload may still be verified, explicitly reported as existing rather than
+freshly built. There is no automatic payload pruning. `prepare` reuses this engine
+and ends at its source proof; `reseed --freshen` is removed, while legacy
+preparation and removed-up batches use `reseed --resume` and retain their
+original target policy. See
+[operator configuration and retry guidance](reseed.md#prepare-the-source).
 
 ### Target history preservation foundation
 
 [`TargetHistory`](../src/freshen/history.rs) implements the target-preservation
-foundation of [commissioned up](../design/workspace-reseed/up0.gpt6a.md#unpublished-target-preservation).
-It is activated by `up` and `--no-freshen-bookmark`. Ordinary reseed and legacy
-preparation recovery retain their existing history behavior.
+foundation of the [removed combined up](../design/workspace-reseed/up0.gpt6a.md#unpublished-target-preservation).
+No command activates its planning anymore: `prepare` never allocates history
+bookmarks, and ordinary reseed keeps its existing history behavior. The retained
+semantics serve legacy v3 up journals, whose recorded `history` intent the
+`reseed --resume` executor verifies create-only before clearing or advancing.
 
-After snapshotting target work and proving its disk bytes, the coordinator calls
+After snapshotting target work and proving its disk bytes, a removed-up
+coordinator called
 `TargetHistory::plan(client, operation, target_commit, fetched_goal,
 no_freshen_bookmark, names)`. IDs are queried with explicit `commit_id(...)`
 revsets, not symbols which could be shadowed by bookmarks. The effective work
@@ -498,7 +543,7 @@ still records this history assessment; it only suppresses the bookmark.
 allocator per batch. Names use UTC `freshen-YYYYMMDDTHHMMSS.nnnnnnnnnZ`, with
 `-2`, `-3`, ... on collision, including identical timestamps/clock repeats.
 Existing local/remote names and deleted tracked relationships are reserved.
-Before planning a new batch, the coordinator also calls `reserve(name)` for names
+Before planning a new batch, the coordinator also called `reserve(name)` for names
 in other active pending/preparation intents: those bookmarks may not exist yet.
 Do not rebuild an allocator or replan when recovering frozen targets.
 
@@ -506,8 +551,8 @@ The existing target pending/receipt schema has an optional `history` field;
 legacy absence stays absent on serialization. It holds target facts/operation,
 work tip, exact upstream goal, publication assessment, and the chosen bookmark
 name/exact tip. Preparation's atomic `plans` and immutable handoff comparison
-carry the same field without adding permanent workspace tracking. The up planner
-populates it **before** the batch plans are saved/handed off.
+carry the same field without adding permanent workspace tracking. The removed up
+planner populated it **before** the batch plans were saved/handed off.
 The executor verifies it matches the frozen old commit and new source/base goal,
 durably saves intent, then ensures the pair before sparse clearing or advancement.
 This also applies on later-phase recovery, before partial-tree reconstruction.
@@ -525,10 +570,10 @@ native concurrent operations can still create conflicts/multiple operation heads
 which stop the operation rather than being repaired. Pause writers; this is not
 a cross-process compare-and-swap or a guarantee against later external movement.
 
-No existing feature bookmark is moved. Advancement remains a new empty change on
-the prepared baseline, not a rebase; even an already empty old target gets a new
-empty change (recovery recognizes a completed new without repeating it). Opting
-out leaves the old JJ history intact.
+No existing feature bookmark is moved. Legacy advancement recovery keeps its new
+empty change on the frozen prepared baseline, not a rebase; even an already empty
+old target gets a new empty change (recovery recognizes a completed new without
+repeating it). A recorded opt-out leaves the old JJ history intact.
 Focused native tests cover scratch/meaningful empty/merge publication, exact-ID
 shadowing, deterministic collisions and reserved uncreated intents, a precheck/
 create collision, serialization/replay, lost success, immutable handoff identity,
@@ -543,9 +588,9 @@ a rerun of the full JJ release matrix or unrelated suites.
 ### Native freshening source foundation
 
 [`SourceSelection`](../src/freshen/source.rs) implements native upstream selection
-for the [up workflow](../design/workspace-reseed/up0.gpt6a.md), now called by the
-shared coordinator before creating an up preparation journal. Only legacy v1/v2
-resume retains the earlier stored remote/revset fetch behavior.
+for the `prepare` workflow, called by the shared coordinator before creating a
+prepare journal. Only legacy v1/v2/v3 resume retains the earlier stored
+remote/revset fetch behavior.
 
 The caller snapshots real source work, verifies filesystem bytes, and supplies one
 captured operation. Selection and validation use only frozen read-only JJ queries:
@@ -635,9 +680,11 @@ The missing-ref extension adds six focused cases: all 20 source cases pass on th
 installed JJ 0.45.1 development build, with the six missing-ref cases separately
 verified on official JJ 0.46.0. This extension did not rerun the full release
 matrix or unrelated suites. No live source was mutated.
-Those foundation checks concern graph/reference semantics. End-to-end up and
-reflink verification are recorded separately in the
-[operator guide](reseed.md#up-integration-verification).
+Those foundation checks concern graph/reference semantics. End-to-end combined-up
+and reflink verification are recorded historically in the
+[operator guide](reseed.md#combined-up-verification-historical); the prepare/reseed
+split itself had not been runtime-verified at this documentation's baseline
+(installed JJ `0.45.1-33d3a595`, Linux Btrfs).
 
 ### Metadata repair
 

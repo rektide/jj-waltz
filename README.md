@@ -1,13 +1,17 @@
 ---
 type: Guide
-title: jj-waltz — create, renew, advance
-description: The canonical guide to creating and navigating JJ workspaces, renewing private CoW sharing, and advancing onto prepared upstream work.
+title: jj-waltz — create, renew, prepare
+description: The canonical guide to creating and navigating JJ workspaces, renewing private CoW sharing, and preparing upstream sources to an exact commit.
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6-astra
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Split the public up command into source-only prepare, restored reseed-only worker semantics, and rewired maintained docs to the prepared-commit workflow
+  - resource: /design/up-performance/prepare0.gpt6a.md
+    title: Current command-split decision record — prepare/reseed separation and the performance-first slice
   - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
     title: Synthesized the existing guide and independent Sol and G takes into the canonical README and skill
   - resource: /README.md
@@ -43,16 +47,17 @@ sources:
 
 # jj-waltz
 
-**Create a workspace. Renew its copy-on-write sharing. Advance onto prepared upstream work.**
+**Create a workspace. Renew its copy-on-write sharing. Prepare upstream sources to an exact commit.**
 
 `jw` manages named [Jujutsu](https://github.com/jj-vcs/jj) workspaces: create,
-switch, inspect, and refill them in place. Copy-on-write (CoW) files share storage
+switch, inspect, refill them in place, and prepare upstream sources. Copy-on-write
+(CoW) files share storage
 until either copy changes, so workspaces can have private files and dependencies
 without paying for every byte twice.
 
 This working fork of [EzraCerpac/jj-waltz](https://github.com/EzraCerpac/jj-waltz)
 extends the workspace switcher with chosen destinations, private dependency copies,
-in-place reseeding, and integrated upstream advancement. It works with stock JJ.
+in-place reseeding, and source-only upstream preparation. It works with stock JJ.
 
 ## Install and start
 
@@ -103,33 +108,39 @@ The **primary** is the registered checkout owning the shared JJ repository. A
 **variant** is another workspace in that repository. The **donor** supplies files;
 it can be the primary or an explicitly selected workspace.
 
-| Behavior / control | `add` / `s` (`switch`) | `reseed` | `up` |
+| Behavior / control | `add` / `s` (`switch`) | `reseed` | `prepare` |
 | --- | --- | --- | --- |
-| Outcome | Create; `s` enters existing or creates missing | Renew CoW sharing in place | Fetch, prepare donor, advance and refill |
-| Target history | Empty child of source `@`, or `--at` | Keep snapshotted work, or reset via `--at` | New empty change at the fetched goal |
-| Bare command in a variant | Name/path required | Current variant | Current variant |
-| Bare command at primary | Name/path required | Names/group required | Donor only |
-| Multiple names | Create all; `s` enters last | Refill selected | Advance selected |
-| `--group`, `--on-unmatched` | — | Supported | Supported |
-| Default donor | Current checkout | Local `source` → verified primary | Same as reseed |
-| `--from` | Creation source and command context | Donor only; caller role stays the same | Same as reseed |
+| Outcome | Create; `s` enters existing or creates missing | Renew CoW sharing in place | Select/fetch one upstream, prepare the donor, report the exact commit |
+| Target workspaces | Created or entered | Refilled in place; names/groups select | None — never selects, refills, or advances workers |
+| Target history | Empty child of source `@`, or `--at` | Keep snapshotted work, or reset via `--at` | — |
+| Bare command in a variant | Name/path required | Current variant | Source-only; same meaning anywhere |
+| Bare command at primary | Name/path required | Names/group required | Source-only |
+| Multiple names | Create all; `s` enters last | Refill selected | — |
+| `--group`, `--on-unmatched` | — | Supported | — |
+| Default source | Current checkout | Local `source` → verified primary | Same as reseed |
+| `--from` | Creation source and command context | Donor only; caller role stays the same | Source root |
 | `--path` | One exact destination; name can be inferred | — | — |
-| `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion | Upstream advancement goal |
-| `--at` | Explicit creation base | Explicit reset base | —; always prepared goal |
+| `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion | Upstream goal |
+| `--at` | Explicit creation base | Explicit reset base | — |
 | Fetch / preparation commands | Never | Never | One pinned upstream / local argv |
-| `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Refill payload |
+| `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Verify selected payload |
 | `--dry-run`, `--resume` | — | Supported | Supported |
-| `--replace-content` | — | Discard unrecorded target contents | Same as reseed |
-| Bookmarks | Optional creation bookmark | Existing bookmarks stay | Preserve work left behind; feature bookmarks stay |
+| `--format=json` | — | — | Machine-readable report |
+| `--replace-content` | — | Discard unrecorded target contents | — |
+| Bookmarks | Optional creation bookmark | Existing bookmarks stay | Never creates or moves bookmarks |
 
-**Renew keeps work checked out; advance starts fresh.** `up` is not a rebase.
-Creation flags never reset or refill an existing workspace selected by `s`.
-Explicit names/groups suppress the implicit current target; empty selection never
-means all workspaces. Maintenance names are literal, not navigation shortcuts.
+**Renew keeps work checked out; `--at` resets a worker deliberately.** `prepare`
+never touches workspaces. Creation flags never reset or refill an existing
+workspace selected by `s`. Explicit names/groups suppress the implicit current
+reseed target; empty selection never means all workspaces. Maintenance names are
+literal, not navigation shortcuts. Feature rebasing remains ordinary `jj` work:
+pointing a worker at a new baseline does not rebase its feature commits.
 
-Creation with `--from` can start outside a checkout. Reseed/up require a registered
-caller even with `--from`. Ordinary `jj` commands own deliberate history editing,
-bookmarks, and remote administration; forge tools own pull requests and CI.
+Creation with `--from` can start outside a checkout. Reseed requires a registered
+caller even with `--from`; prepare accepts any registered workspace of the
+repository, always preparing only its source. Ordinary `jj` commands own
+deliberate history editing, bookmarks, and remote administration; forge tools own
+pull requests and CI.
 
 ## Create and navigate
 
@@ -172,7 +183,8 @@ preparation commands. Trunk configuration does not choose the creation base.
 
 Unsupported cloning, Watchman, or rejected copied JJ state cause a warning and
 ordinary JJ checkout fallback during **tracked creation**. That is not CoW success.
-Private ignored payloads and reseed/up refills require real CoW and have no ordinary
+Private ignored payloads, reseed refills, and prepare payload verification require
+real CoW and have no ordinary
 copy fallback.
 
 ### Creation-mode precedence
@@ -216,34 +228,43 @@ jw reseed worker --source-at 'dev@origin' --at 'dev@origin' --dry-run
 ```
 
 This selects an empty child of the base rather than carrying feature edits forward.
-Tracked work remains in JJ history, but reseed does not create up's preservation
-bookmark. See the [operator guide](docs/reseed.md#one-off-use).
+Tracked work remains in JJ history, and reseed never creates preservation bookmarks.
+See the [operator guide](docs/reseed.md#one-off-use).
 
-## Advance: fetch, prepare, refill
+## Prepare the source
 
 ```sh
-jw up --dry-run                    # current variant; donor only at primary
-jw up worker-a worker-b --dry-run   # only these targets
-jw up worker-a --source-at 'dev@origin' --dry-run
+jw prepare --dry-run
+jw prepare --source-at 'dev@origin'
+jw prepare --format=json
 ```
 
-Up pins one upstream **before fetching**: CLI/local source goal, otherwise a unique
-applicable native tracked pair, otherwise a unique remote bookmark exactly at the
-clean donor base, including untracked refs. Ambiguity calls for a one-run
-`--source-at`; there is no guessed main/origin. Optional `[freshen].remote`
-constrains selection. An explicit missing `branch@configured-remote` can be fetched,
-though preview cannot yet know its exact goal.
+`prepare` selects and fetches one pinned upstream, prepares the donor, and reports
+the **exact frozen commit**. It is source-only: it never chooses targets, refills
+files, or advances workers, and it has the same meaning from any registered
+workspace. Dry-run explains the prospective fetch and preparation commands without
+fetching or building.
 
-Unpublished donor work blocks advancement, even beneath an empty scratch change.
-The selected remote must fast-forward. Up freezes the fetched goal, prepares the
-donor, then puts targets on new empty changes at that same goal. Existing feature
-bookmarks stay where they are. Work not contained in the fetched goal gets a
-collision-safe `freshen-<UTC timestamp>` bookmark before target clearing or advancement;
-`--no-freshen-bookmark` opts out of that bookmark only.
+Upstream selection pins one upstream **before fetching**: CLI/local source goal,
+otherwise a unique applicable native tracked pair, otherwise a unique remote
+bookmark exactly at the clean donor base, including untracked refs. Ambiguity
+calls for a one-run `--source-at`; there is no guessed main/origin. Optional
+`[freshen].remote` constrains selection. Unpublished donor work blocks
+preparation, even beneath an empty scratch change, and the selected remote must
+fast-forward.
 
-To prepare newer dependencies **while keeping a feature revision**, run source-only
-`jw up` at the primary, then `jw reseed feature`. See the
-[full up contract](docs/reseed.md#freshen-the-source).
+The reported commit is frozen. Reuse it directly instead of preparing again:
+
+```sh
+jw prepare                                       # prints the exact prepared commit
+jw reseed worker-a --at <commit> --copy-ignored node_modules   # reset a worker onto it
+jw reseed feature                                # or keep a feature tree
+```
+
+Feature rebasing stays an ordinary `jj` operation. `--at` starts an empty child of
+the chosen base; it does not rebase the workspace's old feature commits, and
+reseed without `--at` keeps them checked out. See the
+[full prepare contract](docs/reseed.md#prepare-the-source).
 
 ### Local preparation and groups
 
@@ -268,10 +289,11 @@ Each must leave tracked files, including lockfiles, unchanged. Use `command = [.
 for one command or `commands = [[...], ...]`, never both, even when empty. No commands
 means no guessed installer/build: selected existing payload can still be borrowed,
 but is not freshly built. Preparation commands are repository-local, run only via
-`up`, and execute trusted programs rather than a sandbox.
+`prepare`, and execute trusted programs rather than a sandbox.
 
-Use `jw up --group workers --dry-run` or `jw reseed --group workers --dry-run`.
-Groups can also select registered name/path patterns and opt into warn-and-skip for
+Use `jw reseed --group workers --dry-run` to select refill targets; `prepare` has
+no groups because it has no targets. Groups can also select registered name/path
+patterns and opt into warn-and-skip for
 unrelated candidates. Direct names and target safety failures stay strict. Group
 patterns differ from ignored-copy patterns; see [wildcard groups](docs/reseed.md#wildcard-groups).
 
@@ -282,10 +304,10 @@ patterns differ from ignored-copy patterns; see [wildcard groups](docs/reseed.md
 ```sh
 jw add feature --copy-ignored node_modules
 jw reseed --copy-ignored 'packages/*/node_modules' --dry-run
-jw up --no-copy-ignored --dry-run
+jw prepare --no-copy-ignored --dry-run
 ```
 
-The same controls apply to new workspaces, reseed, and up. Selected ignored roots
+The same controls apply to new workspaces, reseed, and prepare. Selected ignored roots
 are **replaced** with private reflinks, not hard links or shared-directory symlinks.
 Other target contents stay unless explicitly erased. Existing switches never refill.
 
@@ -328,20 +350,24 @@ explains local overrides, conflicts, and `jw doctor` link checks.
 
 Refills require full, conflict-free eligible JJ-only targets, verified ownership,
 and real reflinks. A normal colocated donor is allowed; linked Git/app-owned donors
-cannot be freshened. Pause agents, builds, editors, monitors, and other writers;
+cannot be prepared. Pause agents, builds, editors, monitors, and other writers;
 JW's advisory lock does not lock arbitrary JJ processes.
 
 Dry-run can snapshot real work to preserve it. It does not fetch, create new changes
 or bookmarks, run preparation, or refill files. `--replace-content` explicitly
 permits deleting unrecorded target contents, including `.env`, except `.jj`.
 
+Verifying an intact workspace is a bounded JJ tracked-tree check: it may snapshot
+(and record a rejected edit) before reporting a mismatch, and it never tracks
+additional files or updates a stale workspace. Half-filled recovery targets still
+reconstruct and re-verify before any normal snapshot-capable command.
+
 After interruption, **resume before snapshotting a half-filled target**:
 
 ```sh
-jw up worker-a worker-b --resume  # original order until target plans freeze
-jw up worker-a --resume           # individual/subset recovery after plan freeze
-jw up --resume                   # current target; source-only at primary
-jw reseed feature --resume       # ordinary reseed or legacy preparation
+jw prepare --resume               # source-only preparation; frozen goal not refetched
+jw reseed feature --resume        # ordinary reseed recovery
+jw reseed worker-a worker-b --resume  # legacy batches, recorded order and intent
 ```
 
 Recovery uses recorded intent without new donor, revision, copy, replacement, group,
@@ -350,10 +376,12 @@ source/payload state must be restored rather than adopted. Completed command ste
 are skipped; interrupted in-flight commands may retry after partial side effects.
 Arbitrary commands are not exactly-once. Partial batch progress is reported separately.
 
-`reseed --freshen` is removed. Legacy v1/v2 batches retain their original history
-intent through `reseed --resume`. `[prepare]` remains a warned alias for `[freshen]`;
-rename it after pending recovery finishes, since policy bytes are frozen. See
-[recovery details](docs/reseed.md#safety-and-recovery).
+`reseed --freshen` is removed. Legacy preparation journals — including the
+never-released combined `up` batches — retain their original history intent through
+`reseed --resume`; `prepare --resume` only continues source-only preparation and
+never reinterprets old target mutation. `[prepare]` remains a warned alias for
+`[freshen]`; rename it after pending recovery finishes, since policy bytes are
+frozen. See [recovery details](docs/reseed.md#safety-and-recovery).
 
 ## Inspect and manage
 
@@ -418,14 +446,14 @@ revset = "trunk()"
 Bookmark templates default to `{workspace}`. Explicit `--bookmark NAME` is
 single-workspace only; batch creation can use the template. `--no-bookmark`
 suppresses creation. The trunk revset must resolve to one revision and informs
-status, not creation or up inference. Creation modes are
+status, not creation or upstream inference. Creation modes are
 [described above](#creation-mode-precedence); local donor/preparation/group settings
 belong in the primary's `.jwreseed.local.toml`.
 
 ## Further reading and development
 
 - [Agent skill](skills/jj-waltz/SKILL.md): task routing, execution, and verification.
-- [Reseed/up operator guide](docs/reseed.md): detailed payload, group, and recovery contracts.
+- [Reseed/prepare operator guide](docs/reseed.md): detailed payload, group, and recovery contracts.
 - [Architecture](docs/architecture.md) and [working concepts](CONTEXT.md): module and semantic boundaries.
 - [Changelog](CHANGELOG.md) and [design evidence](design/workspace-reseed/README.md): carried changes and their rationale.
 - [Herdr plugin](plugins/herdr/README.md): the bundled UI integration.

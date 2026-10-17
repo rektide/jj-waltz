@@ -1,14 +1,18 @@
 ---
 name: jj-waltz
-description: Use for jw or jj-waltz, creating or switching JJ workspaces, requested parallel JJ workspaces, CoW renewal with reseed, upstream preparation and advancement with up, workspace links, or JJ workspace inspection and cleanup.
+description: Use for jw or jj-waltz, creating or switching JJ workspaces, requested parallel JJ workspaces, CoW renewal with reseed, upstream source preparation with prepare, workspace links, or JJ workspace inspection and cleanup.
 type: Skill
 title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:openai/gpt-6-astra
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Rerouted the skill from combined up to source-only prepare plus reseed --at consumption and legacy recovery routing
+  - resource: /design/up-performance/prepare0.gpt6a.md
+    title: Command-split decision — prepare is source-only, reseed keeps worker copying
   - resource: "opencode://ses_ebf068824ffeRuaEQy26Krx5u6"
     title: Synthesized the original, Sol, and G skills into canonical outcome routing, scoped execution, and verification guidance
   - resource: /skills/jj-waltz/SKILL.md
@@ -43,20 +47,23 @@ supplying files. Verify identity rather than relying on a directory named `defau
 
 ## Choose the action
 
-| | `add` / `s` (`switch`) | `reseed` | `up` |
+| | `add` / `s` (`switch`) | `reseed` | `prepare` |
 | --- | --- | --- | --- |
-| Outcome | Create; `s` enters existing or creates missing | Renew sharing, keep work | Fetch/prepare donor, advance targets |
-| Target history | Empty child of source `@`, or `--at` | Keep revision, or reset via `--at` | New empty change at fetched goal; no `--at` |
-| Bare in variant / primary | Name/path required | Current / explicit targets required | Current / donor only |
+| Outcome | Create; `s` enters existing or creates missing | Renew sharing, keep work | Select/fetch one upstream, prepare the donor, report the exact commit |
+| Target workspaces | Created or entered | Refilled in place; names/groups select | None — never touches workspaces |
+| Target history | Empty child of source `@`, or `--at` | Keep revision, or reset via `--at` | — |
+| Bare in variant / primary | Name/path required | Current / explicit targets required | Source-only / source-only |
 | Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
 | `--source-at` | Donor tree assertion | Donor tree assertion | Upstream goal |
 | Fetch / preparation | Never | Never | Pinned upstream / local argv |
 | Preview / resume | — | `--dry-run` / `--resume` | `--dry-run` / `--resume` |
 
 If “update” leaves keeping versus advancing work unclear, ask which is intended.
-Up's preservation bookmark does not keep feature edits checked out. For newer
-prepared dependencies while retaining a feature revision, use source-only up at
-primary, then reseed the feature. [Full comparison](../../README.md#choose-the-outcome).
+`prepare` never touches a workspace. Consume its exact reported commit with
+`reseed --at <commit>` — no second prepare is needed. Feature rebasing stays an
+ordinary `jj` operation: `--at` starts an empty child of the chosen base and does
+not rebase the workspace's previous feature commits. [Full
+comparison](../../README.md#choose-the-outcome).
 
 ## Establish the relevant context
 

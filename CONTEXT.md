@@ -5,9 +5,13 @@ description: Workspace lifecycle vocabulary and safety contracts.
 resource: /CONTEXT.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Redefined source preparation as source-only prepare with an exact prepared commit, reseed-only worker semantics, and legacy-journal recovery routing
+  - resource: /design/up-performance/prepare0.gpt6a.md
+    title: Command-split decision — prepare is source-only, reseed keeps worker copying
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Connected up activation, native upstream inference, immutable target preservation, source-only receipts, and legacy recovery
   - resource: "opencode://ses_ec1394461ffeEXBHM582vTs9VM"
@@ -134,12 +138,17 @@ by itself a claim that a command exposing that concept already exists.
 - **Reseed pending record / receipt** — repository-scoped recovery intent for an
   incomplete reseed / provenance of a completed one. Neither changes historical
   creation-base metadata. Resume reads pending intent before target snapshotting.
-- **Source freshening** — explicit donor fetch, advancement to a chosen baseline,
-  and configured preparation before target plans are frozen. It is distinct from
-  status refresh and does not imply resetting target revisions.
+- **Source preparation** — explicit donor fetch to a pinned upstream baseline and
+  configured preparation, performed only by `prepare` from the `[freshen]`
+  configuration. It is source-only: it never selects targets, refills, or
+  advances workspaces, and it is distinct from status refresh.
+- **Prepared commit** — the exact frozen upstream commit `prepare` reports on
+  completion. Workers consume it through `reseed --at` without another fetch or
+  preparation; it is not standing following state.
 - **Preparation batch** — source-keyed write-ahead intent retaining trusted policy,
-  a frozen source goal, verified dependency payload, and all target plans until
-  receipts account for completion. Partial installation is not a prepared donor.
+  a frozen source goal, verified dependency payload, and legacy target plans until
+  receipts account for completion. New prepare journals freeze an explicitly empty
+  target plan. Partial installation is not a prepared donor.
 - **Freshening command sequence** — repository-local ordered argv, normalized from
   one `command` or a `commands` list, never both. Absence means no builder is
   guessed; selected ignored contents remain explicitly existing source data.
@@ -184,7 +193,7 @@ by itself a claim that a command exposing that concept already exists.
 - Removal preserves bookmarks unless the user confirms deletion.
 - Publication and cleanup remain separate workflows.
 - Core workspace lifecycle and local status remain offline unless explicit donor
-  preparation is requested with `up`. That requested fetch/install
+  preparation is requested with `prepare`. That requested fetch/install
   is a prerequisite, not optional forge enrichment.
 - JSON stdout contains only its versioned document; diagnostics use stderr.
 - Herdr provenance survives until Herdr close succeeds.
@@ -207,17 +216,17 @@ by itself a claim that a command exposing that concept already exists.
   Resume uses recorded IDs, not reevaluated defaults. Source preparation requires
   the full recorded target order until target plans freeze; frozen targets/subsets
   can then resume independently. Current selection never infers an entire batch.
-- Up selects/pins upstream before fetch: explicit CLI/local goal, otherwise a unique
-  applicable tracked pair, otherwise a unique exact remote at the clean source base
-  (including untracked refs), otherwise require `--source-at`. No default-main,
-  new following state or operation-log mining. Unpublished source work blocks.
-  Targets start new empty changes at the exact fetched goal, not rebases. Unpublished
-  target work gets an immutable `freshen-<UTC timestamp>` bookmark unless opted out;
-  existing feature bookmarks never move. Bare up in a variant selects it; at primary
-  it completes source-only preparation with a receipt, not a fake target. Explicit
-  selection suppresses current; `--from` changes only the donor. New up journals are
-  v3. Removed `reseed --freshen` journals remain resumable through `reseed --resume`
-  with their original v1/v2 history intent, not silently upgraded to up resets.
+- Prepare selects/pins upstream before fetch: explicit CLI/local goal, otherwise a
+  unique applicable tracked pair, otherwise a unique exact remote at the clean
+  source base (including untracked refs), otherwise require `--source-at`. No
+  default-main, new following state or operation-log mining. Unpublished source
+  work blocks. It is source-only from any registered workspace: no target
+  selection, no refill, no `--at`, no bookmarks, and it never snapshots or mutates
+  the invoking workspace. Completion reports the exact frozen commit and records a
+  receipt with an explicitly empty target plan (v4 journals). `prepare --resume`
+  continues only source-only preparation; legacy v1/v2/v3 batches — including
+  removed-up target mutation — recover solely through `reseed --resume` with
+  their recorded order, history intent, and frozen plans, never through `prepare`.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work during resume.

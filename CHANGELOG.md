@@ -5,9 +5,11 @@ description: Release history and unreleased workspace lifecycle changes.
 resource: /CHANGELOG.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3
-  at: 2026-10-16
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Recorded the prepare/reseed command split — up deleted, source-only prepare with exact frozen commit, reseed-only worker semantics, legacy recovery routing, and the tracked-tree verification change
   - resource: "opencode://ses_ebcf7a55dffeC3pTCPy2RUXq4B"
     title: Removed remove-command bookmark prompting and --keep-bookmark in favor of keep-by-default
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
@@ -30,19 +32,45 @@ sources:
 
 ## Unreleased
 
+- Replace the unreleased combined `jw up` with a `prepare`/`reseed` split before
+  it ever shipped. `jw prepare` is source-only from any registered workspace: it
+  selects/fetches one pinned upstream (CLI/local goal, native tracked pair, or
+  exact remote at the clean donor base), runs the configured `[freshen]`
+  preparation commands, verifies selected ignored payload, and reports the exact
+  frozen commit with an optional `--format=json` report. It accepts only
+  `--from`, `--source-at`, `--copy-ignored`/`--no-copy-ignored`, `--dry-run`,
+  `--resume`, and `--format`; it has no names, groups, `--at`,
+  `--replace-content`, or `--no-freshen-bookmark`, never touches the invoking
+  workspace, and never allocates bookmarks. `reseed` keeps its worker copying
+  semantics: retain the feature tree by default, or reset deliberately with
+  `--at <prepared-commit>` to consume a prepared commit without another
+  preparation. Feature rebasing stays ordinary `jj`. New preparation journals are
+  v4 with an explicitly empty target plan; legacy v1/v2 batches and removed-up v3
+  journals recover only through `reseed --resume` with their recorded intent,
+  while `prepare --resume` continues source-only preparation and never
+  reinterprets old target mutation. `[freshen]` configuration and the deprecated
+  `[prepare]` alias are unchanged.
+- Speed up reseed/prepare verification for intact workspaces: replace the
+  per-file byte-extraction proof with a bounded JJ tracked-tree check (one
+  snapshot with auto-tracking and automatic stale updates disabled, then one
+  empty `jj diff --from @ --to <frozen commit> --summary`). The proof is JJ
+  tracked-tree equality, not an unconditional raw-byte audit, and a mismatch can
+  be reported after that snapshot ran, possibly recording a rejected edit.
+  Partial recovery targets are unchanged: they still reconstruct and raw-verify
+  every recorded byte/type/mode before any snapshot-capable command, and fresh
+  execution no longer enters that reconstruction path when the recorded target
+  phase shows untouched preparation. Preparation command stdout is forwarded to
+  stderr so `--format=json` stays clean.
 - Remove `jw remove` bookmark prompting and the `--keep-bookmark` flag: associated
   bookmarks are kept by default with no interactive ask, and only an explicit
   `--delete-bookmark` ever deletes them. Scripted removals can no longer stall on
   or accidentally answer a bookmark prompt.
-- Add `jw up`: native pre-fetch upstream selection, exact-name/remote fetch,
-  sequential local commands, and private CoW refill on new empty target changes at
-  the exact fetched goal. Bare up in a variant updates it; at primary it prepares
-  only the donor with a real receipt. Explicit targets/groups suppress current.
-  Preserve unpublished target work with frozen collision-safe freshen timestamp
-  bookmarks; `--no-freshen-bookmark` opts out without moving feature bookmarks.
-  Reject unpublished source work. V3 preparation journals freeze workflow and native
-  selection. Remove `reseed --freshen`; legacy v1/v2 `reseed --resume` retains original
-  keep-target/explicit-base intent. No new following state or default-main inference.
+- Superseded pre-release: the previously announced combined `jw up` (fetch,
+  prepare, and advance targets with freshen timestamp bookmarks) never shipped;
+  the prepare/reseed split above replaces it. The add/s `--source-at` assertion,
+  ordinary reseed selection/current-target rules, private ignored payloads,
+  wildcard groups, and legacy recovery contracts described below remain as
+  stated.
 - Add optional add/s `--source-at` as a snapshotted donor tracked-tree assertion,
   independent of target `--at`. Equal trees may have different commit IDs; the
   default target parent remains donor `@`. Creation inherits only local ignored-copy

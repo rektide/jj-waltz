@@ -8,9 +8,13 @@ generated:
   by: model:openai/gpt-6-astra
   at: 2026-10-14
 updated:
-  by: model:openai/gpt-6.1-sol
-  at: 2026-10-15
+  by: model:zai-coding-plan/glm-5.3-flash#high
+  at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
+    title: Indexed the prepare/reseed command-split decision while preserving the commissioned-up draft as historical evidence
+  - resource: /design/up-performance/prepare0.gpt6a.md
+    title: Current decision record — delete public up, source-only prepare, reseed-only worker copying
   - resource: "opencode://ses_ec10d60dbffencx7PCZnh1dnjg"
     title: Connected implemented up orchestration to native selection, command sequences, target history, and operator guidance
   - resource: "opencode://ses_ec11dfc0dffeV1y2Am4AyutJlT"
@@ -31,36 +35,54 @@ sources:
 
 # In-place workspace reseeding
 
-- [Commissioned up and shared copying policy](up0.gpt6a.md) — current handoff:
-  native upstream selection, sequential local freshening commands, unpublished
-  target bookmarks, global ignored-copy policy, and symmetric command controls.
-  Replaces the proposal to keep adding freshening flags to reseed/creation.
+- [Prepare/reseed command split](../up-performance/prepare0.gpt6a.md) — **current
+  decision**: the public `up` command is deleted in favor of source-only
+  `prepare` (select/fetch upstream, prepare donor, report the exact frozen
+  commit; never chooses or advances workers), while `reseed` keeps worker
+  copying semantics (`--at` resets deliberately; feature rebasing stays JJ).
+  Prioritizes the shared engine's core performance over build-cache design.
+  Supersedes the combined-up commission below, whose draft remains as evidence.
+- [Commissioned up and shared copying policy](up0.gpt6a.md) — historical draft
+  of the removed combined up: native upstream selection, sequential local
+  freshening commands, unpublished target bookmarks, global ignored-copy policy,
+  and symmetric command controls. Retained as design evidence for the
+  foundations `prepare` and legacy `reseed --resume` recovery reuse; its
+  combined fetch+advance workflow was never released and is superseded by the
+  split above.
 - [Native source foundation](../../docs/architecture.md#native-freshening-source-foundation) —
   implemented operation-bound upstream identity and post-fetch graph proofs, with
   disposable native JJ verification. Includes frozen explicit not-yet-imported
   `branch@remote` intent with unknown IDs and deferred publication checks.
-  Connected to `up` before preparation/fetch, with v3 frozen selection.
+  Connected to `prepare` before preparation/fetch, with v4 frozen selection;
+  legacy v3 journals resume through `reseed --resume`.
 - [Local command sequences and recovery](../../docs/architecture.md#local-freshening-commands-and-recovery) —
   implemented `[freshen]` single/ordered argv policy in the existing preparation
   engine, durable per-step progress, deprecated `[prepare]` alias, and v1 journal
-  compatibility. Activated through `up`; legacy preparation still uses `reseed --resume`.
+  compatibility. Activated through `prepare`; legacy preparation and removed-up
+  batches still use `reseed --resume`.
 - [Target history preservation](../../docs/architecture.md#target-history-preservation-foundation) —
   implemented effective work-tip/selected-fetched-goal ancestry, shared UTC
   timestamp-name allocation, and create-only exact-pair replay in existing target
-  and preparation intent. Public up freezes preservation and opt-out before mutation;
-  existing feature bookmarks and opt-out JJ history are left intact.
+  and preparation intent. No new command plans preservation anymore; the
+  retained semantics serve legacy v3 journals recovered through `reseed --resume`,
+  leaving existing feature bookmarks and opt-out JJ history intact.
 - [Shared ignored-copy policy and selection](../../docs/architecture.md#shared-ignored-copy-policy-and-selection) —
   root global/local/CLI precedence with explicit empty lists, one compiled
   selection traversal, skipped nonignored source matches, and hard selected-root
-  guards. Reseed/preparation and add/s new-workspace payloads use it. Actual creation
+  guards. Reseed/preparation, prepare payload verification, and add/s
+  new-workspace payloads use it. Actual creation
   payload selection rejects nested donor destinations before creation.
+- [Up performance incident and handoff](../up-performance/handoff0.glm53m.md) —
+  measurement evidence behind the split: per-file verification census, phantom
+  fresh-recovery, journal costs, and the test-shim recursion. Superseded fix
+  plan items that depended on a combined up; the split adopts its core slices.
 - [Ordinary repeated reseeding](ergonomics0.gpt6a.md) — design evidence for optional baseline
   and implicit current target for borrowing the current donor, retaining target work, existing repeat-policy
   configuration, and frozen recovery. Implemented for `jjwaltz-reseed-ergonomics`;
   see the [operator contract](../../docs/reseed.md#one-off-use) for delivered
   default borrowing/current-target selection and [creation assertions](../../README.md#copy-on-write-workspaces).
-  The later up commission settles the earlier review
-  junction: ordinary reseed keeps target work; up advances to the prepared goal.
+  The review junction is now settled by the command split: ordinary reseed keeps
+  target work or resets deliberately via `--at`; preparation is `prepare`.
 - [JJ new preserves unchanged files](jj-new-preservation0.gpt61sol.md) — inspected
   checkout algorithm and native Btrfs evidence: ordinary advancement preserves
   equal-file inodes and sharing, but does not renew sharing for rewritten files.
@@ -78,8 +100,9 @@ sources:
 - [Freshen the donor before reseeding](source-freshen0.gpt61sol.md) — rationale and
   local delivery checkpoint for explicit fetch, source advancement, configured
   dependency preparation, and recoverable handoff. Its deferred default-on
-  alternative is superseded by the up commission; use the operator guide for
-  the still-current CLI syntax until that migration lands.
+  alternative was superseded by the combined-up commission and then by the
+  prepare split; use the [operator guide](../../docs/reseed.md#prepare-the-source)
+  for the current CLI syntax.
 
 Existing behavior: [CoW creation](../../README.md#copy-on-write-workspaces).
 Integration boundary: [architecture](../../docs/architecture.md#module-map).
