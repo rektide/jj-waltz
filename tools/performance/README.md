@@ -5,8 +5,10 @@ description: Retained synthetic fixtures, native or instrumented timings, subpro
 resource: /tools/performance/README.md
 status: maintained
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
-updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-17 }
+updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-17 }
 sources:
+  - resource: opencode://ses_eb75a514cffe7jUOMWNZAIm3fX
+    title: Measured journal deletion with matched native executables, verified no per-file subprocess growth, and retained results without changing the harness
   - resource: opencode://ses_eb87f7b4cffe23FlLmOW2DpE7o
     title: Added uninstrumented end-to-end timing with explicit methodology compatibility and reviewed the strict-copy baseline
   - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
@@ -150,6 +152,42 @@ not permission to mix native and instrumented timings. Prefer rerunning both
 sides with the current harness when making elapsed-time claims.
 
 ## Evidence and limits
+
+### Journal deletion checkpoint
+
+On 2026-10-17, the unchanged harness measured the preserved pre-cut executable
+and the forward-only reseed/prepare implementation sequentially. Both native
+runs passed all correctness checks with 8,555 tracked data files, 43 symlinks,
+two workers, and 100 payload files of 4,096 bytes:
+
+| Phase | Preserved pre-cut | Journal-free |
+| --- | ---: | ---: |
+| Prepare | 5.387s | 2.778s |
+| Reseed preview | 2.223s | 1.918s |
+| Reseed | 7.456s | 5.926s |
+| Total | 15.066s | 10.622s |
+
+Reseed is about 11% below the separately supplied 6.64s/two-worker baseline;
+the matched run is about 21% faster. These are warm-cache native synthetic
+observations, not isolated measurements of digest cost or production latency.
+Native result files retain executable hashes and the matching JJ/Git/Python,
+host, filesystem, harness, and fixture identities:
+
+- Before: `.test-agent/performance/files-8555-er11c5f8/result.json`
+- After: `.test-agent/performance/files-8555-1nmrhylp/result.json`
+
+Instrumented scaling used the same journal-free executable with 100 then 8,555
+files, keeping symlink/worker/payload dimensions fixed. Comparison passed
+`--scaling --max-jj-growth 0 --max-file-show-growth 0 --max-git-growth 0`:
+183/102/276 JJ calls for prepare/preview/reseed, 561 total, at both sizes.
+The fixed 18 `file show` calls assemble ignore rules; there are no per-data-file
+calls. The bounded-verifier unit gate separately requires zero `file show` calls.
+
+- Small: `.test-agent/performance/files-100-ucef8t5j/result.json`
+- Large: `.test-agent/performance/files-8555-budtek5u/result.json`
+
+No harness changes were needed for removal of the resume flags. Fixtures remain
+ignored retained evidence, not committed source or automatically pruned data.
 
 ### Raw copying baseline
 

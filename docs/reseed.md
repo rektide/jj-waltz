@@ -378,6 +378,21 @@ replacement, symlink boundaries, readiness aggregation, bookmark guards, and
 out-of-band recovery refusals. The bounded verifier retains zero-file-show-call
 and batched symlink process-count regressions.
 
+The journal-deletion checkpoint passed 258 native cases (library, reseed,
+prepare, bookmark guards, and upstream selection) on Linux Btrfs with actual CoW
+required. The separate CLI/colocation run passed 112 of 113 cases; the
+`owned_cleanup_removes_only_target_and_keep_dir_preserves_files` failure also
+reproduces with the preserved pre-cut executable (`workspace not found: missing`)
+and is outside this change. Formatting and all-target/all-feature Clippy with
+`-D warnings` passed; the existing Cargo manifest homepage warning remains.
+
+The requested native synthetic fixture (8,555 files, 43 symlinks, two workers,
+100 × 4,096-byte payload files) measured **5.93s** for reseed, versus the supplied
+6.64s baseline. A matched preserved-binary run measured 7.46s before / 5.93s after;
+prepare measured 5.39s / 2.78s. Instrumented 100 → 8,555-file scaling passed with
+zero JJ, Git, and `file show` call growth. See
+[retained measurement evidence](../tools/performance/README.md#journal-deletion-checkpoint).
+
 Historical release-matrix results predate this deletion; they are not a new matrix
 verification. Watchman mutation, sparse targets, and colocated targets remain
 unsupported. Native synthetic timings are measurements of that fixture, not a
