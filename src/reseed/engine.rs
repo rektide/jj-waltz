@@ -2455,20 +2455,20 @@ mod tests {
             return;
         }
         // Child-process environment keeps the executable wrapper isolated from
-        // parallel tests. Resolve the real executable before introducing it.
-        let real_jj = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        // parallel tests. Preserve shim identity and restore the original PATH
+        // when delegating so a shim's system fallback cannot recurse here.
+        let original_path = std::env::var_os("PATH").unwrap();
+        let real_jj = std::env::split_paths(&original_path)
             .map(|directory| directory.join("jj"))
             .find(|path| path.is_file())
-            .unwrap()
-            .canonicalize()
             .unwrap();
         let directory = tempfile::tempdir().unwrap();
         let wrapper = directory.path().join("jj");
-        fs::write(&wrapper, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$JW_VERIFY_PROCESS_LOG\"\nexec \"$JW_VERIFY_REAL_JJ\" \"$@\"\n").unwrap();
+        fs::write(&wrapper, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$JW_VERIFY_PROCESS_LOG\"\nPATH=\"$JW_VERIFY_ORIGINAL_PATH\" exec \"$JW_VERIFY_REAL_JJ\" \"$@\"\n").unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
         let path = std::env::join_paths(
             std::iter::once(directory.path().to_path_buf())
-                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+                .chain(std::env::split_paths(&original_path)),
         )
         .unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
@@ -2478,6 +2478,7 @@ mod tests {
                 "--nocapture",
             ])
             .env("PATH", path)
+            .env("JW_VERIFY_ORIGINAL_PATH", original_path)
             .env("JW_VERIFY_REAL_JJ", real_jj)
             .env("JW_VERIFY_PROCESS_LOG", directory.path().join("commands"))
             .output()
