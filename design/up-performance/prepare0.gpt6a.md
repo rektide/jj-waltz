@@ -3,7 +3,7 @@ type: Design
 title: Separate donor preparation from workspace refill
 description: Replace up with source-only prepare and prioritize the shared reseed engine's process and recovery costs.
 resource: /design/up-performance/prepare0.gpt6a.md
-status: implementation-in-progress
+status: implemented
 generated:
   by: model:openai/gpt-6-astra
   at: 2026-10-17
@@ -81,6 +81,9 @@ configuration renaming is independent of this command change.
 
 ## Connections
 
+- [Delivered fixes and native measurements](measurement1.gpt6a.md): source-only
+  preparation and two-worker refill now measured in seconds on the large fixture;
+  links back to the earlier slow baseline and the maintained assessment tools.
 - [Incident handoff](handoff0.glm53m.md): evidence and original fix proposals;
   this decision replaces its combined-up workflow recommendation.
 - [Reseed operator guide](../../docs/reseed.md): maintained command behavior and

@@ -11,6 +11,8 @@ updated:
   by: model:zai-coding-plan/glm-5.3-flash#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb8a7487affeE2smndZ914OQMS"
+    title: Connected the delivered performance fixes and native end-to-end measurements
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Indexed the prepare/reseed command-split decision while preserving the commissioned-up draft as historical evidence
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -35,6 +37,9 @@ sources:
 
 # In-place workspace reseeding
 
+- [Delivered performance fixes](../up-performance/measurement1.gpt6a.md) — native
+  prepare, preview, and two-worker refill timings, implementation checkpoints,
+  verification scope, and the maintained assessment tools.
 - [Prepare/reseed command split](../up-performance/prepare0.gpt6a.md) — **current
   decision**: the public `up` command is deleted in favor of source-only
   `prepare` (select/fetch upstream, prepare donor, report the exact frozen
