@@ -195,7 +195,7 @@ impl TargetHistory {
     }
 }
 
-fn work_tip(target: &CommitFacts) -> &str {
+pub(crate) fn work_tip(target: &CommitFacts) -> &str {
     if target.ordinary_empty_child() {
         &target.parents[0]
     } else {

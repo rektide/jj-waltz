@@ -12,7 +12,7 @@ updated:
   at: 2026-10-17
 sources:
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
-    title: Implemented aggregate readiness through the existing preflight pipeline, explicit snapshot and dirty keep/reset consequences, and retained fast journal and repository identity checks
+    title: Implemented aggregate readiness, dirty keep/reset reporting, default-on bookmark coverage and opt-out, frozen proof rechecks, legacy recovery compatibility, and the fast journal/identity path
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Replaced the combined up contract with source-only prepare, documented reseed-only worker semantics, legacy journal recovery, and the bounded tracked-tree verification split
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -513,13 +513,55 @@ Output says whether a snapshot recorded new updates and whether the working-copy
 tree differs from its parents. Unfinished refill/preparation targets are never
 snapshotted by readiness; other unsafe targets fail their prerequisite checks.
 
-Dirty work is not itself a blocker. Without `--at`, `KEEP` preserves the current
+Dirty work is not itself a blocker **if its work tip is bookmarked**. Without `--at`, `KEEP` preserves the current
 feature tree, including snapshotted uncommitted changes. With `--at`, `RESET`
 means the real run will replace the checkout with a fresh child of the exact
 chosen base, **not rebase the feature**; the old work remains in JJ history at
 the commit printed in the preview. Dry-run does not perform that reset. Unrelated
 ignored/untracked contents are retained unless they are selected payload roots
 (which will be replaced) or `--replace-content` was explicitly requested.
+
+#### Bookmarked work is required by default
+
+Both preview and real fresh reseeds, with or without `--at`, require a present,
+unconflicted **named local or remote bookmark in JJ's current view** covering the
+snapshotted work tip. The bookmark must point to that tip or one of its descendants.
+A bookmark only on an older ancestor/base does **not** cover new edits. Arbitrary
+snapshots, equal trees, tags, and inferred publication are not substitutes for a
+bookmark. No fetch is added: remote coverage uses JJ's recorded remote ref, not
+a new network check. Deleted/conflicted refs themselves do not count.
+
+An ordinary undescribed empty single-parent working change uses its parent as the
+work tip. Described empty changes and merges count themselves. Output identifies
+the exact work tip and covering bookmark, including `@remote` where applicable.
+Normal JJ snapshots can move a bookmark along with a rewritten named change;
+`jw` respects that normal behavior but never creates or moves a bookmark for this
+guard. If any target lacks coverage, the entire fresh batch is blocked before
+refilling any target, including otherwise-ready peers.
+
+Deliberately name the printed work tip using JJ (from any checkout of this
+repository), or explicitly bypass **only** this guard:
+
+```sh
+jj bookmark create my-feature -r <reported-work-tip>
+jw reseed worker --dry-run
+jw reseed worker --allow-unbookmarked --dry-run
+jw reseed worker --allow-unbookmarked
+```
+
+Ownership, source/content checks, pending recovery, ignored rules, links, and CoW
+requirements remain enforced with `--allow-unbookmarked`. `prepare` is unaffected.
+The bookmark inventory and target facts are frozen after snapshots; ancestry
+checks are batched, not per file. Coverage is rechecked before execution and each
+target's clearing boundary, so writers must still be paused.
+
+New pending records freeze either the required reference/work tip or the explicit
+opt-out. Resume does not accept `--allow-unbookmarked` as a policy override. The
+recorded required bookmark must still cover the original frozen work tip; forward
+moves are allowed, while deletion, conflict, or moving off that lineage stops
+recovery before repairing or snapshotting a partial target. Restore the recorded
+reference before retrying. Legacy pending records without this policy retain
+their old recovery semantics; they are not retroactively subjected to this guard.
 
 Normal snapshots are intentional: they preserve your real tracked work before
 replacement. Recovery avoids recording only the temporary half-filled tree;

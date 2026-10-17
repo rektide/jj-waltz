@@ -546,6 +546,18 @@ impl JjClient {
 
     /// Read exactly one commit, without snapshotting, at a frozen operation.
     pub fn commit_facts_at(&self, operation: &str, revset: &str) -> Result<CommitFacts> {
+        let records = self.commit_facts_many_at(operation, revset)?;
+        match records.as_slice() {
+            [record] => Ok(record.clone()),
+            _ => bail!(
+                "JJ commit facts query returned {} records; expected one",
+                records.len()
+            ),
+        }
+    }
+
+    /// Read a batch of commits at one frozen operation, without WC snapshots.
+    pub fn commit_facts_many_at(&self, operation: &str, revset: &str) -> Result<Vec<CommitFacts>> {
         let output = self.run_at(
             operation,
             [
@@ -557,35 +569,34 @@ impl JjClient {
                 COMMIT_FACTS_TEMPLATE,
             ],
         )?;
-        let records = output.stdout()?.lines().collect::<Vec<_>>();
-        let [record] = records.as_slice() else {
-            bail!(
-                "JJ commit facts query returned {} records; expected one",
-                records.len()
-            );
-        };
-        let fields = record.split('\t').collect::<Vec<_>>();
-        let [
-            commit,
-            change,
-            parents,
-            description,
-            empty,
-            conflicted,
-            divergent,
-        ] = fields.as_slice()
-        else {
-            bail!("JJ commit facts query returned malformed output");
-        };
-        Ok(CommitFacts {
-            commit_id: parse_json_field(commit, 0, "commit ID")?,
-            change_id: parse_json_field(change, 0, "change ID")?,
-            parents: parse_json_field(parents, 0, "parents")?,
-            description: parse_json_field(description, 0, "description")?,
-            empty: parse_json_field(empty, 0, "empty")?,
-            conflicted: parse_json_field(conflicted, 0, "conflicted")?,
-            divergent: parse_json_field(divergent, 0, "divergent")?,
-        })
+        output
+            .stdout()?
+            .lines()
+            .map(|record| {
+                let fields = record.split('\t').collect::<Vec<_>>();
+                let [
+                    commit,
+                    change,
+                    parents,
+                    description,
+                    empty,
+                    conflicted,
+                    divergent,
+                ] = fields.as_slice()
+                else {
+                    bail!("JJ commit facts query returned malformed output");
+                };
+                Ok(CommitFacts {
+                    commit_id: parse_json_field(commit, 0, "commit ID")?,
+                    change_id: parse_json_field(change, 0, "change ID")?,
+                    parents: parse_json_field(parents, 0, "parents")?,
+                    description: parse_json_field(description, 0, "description")?,
+                    empty: parse_json_field(empty, 0, "empty")?,
+                    conflicted: parse_json_field(conflicted, 0, "conflicted")?,
+                    divergent: parse_json_field(divergent, 0, "divergent")?,
+                })
+            })
+            .collect()
     }
 
     /// Include untracked remote refs and deleted tracked local relationships.

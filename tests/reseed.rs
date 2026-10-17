@@ -141,6 +141,18 @@ impl Repo {
                 path.to_str().unwrap(),
             ],
         );
+        // These filesystem/recovery fixtures model deliberately named work.
+        // Dedicated bookmark-policy tests use their own unbookmarked fixtures.
+        self.jj_at(
+            path,
+            &[
+                "--ignore-working-copy",
+                "bookmark",
+                "create",
+                "--",
+                &serde_json::to_string(&format!("fixture-work-{name}")).unwrap(),
+            ],
+        );
     }
 
     fn cow(&self, source: &Path, target: &Path) -> bool {
@@ -1576,15 +1588,6 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
     fs::write(a.join("old-only"), "old\n").unwrap();
     repo.id(&a, "@");
     repo.jj_at(&a, &["bookmark", "create", "feature-bookmark"]);
-    let bookmarks = repo.jj_at(
-        &repo.root,
-        &[
-            "bookmark",
-            "list",
-            "-T",
-            "name ++ normal_target.commit_id()",
-        ],
-    );
     let lifecycle = repo.lifecycle();
     assert!(
         !lifecycle.is_empty(),
@@ -1602,7 +1605,28 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
             fs::write(source.join("modified"), "new baseline\n").unwrap();
             fs::write(source.join("new-only"), "new\n").unwrap();
             repo.baseline = repo.id(&source, "@");
+            // The new prepared base is intentional named work too; an arbitrary
+            // donor snapshot is not a substitute for the bookmark guard.
+            repo.jj_at(
+                &source,
+                &[
+                    "bookmark",
+                    "create",
+                    "prepared-baseline",
+                    "-r",
+                    &repo.baseline,
+                ],
+            );
         }
+        let bookmarks = repo.jj_at(
+            &repo.root,
+            &[
+                "bookmark",
+                "list",
+                "-T",
+                "name ++ normal_target.commit_id()",
+            ],
+        );
         success(repo.reseed(
             &["worker-a", "worker-b"],
             &source,

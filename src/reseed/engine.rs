@@ -21,6 +21,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "bookmarks.rs"]
+mod bookmarks;
 #[path = "prepare.rs"]
 mod prepare;
 
@@ -111,6 +113,9 @@ struct Pending {
     /// during recovery. Absent in legacy and ordinary reseed plans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     history: Option<TargetHistory>,
+    /// None is a legacy plan: never retroactively impose policy on partial trees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bookmark_guard: Option<bookmarks::Guard>,
     /// Runtime observations are not part of immutable target intent.
     #[serde(default)]
     execution_diagnostics: Vec<String>,
@@ -484,6 +489,7 @@ fn run_inner(
             || request.copy_ignored.is_some()
             || request.no_copy_ignored
             || request.replace_content
+            || request.allow_unbookmarked
             || request.no_freshen_bookmark
         {
             bail!(
@@ -881,6 +887,16 @@ fn run_inner(
             bail!("source changed during initial verified capture; pause writers before retrying");
         }
         let facts = client.workspace_target_facts_at(&operation)?;
+        let bookmark_coverage = if batch.is_none() && !request.allow_unbookmarked {
+            let commits = names
+                .iter()
+                .filter(|name| !readiness.failures.contains_key(*name))
+                .filter_map(|name| facts.get(name).map(|fact| fact.commit_id.clone()))
+                .collect();
+            Some(bookmarks::Coverage::capture(&client, &operation, &commits)?)
+        } else {
+            None
+        };
         let mut symlink_commits = BTreeSet::new();
         for name in &names {
             if readiness.failures.contains_key(name) {
@@ -892,6 +908,18 @@ fn run_inner(
                 if fact.conflicted || fact.divergent {
                     bail!("workspace {name} is conflicted or divergent");
                 }
+                let bookmark_guard = if batch.is_some() {
+                    None // Legacy combined preparation resumes retain recorded policy.
+                } else if request.allow_unbookmarked {
+                    Some(bookmarks::Guard::AllowUnbookmarked)
+                } else {
+                    Some(
+                        bookmark_coverage
+                            .as_ref()
+                            .context("missing bookmark preflight")?
+                            .require(&fact.commit_id)?,
+                    )
+                };
                 let tree_commit = base.as_ref().unwrap_or(&fact.commit_id);
                 require_unconflicted(&client, &operation, tree_commit)?;
                 let target_entries = entries(&client, &operation, tree_commit)?;
@@ -1029,6 +1057,7 @@ fn run_inner(
                         })
                         .transpose()?,
                     execution_diagnostics: Vec::new(),
+                    bookmark_guard,
                 })
             })();
             match planned {
@@ -1092,6 +1121,13 @@ fn run_inner(
     };
     if request.dry_run {
         report.targets.extend(readiness.failures.values().cloned());
+    } else {
+        // Check the entire batch immediately before execution as well as each
+        // target's own clearing boundary. Never refill an initially-invalid subset.
+        bookmarks::verify_batch(
+            &client,
+            plans.iter().filter_map(|plan| plan.bookmark_guard.as_ref()),
+        )?;
     }
     for mut plan in plans {
         if request.dry_run {
@@ -2122,6 +2158,9 @@ fn describe(plan: &Pending, planned: bool) -> String {
     if let Some(history) = &plan.history {
         description.push_str(&format!("; {}", history.describe(planned)));
     }
+    if let Some(guard) = &plan.bookmark_guard {
+        description.push_str(&format!("; {}", guard.describe()));
+    }
     description
 }
 
@@ -2531,6 +2570,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     // snapshot it. The write-ahead Clearing phase covers interruptions during
     // that repair as well as during sparse clearing itself.
     if reconstruct {
+        bookmarks::verify_batch(&client, plan.bookmark_guard.iter())?;
         transition(store, plan, Phase::Clearing)?;
         reconstruct_current_tree(plan)?;
     } else {
@@ -2544,6 +2584,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         if current_commit(&client)?.1 != plan.desired_commit {
             bail!("target WC revision changed during tracked-tree verification; pending retained");
         }
+        bookmarks::verify_batch(&client, plan.bookmark_guard.iter())?;
         transition(store, plan, Phase::Clearing)?;
     }
     let output = client.run([
@@ -3256,6 +3297,7 @@ mod tests {
             link_config: link_config_bytes(&source).unwrap(),
             preparation_id: None,
             history: None,
+            bookmark_guard: None,
             execution_diagnostics: Vec::new(),
         };
         let store = Store::lock(&client).unwrap();
@@ -3280,6 +3322,100 @@ mod tests {
         let target = JjClient::new(&plan.root);
         let (operation, commit) = current_commit(&target).unwrap();
         assert!(exact_empty_child(&target, &operation, &commit, &plan.source_commit).unwrap());
+    }
+
+    #[test]
+    fn frozen_required_bookmark_is_rechecked_before_partial_repair_without_snapshotting() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        let client = JjClient::new(&plan.root);
+        client
+            .create_bookmark("required-work", &plan.old_commit)
+            .unwrap();
+        let coverage = bookmarks::Coverage::capture(
+            &client,
+            &client.operation_id().unwrap(),
+            &BTreeSet::from([plan.old_commit.clone()]),
+        )
+        .unwrap();
+        plan.bookmark_guard = Some(coverage.require(&plan.old_commit).unwrap());
+        let frozen_guard = plan.bookmark_guard.clone();
+        let default = plan.source.clone();
+        FAIL_AT.with(|fail| fail.set(Some(Phase::Filling)));
+        assert!(execute(&store, &default, &mut plan, false).is_err());
+        FAIL_AT.with(|fail| fail.set(None));
+        fs::write(
+            plan.root.join("shared"),
+            b"partial tree must not be snapshotted\n",
+        )
+        .unwrap();
+        client
+            .run([
+                "--ignore-working-copy",
+                "bookmark",
+                "forget",
+                "required-work",
+            ])
+            .unwrap();
+        let mut pending = store.pending(&plan.name).unwrap().unwrap();
+        let before = fs::read(store.path(&plan.name, "pending")).unwrap();
+        let current = current_commit(&client).unwrap().1;
+        let error = execute(&store, &default, &mut pending, true).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("required bookmark \"required-work\" no longer covers"),
+            "{error:#}"
+        );
+        assert_eq!(current_commit(&client).unwrap().1, current);
+        assert_eq!(
+            fs::read(plan.root.join("shared")).unwrap(),
+            b"partial tree must not be snapshotted\n"
+        );
+        assert_eq!(fs::read(store.path(&plan.name, "pending")).unwrap(), before);
+        // Restoring the same named reference farther forward on the original
+        // lineage also satisfies the frozen proof; never snapshot the partial WC.
+        let descendant = plan.root.parent().unwrap().join("saved-descendant");
+        JjClient::new(&plan.source)
+            .run([
+                "--config=git.colocate=false",
+                "workspace",
+                "add",
+                "--name",
+                "saved-descendant",
+                "-r",
+                &plan.old_commit,
+                descendant.to_str().unwrap(),
+            ])
+            .unwrap();
+        let descendant_tip = current_commit(&JjClient::new(&descendant)).unwrap().1;
+        client
+            .create_bookmark("required-work", &descendant_tip)
+            .unwrap();
+        execute(&store, &default, &mut pending, true).unwrap();
+        assert_eq!(pending.bookmark_guard, frozen_guard);
+        assert!(store.pending(&plan.name).unwrap().is_none());
+    }
+
+    #[test]
+    fn explicit_bookmark_opt_out_is_frozen_and_legacy_pending_records_stay_exempt() {
+        for guard in [None, Some(bookmarks::Guard::AllowUnbookmarked)] {
+            let Some((_temporary, store, mut plan)) = fixture(false) else {
+                return;
+            };
+            plan.bookmark_guard = guard.clone();
+            let json = serde_json::to_value(&plan).unwrap();
+            assert_eq!(json.get("bookmark_guard").is_none(), guard.is_none());
+            let default = plan.source.clone();
+            FAIL_AT.with(|fail| fail.set(Some(Phase::Filling)));
+            assert!(execute(&store, &default, &mut plan, false).is_err());
+            FAIL_AT.with(|fail| fail.set(None));
+            let mut pending = store.pending(&plan.name).unwrap().unwrap();
+            execute(&store, &default, &mut pending, true).unwrap();
+            assert_eq!(pending.bookmark_guard, guard);
+            assert_eq!(pending.phase, Phase::Done);
+        }
     }
 
     #[test]

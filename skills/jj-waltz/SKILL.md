@@ -6,9 +6,11 @@ title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
+    title: Added aggregate readiness and default-on bookmarked-work coverage, explicit opt-out, and immutable/legacy recovery guidance
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Rerouted the skill from combined up to source-only prepare plus reseed --at consumption and legacy recovery routing
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -151,6 +153,15 @@ navigation tokens. `--from` changes the donor, not the caller's primary/variant 
 assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
 differences. Explicit `--at` selects an empty child of that base instead. Reseed
 never fetches or prepares dependencies.
+
+Fresh reseeds require a present, unconflicted **local or remote bookmark** covering
+the snapshotted work tip (at the tip or a descendant), even in keep mode. An old
+base bookmark cannot cover new work. Ordinary undescribed empty single-parent
+scratch uses its parent; described empty changes and merges count themselves.
+Dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
+move bookmarks to defeat a refusal. The operator can deliberately name the work
+or explicitly choose `--allow-unbookmarked`; that bypasses only this requirement,
+not ownership, content, pending-state, or CoW checks.
 
 **Prepare** is source-only from any registered workspace — plain `jw prepare` at
 the primary prepares the primary donor:

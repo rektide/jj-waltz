@@ -254,6 +254,9 @@ def run_experiment(args):
                     (worker / "files" / f"file-{index:05}").write_bytes(tracked_bytes(index, True))
                 runner.run([jj, "describe", "-m", "performance feature delta"], worker)
                 feature, _ = runner.run([jj, "log", "--no-graph", "-r", "@", "-T", "commit_id"], worker)
+                # The fixture intentionally preserves named feature work under
+                # reseed's default-on bookmark guard, not arbitrary snapshots.
+                runner.run([jj, "bookmark", "create", "performance-feature", "-r", feature], worker)
         fixture_script = directory / "prepare-fixture.py"
         shutil.copyfile(HERE / "fixture.py", fixture_script)
         (root / ".jwreseed.local.toml").write_text(

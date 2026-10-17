@@ -36,6 +36,9 @@ pub struct ReseedRequest {
     pub copy_ignored: Option<Vec<String>>,
     pub no_copy_ignored: bool,
     pub replace_content: bool,
+    /// Explicitly bypass only the default bookmarked-work preflight requirement.
+    #[serde(default)]
+    pub allow_unbookmarked: bool,
     pub dry_run: bool,
     pub resume: bool,
 }

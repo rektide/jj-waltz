@@ -230,6 +230,7 @@ impl Batch {
             || self.request.on_unmatched.is_some()
             || self.request.at.is_some()
             || self.request.replace_content
+            || self.request.allow_unbookmarked
             || !self.targets.is_empty()
             || self.plans.as_ref().is_some_and(|plans| !plans.is_empty())
         {
@@ -302,6 +303,7 @@ pub(super) fn validate_resume_request(request: &RecordedRequest) -> Result<()> {
         || request.copy_ignored.is_some()
         || request.no_copy_ignored
         || request.replace_content
+        || request.allow_unbookmarked
     {
         bail!("--resume uses recorded preparation and target plans; overrides are not allowed");
     }

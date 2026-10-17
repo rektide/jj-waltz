@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
+    title: Implemented aggregate readiness and default-on named bookmark coverage for fresh reseeds, explicit opt-out, and frozen/legacy recovery semantics
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
     title: Split the public up command into source-only prepare, restored reseed-only worker semantics, and rewired maintained docs to the prepared-commit workflow
   - resource: /design/up-performance/prepare0.gpt6a.md
@@ -218,6 +220,22 @@ Remove `--dry-run` when the plan is right. Reseed snapshots real work, retains t
 target revision, reflinks equal paths from the donor, and lets JJ materialize feature
 differences. The root, `.jj`, registration, bookmarks, and lifecycle identity remain.
 Repeating it renews sharing even when bytes are unchanged. It never fetches or builds.
+
+Fresh reseeds require **bookmarked work by default**, in both keep and `--at`
+modes. A present, unconflicted local or remote bookmark must point at the
+snapshotted work tip or a descendant; a bookmark on an older base does not cover
+new edits. Dry-run reports the covering name and tip, or blocks the batch.
+`jw` never creates or moves a bookmark for this guard. Deliberately name your work
+with JJ, or explicitly bypass only this requirement:
+
+```sh
+jj bookmark create my-feature -r @       # run inside the feature workspace
+jw reseed --dry-run
+jw reseed --allow-unbookmarked --dry-run  # explicit exception; other guards remain
+```
+
+Dry-run can record normal JJ snapshots but does not refill/reset/delete files.
+See [readiness and bookmark coverage](docs/reseed.md#check-readiness-before-refilling).
 
 Donor selection is CLI `--from` → local `source` → verified primary. The optional
 tree assertion is CLI `--source-at` → local `source_at`; otherwise borrowing uses

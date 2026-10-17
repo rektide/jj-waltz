@@ -414,6 +414,9 @@ struct ReseedCommand {
     /// Delete unrecorded target contents except .jj before refilling.
     #[arg(long, conflicts_with = "resume")]
     replace_content: bool,
+    /// Allow work without a covering local/remote bookmark; all other guards still apply.
+    #[arg(long, conflicts_with = "resume")]
+    allow_unbookmarked: bool,
     /// Report READY/BLOCKED for every target without refilling/resetting files; may snapshot working copies.
     #[arg(long)]
     dry_run: bool,
@@ -607,6 +610,7 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
         no_copy_ignored: cmd.no_copy_ignored,
         replace_content: cmd.replace_content,
+        allow_unbookmarked: cmd.allow_unbookmarked,
         dry_run: cmd.dry_run,
         resume: cmd.resume,
     })

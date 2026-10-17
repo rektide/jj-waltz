@@ -177,6 +177,15 @@ impl Fixture {
                 f.target.to_str().unwrap(),
             ],
         );
+        f.jj(
+            &f.target,
+            &[
+                "--ignore-working-copy",
+                "bookmark",
+                "create",
+                "fixture-worker-work",
+            ],
+        );
         f.script("mkdir -p node_modules\nprintf 'installed\\n' > node_modules/package\n");
         f.policy(true, "");
         Some(f)
