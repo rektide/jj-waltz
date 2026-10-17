@@ -921,7 +921,7 @@ fn explicit_selection_suppresses_current_and_preflight_failures_do_not_snapshot(
         (
             target.as_path(),
             vec!["reseed", "--freshen", "--dry-run"],
-            "reseed --freshen was removed; use `jw up`",
+            "reseed --freshen was removed; use `jw prepare`",
         ),
         (target.as_path(), vec!["reseed", "@"], "unknown workspace"),
     ] {

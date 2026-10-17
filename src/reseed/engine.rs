@@ -1,5 +1,5 @@
 use super::selection::{self, Group, Registrations};
-use super::{ReseedOutcome, ReseedReport, ReseedRequest, ReseedStatus};
+use super::{RecordedRequest, ReseedOutcome, ReseedReport, ReseedStatus};
 use crate::cow::ignored::{Origin, Patterns, Policy};
 #[cfg(test)]
 use crate::cow::payload::checked_git;
@@ -144,7 +144,7 @@ impl Store {
             .truncate(false)
             .open(lock_path)?;
         lock.try_lock_exclusive()
-            .context("another jw reseed/up is running; pause other writers before retrying")?;
+            .context("another jw reseed/prepare is running; pause other writers before retrying")?;
         Ok(Self { root, _lock: lock })
     }
     fn path(&self, name: &str, suffix: &str) -> PathBuf {
@@ -220,20 +220,9 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
 }
 
 pub(super) fn run(
-    mut request: ReseedRequest,
+    mut request: RecordedRequest,
     diagnostic: &mut dyn FnMut(&str),
 ) -> Result<ReseedReport> {
-    if request.freshen {
-        bail!(
-            "reseed --freshen was removed; use `jw up` (old preparation journals still use `jw reseed --resume`)"
-        );
-    }
-    if request.up && request.at.is_some() {
-        bail!("up starts targets at the exact fetched goal; --at belongs to reseed");
-    }
-    if !request.up && request.no_freshen_bookmark {
-        bail!("--no-freshen-bookmark belongs to up");
-    }
     if request.resume && (!request.groups.is_empty() || request.on_unmatched.is_some()) {
         bail!(
             "--resume requires literal names and does not accept group selection or --on-unmatched"
@@ -263,10 +252,10 @@ pub(super) fn run(
     let inventory = Inventory::load(&client)?;
     let default = inventory.default.clone();
     let implicit_current = request.names.is_empty() && request.groups.is_empty();
-    let source_only =
-        implicit_current && request.up && inventory.root(&inventory.current)? == default;
+    let source_only = request.prepare
+        || (implicit_current && request.resume && inventory.root(&inventory.current)? == default);
     if implicit_current {
-        if inventory.root(&inventory.current)? == default && !request.up {
+        if inventory.root(&inventory.current)? == default && !source_only {
             bail!(
                 "reseed at the primary checkout requires literal target names or --group; never selects all implicitly"
             );
@@ -314,26 +303,14 @@ pub(super) fn run(
     let mut plans = Vec::new();
     let mut completed = Vec::new();
     let mut batch = if request.resume {
-        prepare::find_resume(&store, &names, &default)?
+        prepare::find_resume(&store, &names, &default, request.prepare)?
     } else {
         None
     };
-    if let Some(record) = &batch {
-        if record.request.up != request.up {
-            bail!(
-                "recorded workflow is {}; resume with that subcommand, without changing its target-history intent",
-                if record.request.up {
-                    "jw up"
-                } else {
-                    "legacy jw reseed"
-                }
-            );
-        }
-    } else if request.resume && source_only {
-        bail!("no pending source-only up; resume a target batch with its literal names");
-    }
-    if !request.resume && source_only && prepare::find_resume(&store, &[], &default)?.is_some() {
-        bail!("source-only up has an active preparation batch; use `jw up --resume`");
+    if batch.is_none() && request.resume && source_only {
+        bail!(
+            "no pending source-only preparation for this command; legacy batches require `jw reseed --resume` with their recorded target names"
+        );
     }
     let recovering_preparation = batch.as_ref().is_some_and(|b| b.plans.is_none());
     if recovering_preparation {
@@ -412,16 +389,6 @@ pub(super) fn run(
             let mut pending = store
                 .pending(name)?
                 .with_context(|| format!("no pending reseed for {name}"))?;
-            if request.up != pending.history.is_some() {
-                bail!(
-                    "pending target {name} belongs to {}; resume with that subcommand",
-                    if pending.history.is_some() {
-                        "up"
-                    } else {
-                        "reseed"
-                    }
-                );
-            }
             if inventory.root(name)?.canonicalize()? != pending.root
                 || pending.repository != repository_path
             {
@@ -446,14 +413,9 @@ pub(super) fn run(
     } else {
         // Pending detection precedes every source/target snapshot, even when called inside a target.
         for name in &names {
-            if let Some(pending) = store.pending(name)? {
+            if store.pending(name)?.is_some() {
                 bail!(
-                    "workspace {name} has a pending reseed/refill; use `jw {} --resume {name}` before snapshotting it",
-                    if pending.history.is_some() {
-                        "up"
-                    } else {
-                        "reseed"
-                    },
+                    "workspace {name} has a pending reseed/refill; use `jw reseed --resume {name}` before snapshotting it",
                 );
             }
         }
@@ -533,7 +495,7 @@ pub(super) fn run(
                 cow::probe_between(&source, &root)?;
             }
         }
-        if request.up || request.freshen {
+        if request.prepare || request.up || request.freshen {
             let ignored_patterns = ignored_policy.patterns.as_slice();
             prepare::verify_policy(&default, &preparation_config)?;
             prepare::preflight(
@@ -579,7 +541,7 @@ pub(super) fn run(
                         ignored_patterns,
                     )?;
                     if source_only {
-                        summary.push_str("; source-only up, no targets or target refill");
+                        summary.push_str("; source-only prepare, no targets or target refill");
                     }
                     diagnostic(&summary);
                     return Ok(ReseedReport {
@@ -609,8 +571,6 @@ pub(super) fn run(
                     &client,
                     &source,
                     &default,
-                    &inventory,
-                    &names,
                     &request,
                     config.freshen.as_ref(),
                     ignored_patterns,
@@ -646,6 +606,24 @@ pub(super) fn run(
                 });
             }
             prepare::execute(&store, batch.as_mut().unwrap(), diagnostic)?;
+        }
+        // A new prepare action ends at its source proof. It never enters target
+        // planning, snapshots the invoking worker, or allocates history bookmarks.
+        if request.prepare {
+            let prepared = batch.as_mut().context("prepare lacks source journal")?;
+            prepared.plans = Some(Vec::new());
+            prepare::save(&store, prepared)?;
+            let report = ReseedReport {
+                dry_run: false,
+                source,
+                source_commit_id: prepared.goal.clone(),
+                preparation_summary: Some(prepare::summary(prepared)),
+                targets: Vec::new(),
+                selections: Vec::new(),
+                skipped: Vec::new(),
+            };
+            prepare::finish_if_complete(&store, prepared)?;
+            return Ok(report);
         }
         // Assert the donor's prepared tree before snapshotting any target.
         snapshot(&source_client)?;
@@ -896,12 +874,14 @@ pub(super) fn run(
         Some(first) => (first.source.clone(), first.source_commit.clone()),
         None => {
             let b = batch.as_ref().context("select at least one workspace")?;
-            if !b.request.up || !b.request.names.is_empty() {
+            if !b.request.names.is_empty() {
                 bail!("select at least one workspace");
             }
             (
                 prepare::source(b).to_path_buf(),
-                b.goal.clone().context("source-only up lacks frozen goal")?,
+                b.goal
+                    .clone()
+                    .context("source-only preparation lacks frozen goal")?,
             )
         }
     };
@@ -1194,7 +1174,11 @@ fn require_full(client: &JjClient) -> Result<()> {
 }
 
 fn snapshot(client: &JjClient) -> Result<()> {
-    let output = client.run(["--config=fsmonitor.backend=none", "status"])?;
+    let output = client.run([
+        "--config=fsmonitor.backend=none",
+        "--config=snapshot.auto-update-stale=false",
+        "status",
+    ])?;
     diagnostics(output.stderr());
     Ok(())
 }
@@ -1205,6 +1189,7 @@ fn verified_snapshot(client: &JjClient) -> Result<()> {
     let output = client.run([
         "--config=fsmonitor.backend=none",
         "--config=snapshot.auto-track=none()",
+        "--config=snapshot.auto-update-stale=false",
         "status",
     ])?;
     diagnostics(output.stderr());
@@ -1345,7 +1330,48 @@ fn parse_added_symlink(diff: &[u8]) -> Result<Vec<u8>> {
     Ok(result)
 }
 
+/// Verify an intact, full-sparse workspace using JJ's tracked-tree semantics.
+/// This deliberately snapshots (and can record a rejected edit), but never tracks
+/// additional files and disables automatic stale-tree updates. Do not use it on partial
+/// recovery trees: those must first pass `verify_reconstructed_disk`.
 fn verify_disk(
+    client: &JjClient,
+    _operation: &str,
+    commit: &str,
+    root: &Path,
+    _entries: &[Entry],
+) -> Result<()> {
+    if client.cwd().canonicalize()? != root.canonicalize()? {
+        bail!("tracked-tree verification root differs from JJ workspace");
+    }
+    require_full(client)?;
+    // No --at-operation or --ignore-working-copy here: the live tracked files
+    // must enter JJ's tree before comparison with the immutable frozen commit.
+    let output = client.run([
+        "--config=fsmonitor.backend=none",
+        "--config=snapshot.auto-track=none()",
+        "--config=snapshot.auto-update-stale=false",
+        "diff",
+        "--from",
+        "@",
+        "--to",
+        &crate::jj::commit_id_revset(commit)?,
+        "--summary",
+    ])?;
+    diagnostics(output.stderr());
+    if !output.stdout_bytes().is_empty() {
+        bail!(
+            "tracked tree differs from frozen desired tree in {}; JJ snapshot performed",
+            root.display()
+        );
+    }
+    Ok(())
+}
+
+/// Recovery-only raw proof: sparse state may still be empty or expansion may
+/// have been interrupted. No snapshot-capable query is safe until repair is
+/// complete; retain byte/type/mode verification against pinned immutable data.
+fn verify_reconstructed_disk(
     client: &JjClient,
     operation: &str,
     commit: &str,
@@ -1688,10 +1714,11 @@ fn describe(plan: &Pending, planned: bool) -> String {
         .as_ref()
         .map(|id| format!("new child of {id}"))
         .unwrap_or_else(|| format!("keep {}", plan.old_commit));
+    let clone_paths = plan.clones.iter().collect::<BTreeSet<_>>();
     let clone_bytes: u64 = plan
         .source_stamp
         .iter()
-        .filter(|s| plan.clones.contains(&s.path) && s.mode & 0o170000 == 0o100000)
+        .filter(|s| clone_paths.contains(&s.path) && s.mode & 0o170000 == 0o100000)
         .map(|s| s.size)
         .sum();
     let payload = plan
@@ -1844,16 +1871,12 @@ fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
         bail!("source contents changed; restore the frozen source before --resume");
     }
     // Reuse only a previously verified tree/payload bound to exact filesystem
-    // stamps and WC identity. Changed source recovery still performs the full
-    // frozen byte/type/mode and dependency digest proof before updating stamps.
+    // stamps and WC identity. Source recovery compares an intact tracked tree
+    // and dependency digest before updating stamps; only the target can be partial.
+    let mut validated_current = current.clone();
     if !unchanged || !plan.ignored.is_empty() {
         let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
         if !unchanged {
-            if !changed_paths(&source, &operation, &current, &plan.source_commit)?.is_empty() {
-                bail!(
-                    "source tracked revision differs from the frozen tree; restore it before --resume"
-                );
-            }
             #[cfg(test)]
             SOURCE_LOGICAL_CHECKS.with(|count| count.set(count.get() + 1));
             verify_disk(
@@ -1863,6 +1886,7 @@ fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
                 &plan.source,
                 &entries,
             )?;
+            validated_current = current_commit(&source)?.1;
             if payload_digest(&plan.source, &plan.ignored)? != plan.source_payload_digest {
                 bail!(
                     "source ignored payload differs from the frozen plan; restore its bytes/types/modes before --resume"
@@ -1885,14 +1909,14 @@ fn validate_source(plan: &mut Pending, resume: bool) -> Result<()> {
             }
         }
     }
-    if stamp(&plan.source)? != before || current_commit(&source)?.1 != current {
+    if stamp(&plan.source)? != before || current_commit(&source)?.1 != validated_current {
         bail!("source changed during content validation; pause writers before retrying");
     }
     plan.source_identity.verify(&plan.source)?;
     plan.source_jj_identity.verify(&plan.source.join(".jj"))?;
     if resume {
         plan.source_stamp = before;
-        plan.validated_source_wc_commit = current;
+        plan.validated_source_wc_commit = validated_current;
     }
     Ok(())
 }
@@ -2043,7 +2067,7 @@ fn reconstruct_current_tree(plan: &Pending) -> Result<()> {
         &clones.into_iter().collect::<Vec<_>>(),
         &plan.root,
     )?;
-    verify_disk(
+    verify_reconstructed_disk(
         &client,
         &plan.target_operation,
         &plan.desired_commit,
@@ -2080,9 +2104,10 @@ fn remove_empty_directories(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Reconstruct every recorded tracked path before any ordinary snapshot. This is
-/// deliberately idempotent even after sparse expansion or partial ignored copying.
+/// Only a target that crossed the Prepared boundary needs reconstruction before
+/// snapshotting. A preparation handoff (including --resume) is still untouched.
 fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> Result<()> {
+    let reconstruct = plan.phase != Phase::Prepared;
     if default != plan.config_root {
         bail!("default workspace changed since frozen plan");
     }
@@ -2099,7 +2124,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         diagnostics(format!("Warning: {warning}"));
     }
     let (operation, current) = current_commit(&client)?;
-    if resume && plan.phase == Phase::Newing && current != plan.old_commit {
+    if plan.phase == Phase::Newing && current != plan.old_commit {
         let base = plan
             .base_commit
             .as_deref()
@@ -2113,7 +2138,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     } else if current != plan.desired_commit {
         bail!("target WC revision changed since frozen plan; pending retained without snapshot");
     }
-    if !resume {
+    if !reconstruct && !resume {
         require_full(&client)?;
         if current_commit(&client)?.1 != plan.old_commit || stamp(&plan.root)? != plan.target_stamp
         {
@@ -2147,8 +2172,8 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     // reconstructs the entire CURRENT commit before a normal sparse command may
     // snapshot it. The write-ahead Clearing phase covers interruptions during
     // that repair as well as during sparse clearing itself.
-    transition(store, plan, Phase::Clearing)?;
-    if resume {
+    if reconstruct {
+        transition(store, plan, Phase::Clearing)?;
         reconstruct_current_tree(plan)?;
     } else {
         let expected = entries(&client, &plan.target_operation, &plan.desired_commit)?;
@@ -2159,10 +2184,15 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             &plan.root,
             &expected,
         )?;
+        if current_commit(&client)?.1 != plan.desired_commit {
+            bail!("target WC revision changed during tracked-tree verification; pending retained");
+        }
+        transition(store, plan, Phase::Clearing)?;
     }
     let output = client.run([
         "--config=fsmonitor.backend=none",
         "--config=snapshot.auto-track=none()",
+        "--config=snapshot.auto-update-stale=false",
         "sparse",
         "set",
         "--clear",
@@ -2190,6 +2220,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
             let output = client.run([
                 "--config=fsmonitor.backend=none",
                 "--config=snapshot.auto-track=none()",
+                "--config=snapshot.auto-update-stale=false",
                 "new",
                 &crate::jj::commit_id_revset(&base)?,
             ])?;
@@ -2231,6 +2262,7 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
     let output = client.run([
         "--config=fsmonitor.backend=none",
         "--config=snapshot.auto-track=none()",
+        "--config=snapshot.auto-update-stale=false",
         "sparse",
         "reset",
     ])?;
@@ -2244,11 +2276,6 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         &plan.root,
         &plan.entries,
     )?;
-    require_full(&client)?;
-    if current_commit(&client)?.1 != plan.desired_commit {
-        bail!("target revision changed while materializing; no snapshot performed");
-    }
-    verified_snapshot(&client)?;
     if current_commit(&client)?.1 != plan.desired_commit {
         bail!("materialization verification changed the desired WC commit; pending retained");
     }
@@ -2295,7 +2322,6 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         &plan.root,
         &plan.entries,
     )?;
-    verified_snapshot(&client)?;
     if current_commit(&client)?.1 != plan.desired_commit {
         bail!("ignored/link contents changed tracked tree; pending retained");
     }
@@ -2389,6 +2415,163 @@ fn fault_during_repair(index: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verification_fixture() -> (tempfile::TempDir, JjClient) {
+        let temporary = tempfile::tempdir().unwrap();
+        let client = JjClient::new(temporary.path());
+        client.run(["git", "init", "--no-colocate"]).unwrap();
+        client
+            .run(["config", "set", "--repo", "fsmonitor.backend", "none"])
+            .unwrap();
+        fs::write(temporary.path().join("tracked"), b"frozen\n").unwrap();
+        snapshot(&client).unwrap();
+        (temporary, client)
+    }
+
+    #[test]
+    fn intact_verification_process_count_is_independent_of_tracked_files() {
+        if let Some(log) = std::env::var_os("JW_VERIFY_PROCESS_LOG") {
+            let (temporary, client) = verification_fixture();
+            for count in [1, 256] {
+                for index in 1..count {
+                    fs::write(temporary.path().join(format!("tracked-{index}")), b"file\n")
+                        .unwrap();
+                }
+                snapshot(&client).unwrap();
+                let (operation, commit) = current_commit(&client).unwrap();
+                let entries = entries(&client, &operation, &commit).unwrap();
+                assert_eq!(entries.len(), count);
+                fs::write(&log, "").unwrap();
+                verify_disk(&client, &operation, &commit, temporary.path(), &entries).unwrap();
+                let commands = fs::read_to_string(&log).unwrap();
+                assert_eq!(commands.lines().count(), 2, "{commands}");
+                assert!(
+                    commands.contains("--ignore-working-copy sparse list"),
+                    "{commands}"
+                );
+                assert!(commands.contains("--config=fsmonitor.backend=none --config=snapshot.auto-track=none() --config=snapshot.auto-update-stale=false diff"), "{commands}");
+                assert!(!commands.contains("file show"), "{commands}");
+            }
+            return;
+        }
+        // Child-process environment keeps the executable wrapper isolated from
+        // parallel tests. Resolve the real executable before introducing it.
+        let real_jj = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|directory| directory.join("jj"))
+            .find(|path| path.is_file())
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let wrapper = directory.path().join("jj");
+        fs::write(&wrapper, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$JW_VERIFY_PROCESS_LOG\"\nexec \"$JW_VERIFY_REAL_JJ\" \"$@\"\n").unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(directory.path().to_path_buf())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reseed::engine::tests::intact_verification_process_count_is_independent_of_tracked_files",
+                "--nocapture",
+            ])
+            .env("PATH", path)
+            .env("JW_VERIFY_REAL_JJ", real_jj)
+            .env("JW_VERIFY_PROCESS_LOG", directory.path().join("commands"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn intact_verification_detects_tracked_changes_without_autotracking() {
+        let (temporary, client) = verification_fixture();
+        let root = temporary.path();
+        std::os::unix::fs::symlink("tracked", root.join("link")).unwrap();
+        snapshot(&client).unwrap();
+        let (operation, commit) = current_commit(&client).unwrap();
+        let entries = entries(&client, &operation, &commit).unwrap();
+        fs::write(root.join("untracked"), b"leave me untracked\n").unwrap();
+        verify_disk(&client, &operation, &commit, root, &entries).unwrap();
+        assert_eq!(current_commit(&client).unwrap().1, commit);
+        fs::write(root.join("tracked"), b"changed\n").unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+        fs::write(root.join("tracked"), b"frozen\n").unwrap();
+        verify_disk(&client, &operation, &commit, root, &entries).unwrap();
+        fs::set_permissions(root.join("tracked"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+        fs::set_permissions(root.join("tracked"), fs::Permissions::from_mode(0o644)).unwrap();
+        fs::remove_file(root.join("link")).unwrap();
+        std::os::unix::fs::symlink("elsewhere", root.join("link")).unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+        fs::remove_file(root.join("link")).unwrap();
+        std::os::unix::fs::symlink("tracked", root.join("link")).unwrap();
+        verify_disk(&client, &operation, &commit, root, &entries).unwrap();
+        fs::remove_file(root.join("tracked")).unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+    }
+
+    #[test]
+    fn intact_verification_refuses_sparse_and_stale_trees_before_snapshot() {
+        let (temporary, client) = verification_fixture();
+        let root = temporary.path();
+        let (operation, commit) = current_commit(&client).unwrap();
+        let entries = entries(&client, &operation, &commit).unwrap();
+        client.run(["sparse", "set", "--clear"]).unwrap();
+        fs::write(root.join("tracked"), b"partial staged prefill\n").unwrap();
+        let before = current_commit(&client).unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+        assert_eq!(current_commit(&client).unwrap(), before);
+        assert!(verify_reconstructed_disk(&client, &operation, &commit, root, &entries).is_err());
+        assert_eq!(current_commit(&client).unwrap(), before);
+        fs::write(root.join("tracked"), b"frozen\n").unwrap();
+        verify_reconstructed_disk(&client, &operation, &commit, root, &entries).unwrap();
+        client.run(["sparse", "reset"]).unwrap();
+        client
+            .run([
+                "config",
+                "set",
+                "--repo",
+                "snapshot.auto-update-stale",
+                "true",
+            ])
+            .unwrap();
+        let other = root.join("other");
+        client
+            .run([
+                "workspace",
+                "add",
+                "--name",
+                "other",
+                other.to_str().unwrap(),
+            ])
+            .unwrap();
+        JjClient::new(&other)
+            .run([
+                "--ignore-working-copy",
+                "restore",
+                "--from",
+                "root()",
+                "--to",
+                &commit,
+            ])
+            .unwrap();
+        fs::write(root.join("tracked"), b"must not snapshot stale tree\n").unwrap();
+        let before = current_commit(&client).unwrap();
+        assert!(verify_disk(&client, &operation, &commit, root, &entries).is_err());
+        assert_eq!(current_commit(&client).unwrap(), before);
+        assert_eq!(
+            fs::read(root.join("tracked")).unwrap(),
+            b"must not snapshot stale tree\n"
+        );
+    }
 
     #[test]
     fn escaped_diff_excludes_both_rename_endpoints() {
@@ -2650,6 +2833,26 @@ mod tests {
         };
         let store = Store::lock(&client).unwrap();
         Some((temporary, store, pending))
+    }
+
+    #[test]
+    fn prepared_handoff_never_reconstructs_even_when_resuming() {
+        let Some((_temporary, store, mut plan)) = fixture(true) else {
+            return;
+        };
+        let default = plan.source.clone();
+        plan.preparation_id = Some("prepared-handoff".into());
+        store.save(&plan).unwrap();
+        // Any invocation of reconstruction would fail while processing its
+        // first path. Prepared handoffs must use the intact-tree proof instead.
+        FAIL_DURING_REPAIR.with(|f| f.set(Some(0)));
+        let outcome = execute(&store, &default, &mut plan, true);
+        FAIL_DURING_REPAIR.with(|f| f.set(None));
+        outcome.unwrap();
+        assert_eq!(plan.phase, Phase::Done);
+        let target = JjClient::new(&plan.root);
+        let (operation, commit) = current_commit(&target).unwrap();
+        assert!(exact_empty_child(&target, &operation, &commit, &plan.source_commit).unwrap());
     }
 
     #[test]

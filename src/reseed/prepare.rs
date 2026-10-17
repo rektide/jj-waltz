@@ -1,5 +1,4 @@
-//! Source preparation is a batch prerequisite, never a target-recovery mutation.
-//! This journal retains frozen target intent until every receipt is accounted for.
+//! Source-only preparation and narrowly scoped recovery of legacy target batches.
 use super::*;
 use crate::freshen::source::SourceSelection;
 
@@ -92,7 +91,7 @@ struct VerifiedSource {
 pub(super) struct Batch {
     schema_version: u32,
     pub id: String,
-    pub request: ReseedRequest,
+    pub request: RecordedRequest,
     source: PathBuf,
     source_identity: Identity,
     source_jj_identity: Identity,
@@ -174,7 +173,7 @@ fn batches(store: &Store) -> Result<Vec<Batch>> {
 impl Batch {
     fn load_compatible(&mut self) -> Result<()> {
         match self.schema_version {
-            1 => {
+            1 if !self.request.prepare && !self.request.up && self.source_selection.is_none() => {
                 if self.command_sequence.is_some() {
                     bail!("v1 preparation journal unexpectedly contains command sequence progress");
                 }
@@ -194,18 +193,47 @@ impl Batch {
                 self.schema_version = 2;
                 self.legacy_v1 = true;
             }
-            2 if self.command.is_none() && !self.request.up && self.source_selection.is_none() => {}
-            3 if self.command.is_none() && self.request.up && self.source_selection.is_some() => {}
+            2 if self.command.is_none()
+                && !self.request.prepare
+                && !self.request.up
+                && self.source_selection.is_none() => {}
+            3 if self.command.is_none()
+                && !self.request.prepare
+                && self.request.up
+                && self.source_selection.is_some() => {}
+            4 if self.command.is_none()
+                && self.request.prepare
+                && self.source_selection.is_some() =>
+            {
+                self.validate_source_only()?;
+            }
             _ => bail!("invalid source preparation journal version or legacy command field"),
         }
         self.validate_commands()?;
-        if self.request.up != self.source_selection.is_some() {
+        if (self.request.up || self.request.prepare) != self.source_selection.is_some() {
             bail!("preparation workflow/source selection mismatch");
         }
         // Legacy v1/v2 requests already froze an effective array, including [].
         // Option preserves that wire form as Some(array), never new inheritance.
         if self.request.copy_ignored.is_none() {
             bail!("preparation journal lacks frozen ignored-copy selection");
+        }
+        Ok(())
+    }
+
+    fn validate_source_only(&self) -> Result<()> {
+        if self.request.up
+            || self.request.freshen
+            || self.request.no_freshen_bookmark
+            || !self.request.names.is_empty()
+            || !self.request.groups.is_empty()
+            || self.request.on_unmatched.is_some()
+            || self.request.at.is_some()
+            || self.request.replace_content
+            || !self.targets.is_empty()
+            || self.plans.as_ref().is_some_and(|plans| !plans.is_empty())
+        {
+            bail!("source-only preparation journal contains target intent");
         }
         Ok(())
     }
@@ -238,12 +266,16 @@ pub(super) fn find_resume(
     store: &Store,
     names: &[String],
     default: &Path,
+    source_only: bool,
 ) -> Result<Option<Batch>> {
     let matching = batches(store)?
         .into_iter()
         .filter(|b| {
+            if b.request.prepare != source_only {
+                return false;
+            }
             if names.is_empty() {
-                b.request.up && b.request.names.is_empty() && b.config_root == default
+                b.request.names.is_empty() && b.config_root == default
             } else {
                 b.request.names.iter().any(|n| names.contains(n))
             }
@@ -261,7 +293,7 @@ pub(super) fn find_resume(
     Ok(batch)
 }
 
-pub(super) fn validate_resume_request(request: &ReseedRequest) -> Result<()> {
+pub(super) fn validate_resume_request(request: &RecordedRequest) -> Result<()> {
     if request.freshen
         || request.no_freshen_bookmark
         || request.source.is_some()
@@ -282,7 +314,11 @@ pub(super) fn ensure_available(store: &Store, source: &Path, own: Option<&Batch>
             bail!(
                 "source has an active preparation batch in phase {:?}; use `jw {} {:?} --resume`; source progress was not rolled back",
                 batch.phase,
-                if batch.request.up { "up" } else { "reseed" },
+                if batch.request.prepare {
+                    "prepare"
+                } else {
+                    "reseed"
+                },
                 batch.request.names
             );
         }
@@ -363,7 +399,7 @@ pub(super) fn describe(
 ) -> Result<String> {
     let commands = configured_argv(settings)?;
     Ok(format!(
-        "Freshen donor {:?}; pinned {:?} bookmark {:?}@{:?}; prospective post-fetch goal {:?} (currently {:?}); preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
+        "Prepare source {:?}; pinned {:?} bookmark {:?}@{:?}; prospective post-fetch goal {:?} (currently {:?}); preparation argv sequence {:?}, cwd {:?}; ignored selection {:?}; {}",
         source,
         selected.kind,
         selected.name,
@@ -387,11 +423,11 @@ pub(super) fn summary(batch: &Batch) -> String {
         .as_ref()
         .expect("validated command sequence");
     format!(
-        "Recorded freshen ({}): remote {:?}, exact source goal {:?}, preparation argv sequence {:?}, cwd {:?}; commands completed {}/{}{}, {}; {}",
-        if batch.request.up && batch.request.names.is_empty() {
-            "source-only up"
+        "Recorded preparation ({}): remote {:?}, exact source goal {:?}, preparation argv sequence {:?}, cwd {:?}; commands completed {}/{}{}, {}; {}",
+        if batch.request.prepare {
+            "source-only prepare"
         } else if batch.request.up {
-            "up"
+            "legacy up (reseed --resume)"
         } else {
             "legacy reseed"
         },
@@ -409,7 +445,9 @@ pub(super) fn summary(batch: &Batch) -> String {
         if batch.legacy_v1 {
             "v1 single-command journal loaded compatibly; only Verified proves legacy completion"
         } else {
-            if batch.request.up {
+            if batch.request.prepare {
+                "v4 source-only preparation journal"
+            } else if batch.request.up {
                 "v3 up sequence journal"
             } else {
                 "v2 legacy reseed sequence journal"
@@ -431,47 +469,20 @@ pub(super) fn begin(
     client: &JjClient,
     source: &Path,
     default: &Path,
-    inventory: &Inventory,
-    names: &[String],
-    request: &ReseedRequest,
+    request: &RecordedRequest,
     settings: Option<&Settings>,
     ignored: &[String],
     local_config: Option<Vec<u8>>,
     source_selection: SourceSelection,
 ) -> Result<Batch> {
-    if !request.up {
-        bail!("new source preparation requires up; legacy reseed preparation is resume-only");
+    if !request.prepare || !request.names.is_empty() {
+        bail!("new source preparation must be source-only; legacy batches are resume-only");
     }
     verify_policy(default, &local_config)?;
     let operation = client.operation_id()?;
     let source_client = JjClient::new(source);
     let old_commit = source_client.resolve_one_at(&operation, "@")?.commit_id;
     require_unconflicted(&source_client, &operation, &old_commit)?;
-    let mut targets = Vec::new();
-    let facts = client.workspace_target_facts_at(&operation)?;
-    for name in names {
-        let root = inventory.root(name)?.to_path_buf();
-        let fact = facts.get(name).context("target disappeared")?;
-        if fact.conflicted || fact.divergent {
-            bail!("workspace {name} is conflicted or divergent");
-        }
-        let current_entries = entries(&JjClient::new(&root), &operation, &fact.commit_id)?;
-        verify_disk(
-            &JjClient::new(&root),
-            &operation,
-            &fact.commit_id,
-            &root,
-            &current_entries,
-        )?;
-        targets.push(Target {
-            name: name.clone(),
-            root_identity: Identity::read(&root)?,
-            jj_identity: Identity::read(&root.join(".jj"))?,
-            stamp: stamp(&root)?,
-            root,
-            commit: fact.commit_id.clone(),
-        });
-    }
     let mut frozen_request = request.clone();
     let source_rev = source_selection.source_at.clone().unwrap_or_else(|| {
         format!(
@@ -480,7 +491,6 @@ pub(super) fn begin(
             serde_json::to_string(&source_selection.remote).expect("JSON string"),
         )
     });
-    frozen_request.names = names.to_vec();
     frozen_request.groups.clear();
     frozen_request.on_unmatched = None;
     frozen_request.source = Some(source.to_path_buf());
@@ -491,15 +501,13 @@ pub(super) fn begin(
         source,
         &operation,
         &old_commit,
-        names,
-        &targets,
         nonce.path(),
     ))?)
     .iter()
     .map(|b| format!("{b:02x}"))
     .collect();
     let batch = Batch {
-        schema_version: 3,
+        schema_version: 4,
         id,
         request: frozen_request,
         source: source.to_path_buf(),
@@ -527,11 +535,12 @@ pub(super) fn begin(
         selected_commit: None,
         goal: None,
         phase: PreparationPhase::Fetching,
-        targets,
+        targets: Vec::new(),
         plans: None,
         verified_source: None,
         accepted_verified_wc_commit: None,
     };
+    batch.validate_source_only()?;
     save(store, &batch)?;
     Ok(batch)
 }
@@ -641,6 +650,9 @@ pub(super) fn verified_selection(batch: &Batch) -> Result<(&[PathBuf], &[String]
 }
 
 pub(super) fn verify_targets(batch: &Batch) -> Result<()> {
+    if batch.targets.is_empty() {
+        return Ok(());
+    }
     let client = JjClient::new(&batch.source);
     let operation = client.operation_id()?;
     let facts = client.workspace_target_facts_at(&operation)?;
@@ -699,7 +711,7 @@ pub(super) fn execute(
                 &old_entries,
             )?;
             diagnostic(&format!(
-                "Freshen: fetching remote {:?} in {:?}; previous work preserved at {}",
+                "Prepare: fetching remote {:?} in {:?}; previous work preserved at {}",
                 batch.remote, batch.source, batch.old_commit
             ));
             let output = if let Some(selected) = &batch.source_selection {
@@ -809,7 +821,7 @@ pub(super) fn execute(
         )?;
         if batch.phase != PreparationPhase::Verified {
             diagnostic(&format!(
-                "Freshen: exact post-fetch goal {goal}; {}",
+                "Prepare: exact post-fetch goal {goal}; {}",
                 summary(batch),
             ));
             batch.phase = PreparationPhase::Preparing;
@@ -821,7 +833,7 @@ pub(super) fn execute(
                 let index = sequence.completed;
                 let argv = sequence.argv[index].clone();
                 diagnostic(&format!(
-                    "Freshen: command {}/{} argv {:?}, cwd {:?}; {}",
+                    "Prepare: command {}/{} argv {:?}, cwd {:?}; {}",
                     index + 1,
                     sequence.argv.len(),
                     argv,
@@ -839,7 +851,7 @@ pub(super) fn execute(
                     .args(&argv[1..])
                     .current_dir(&batch.source)
                     .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
+                    .stdout(std::io::stderr())
                     .stderr(Stdio::inherit())
                     .status()
                     .with_context(|| format!("could not run configured preparation argv {}; in-flight command may retry on resume", index + 1))?;
@@ -871,7 +883,7 @@ pub(super) fn execute(
         verify_verified(batch)?;
         save(store, batch)?;
         diagnostic(&format!(
-            "Freshen: donor verified at exact goal {:?}; {}; source preparation is not rolled back if later planning fails",
+            "Prepare: donor verified at exact goal {:?}; {}; source preparation is not rolled back if later planning fails",
             batch.goal,
             if batch.targets.is_empty() {
                 "source-only completion; no targets selected"
@@ -891,13 +903,11 @@ fn verify_command_result(
     goal_entries: &[Entry],
 ) -> Result<String> {
     validate(batch)?;
-    snapshot(client)?;
+    // Check the tracked tree without adopting newly created untracked outputs.
+    // The guarded verifier snapshots tracked edits and compares against the goal.
+    verify_disk(client, &client.operation_id()?, goal, &batch.source, goal_entries)
+        .context("preparer changed tracked tree (including lockfiles); restore frozen source child/tree before resume")?;
     let (operation, current) = current_commit(client)?;
-    if !changed_paths(client, &operation, &current, goal)?.is_empty() {
-        bail!(
-            "preparer changed tracked tree (including lockfiles); restore frozen source child/tree before resume"
-        );
-    }
     let selected = batch
         .selected_commit
         .as_ref()
@@ -908,7 +918,6 @@ fn verify_command_result(
     {
         bail!("source selected revision changed; restore the recorded source child before resume");
     }
-    verify_disk(client, &operation, goal, &batch.source, goal_entries)?;
     verify_targets(batch)?;
     Ok(current)
 }

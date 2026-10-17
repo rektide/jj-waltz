@@ -22,14 +22,14 @@ pub enum UnmatchedPolicy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
-    /// Literal targets; empty names/groups select current variant, or source-only up at primary.
+    /// Literal targets; empty names/groups select the current variant.
     pub names: Vec<String>,
     pub groups: Vec<String>,
     /// Override group selection-miss policy; positional names are always strict.
     pub on_unmatched: Option<UnmatchedPolicy>,
     /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
-    /// Donor tree assertion for reseed; upstream goal override for up.
+    /// Donor tree assertion.
     pub source_at: Option<String>,
     pub at: Option<String>,
     /// None inherits local/global policy; Some([]) explicitly disables inheritance.
@@ -38,19 +38,48 @@ pub struct ReseedRequest {
     pub replace_content: bool,
     pub dry_run: bool,
     pub resume: bool,
-    /// Legacy journal input only. New source preparation uses up.
-    #[serde(default)]
-    #[doc(hidden)]
-    pub freshen: bool,
-    /// Advance source and targets to the exact fetched goal, not a rebase.
-    #[serde(default)]
-    pub up: bool,
-    /// Freeze preservation opt-out before source preparation starts.
-    #[serde(default)]
-    pub no_freshen_bookmark: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Source-only preparation, independent of the invoking workspace's role.
+#[derive(Debug, Clone, Default)]
+pub struct PrepareRequest {
+    pub source: Option<PathBuf>,
+    pub source_at: Option<String>,
+    pub copy_ignored: Option<Vec<String>>,
+    pub no_copy_ignored: bool,
+    pub dry_run: bool,
+    pub resume: bool,
+}
+
+/// Private journal compatibility; legacy target advancement is resume-only.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RecordedRequest {
+    #[serde(flatten)]
+    request: ReseedRequest,
+    #[serde(default)]
+    prepare: bool,
+    #[serde(default)]
+    freshen: bool,
+    #[serde(default)]
+    up: bool,
+    #[serde(default)]
+    no_freshen_bookmark: bool,
+}
+
+impl std::ops::Deref for RecordedRequest {
+    type Target = ReseedRequest;
+    fn deref(&self) -> &Self::Target {
+        &self.request
+    }
+}
+
+impl std::ops::DerefMut for RecordedRequest {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.request
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReseedReport {
     pub dry_run: bool,
     pub source: PathBuf,
@@ -62,14 +91,14 @@ pub struct ReseedReport {
     pub skipped: Vec<ReseedSelectionMiss>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReseedSelection {
     pub name: String,
     pub root: PathBuf,
     pub origins: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct ReseedSelectionMiss {
     /// Losslessly escaped, quoted candidate name, pattern, or pathname.
     pub candidate: String,
@@ -84,14 +113,14 @@ impl ReseedReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReseedOutcome {
     pub name: String,
     pub status: ReseedStatus,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ReseedStatus {
     Planned,
     Succeeded,
@@ -108,6 +137,42 @@ pub fn run_with_diagnostics(
     request: ReseedRequest,
     diagnostic: impl FnMut(&str),
 ) -> Result<ReseedReport> {
+    run_recorded(
+        RecordedRequest {
+            request,
+            ..Default::default()
+        },
+        diagnostic,
+    )
+}
+
+pub fn prepare(request: PrepareRequest) -> Result<ReseedReport> {
+    prepare_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))
+}
+
+pub fn prepare_with_diagnostics(
+    request: PrepareRequest,
+    diagnostic: impl FnMut(&str),
+) -> Result<ReseedReport> {
+    run_recorded(
+        RecordedRequest {
+            prepare: true,
+            request: ReseedRequest {
+                source: request.source,
+                source_at: request.source_at,
+                copy_ignored: request.copy_ignored,
+                no_copy_ignored: request.no_copy_ignored,
+                dry_run: request.dry_run,
+                resume: request.resume,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        diagnostic,
+    )
+}
+
+fn run_recorded(request: RecordedRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
     #[cfg(unix)]
     {
         let mut diagnostic = diagnostic;
