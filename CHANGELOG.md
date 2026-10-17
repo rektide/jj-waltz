@@ -32,16 +32,18 @@ sources:
 
 ## Unreleased
 
-- Replace the unreleased combined `jw up` with a `prepare`/`reseed` split before
-  it ever shipped. `jw prepare` is source-only from any registered workspace: it
+- Replace the combined `jw up` command with a `prepare`/`reseed` split.
+  `jw prepare` is source-only from any registered workspace: it
   selects/fetches one pinned upstream (CLI/local goal, native tracked pair, or
   exact remote at the clean donor base), runs the configured `[freshen]`
   preparation commands, verifies selected ignored payload, and reports the exact
   frozen commit with an optional `--format=json` report. It accepts only
   `--from`, `--source-at`, `--copy-ignored`/`--no-copy-ignored`, `--dry-run`,
   `--resume`, and `--format`; it has no names, groups, `--at`,
-  `--replace-content`, or `--no-freshen-bookmark`, never touches the invoking
-  workspace, and never allocates bookmarks. `reseed` keeps its worker copying
+  `--replace-content`, or `--no-freshen-bookmark`. It never implicitly selects or
+  refills a worker — the selected donor, possibly the caller's own checkout, is
+  the only workspace it mutates — and it creates no worker-preservation bookmarks
+  (native fetch can update refs). `reseed` keeps its worker copying
   semantics: retain the feature tree by default, or reset deliberately with
   `--at <prepared-commit>` to consume a prepared commit without another
   preparation. Feature rebasing stays ordinary `jj`. New preparation journals are
@@ -66,8 +68,8 @@ sources:
   `--delete-bookmark` ever deletes them. Scripted removals can no longer stall on
   or accidentally answer a bookmark prompt.
 - Superseded pre-release: the previously announced combined `jw up` (fetch,
-  prepare, and advance targets with freshen timestamp bookmarks) never shipped;
-  the prepare/reseed split above replaces it. The add/s `--source-at` assertion,
+  prepare, and advance targets with freshen timestamp bookmarks) is replaced by
+  the prepare/reseed split above. The add/s `--source-at` assertion,
   ordinary reseed selection/current-target rules, private ignored payloads,
   wildcard groups, and legacy recovery contracts described below remain as
   stated.

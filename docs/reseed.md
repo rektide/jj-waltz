@@ -184,10 +184,12 @@ arbitrary source dotfiles. There is no additional confirmation prompt.
 `jw prepare` selects and fetches one pinned native upstream bookmark, selects an
 empty donor child of the exact fetched goal, runs configured preparation commands,
 and reports the **exact frozen commit** of the prepared source. It is strictly
-source-only: it never selects targets, refills files, or advances a workspace,
-never snapshots or mutates the invoking workspace, and has the same meaning from
-any registered workspace of the repository. It takes no names, no `--group`,
-no `--at`, and allocates no bookmarks.
+source-only: it never selects targets, refills files, or advances a workspace.
+It works only on its selected donor — which may be the caller's own checkout, so
+plain `jw prepare` at the primary prepares the primary — and has the same meaning
+from any registered workspace of the repository. It takes no names, no `--group`,
+no `--at`, and creates no worker-preservation bookmarks (native fetch can update
+refs).
 
 Consume a prepared commit with ordinary reseed and an explicit `--at`:
 
@@ -202,7 +204,8 @@ rebasing remains an ordinary `jj` operation: `--at` starts an empty child of the
 chosen base, it does not rebase the workspace's previous feature commits, and
 reseed without `--at` keeps them checked out.
 
-`--from` changes the donor only; the caller's workspace stays untouched.
+`--from` selects a different donor. Without it, the donor is the configured source
+or the verified primary checkout — possibly the caller's own workspace.
 
 ### Native upstream selection
 
@@ -504,13 +507,15 @@ independent raw-byte audit; see JJ's
 on the working-copy state cache. Because the snapshot runs first, a mismatch can be
 reported **after** a snapshot was taken, possibly recording a rejected edit; the
 earlier "no snapshot performed" rejection promise is retired on this normal path.
-These snapshots never track additional files and never update a stale workspace.
-
-This does not weaken recovery. A half-filled or sparse-incomplete target cannot
-be trusted to an empty diff, so recovery still reconstructs and raw-verifies every
-recorded byte, type, and mode against pinned immutable data **before** any
-snapshot-capable command runs. The resume-before-snapshot guidance above is
+These snapshots never track additional files, and automatic stale-tree updates are
+disabled; JJ may still refresh metadata-only stale state when the tree identity is
 unchanged.
+
+Recovery keeps a stricter, explicit invariant. A target whose recorded phase shows
+mutation began (or whose sparse selection is incomplete) cannot be proven by an
+empty diff: before any snapshot-capable command runs, recovery reconstructs every
+recorded tracked path and raw-verifies each recorded byte, type, and mode against
+pinned immutable data. The resume-before-snapshot guidance above is unchanged.
 
 Interrupted operations retain repository-scoped pending records outside the
 replaceable contents. **Do not run ordinary snapshotting JJ commands in a
@@ -532,13 +537,19 @@ targets and exits nonzero for partial failure. Recovery never uses repository-wi
 `jj undo`.
 
 Preparation freezes the effective ignored-copy list, including explicit `[]`,
-before commands run. Once source preparation is verified, its actual root set is
-frozen too and is used directly for target plans. Resume does not
-inherit new global patterns. Existing v1/v2 preparation request arrays keep that
+before commands run. **Legacy combined batches** — v1/v2 reseed preparation and
+removed-up v3 journals — also freeze their verified root set once source
+preparation is proven, and their frozen target plans use that exact set: resume
+does not inherit new global patterns, and the frozen selection is not re-expanded
+under a newer matcher. A new `prepare` receipt records its root set as part of the
+source proof only; it does **not** govern later runs. A separate `reseed` invoked
+afterwards resolves its own effective policy fresh, following the ordinary
+CLI → local → global precedence at that run. Existing v1/v2 preparation request
+arrays keep that
 meaning: a recorded `[]` remains empty, not a missing value asking for defaults.
 Verified root sets are not re-expanded under a newer matcher: a legacy pattern
 that previously selected nothing does not suddenly add payload during recovery.
-New matching roots outside the frozen set remain unselected; changes inside a
+New matching roots outside a legacy frozen set remain unselected; changes inside a
 selected root still require exact payload restoration.
 
 ## Related material
@@ -552,6 +563,9 @@ selected root still require exact payload restoration.
   reseed-only worker semantics, and the performance-first verification slice.
 - [Incident handoff](../design/up-performance/handoff0.glm53m.md) preserves the
   measurement evidence that motivated the split.
+- [Performance assessment](../tools/performance/README.md) retains the
+  synthetic fixtures and subprocess-count budgets used to judge reseed/prepare
+  costs and regressions.
 - [Architecture](architecture.md#module-map) separates the command adapter,
   reseed coordination, JJ operations, filesystem cloning, links, and metadata.
 - [Source freshening design](../design/workspace-reseed/source-freshen0.gpt61sol.md)
@@ -589,13 +603,18 @@ matrix, live-source exercise, installation, or unrelated cleanup-suite run.
 
 ### Current split status
 
-The prepare/reseed split, v4 source-only journals, legacy v3 recovery through
-`reseed --resume`, `prepare --format=json`, and the snapshot-plus-diff tracked-tree
-proof had **not** been runtime-verified at documentation time. The established
-test baseline for this work is installed JJ
-`0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b` on Linux Btrfs; no newer
-runtime verification is claimed here. Treat behavior as implementation-led until
-the integrated change passes its focused suites on that baseline.
+The prepare/reseed split is implemented across three source commits —
+`bed02439` (replace up with source-only prepare plus batch tracked-tree
+verification), `25710456` (preserve JJ shim identity in verification process
+counting), and `9bf436c5` (runnable preparation/resume guidance) — with focused
+suites passing on the established baseline (installed JJ
+`0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b`, Linux Btrfs, real CoW
+required): 71 CLI/reseed cases plus 27 prepare cases, 25 engine cases, all-target
+Clippy, and formatting. Parent full-integration verification was still underway
+with test-environment adjustments at documentation time, so treat the integrated
+surface as implementation-led until that run lands. Repeatable measurement lives
+in the [performance assessment guide](../tools/performance/README.md), whose
+subprocess-count budgets are the regression metric for this slice.
 
 ### Earlier verification
 

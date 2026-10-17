@@ -127,10 +127,10 @@ it can be the primary or an explicitly selected workspace.
 | `--dry-run`, `--resume` | — | Supported | Supported |
 | `--format=json` | — | — | Machine-readable report |
 | `--replace-content` | — | Discard unrecorded target contents | — |
-| Bookmarks | Optional creation bookmark | Existing bookmarks stay | Never creates or moves bookmarks |
+| Bookmarks | Optional creation bookmark | Existing bookmarks stay | No preservation bookmarks; fetch may update refs |
 
 **Renew keeps work checked out; `--at` resets a worker deliberately.** `prepare`
-never touches workspaces. Creation flags never reset or refill an existing
+never selects or refills a worker. Creation flags never reset or refill an existing
 workspace selected by `s`. Explicit names/groups suppress the implicit current
 reseed target; empty selection never means all workspaces. Maintenance names are
 literal, not navigation shortcuts. Feature rebasing remains ordinary `jj` work:
@@ -359,7 +359,8 @@ permits deleting unrecorded target contents, including `.env`, except `.jj`.
 
 Verifying an intact workspace is a bounded JJ tracked-tree check: it may snapshot
 (and record a rejected edit) before reporting a mismatch, and it never tracks
-additional files or updates a stale workspace. Half-filled recovery targets still
+additional files; automatic stale-tree updates are disabled. Half-filled recovery
+targets still
 reconstruct and re-verify before any normal snapshot-capable command.
 
 After interruption, **resume before snapshotting a half-filled target**:

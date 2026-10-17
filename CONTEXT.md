@@ -221,8 +221,9 @@ by itself a claim that a command exposing that concept already exists.
   source base (including untracked refs), otherwise require `--source-at`. No
   default-main, new following state or operation-log mining. Unpublished source
   work blocks. It is source-only from any registered workspace: no target
-  selection, no refill, no `--at`, no bookmarks, and it never snapshots or mutates
-  the invoking workspace. Completion reports the exact frozen commit and records a
+  selection, no refill, no `--at`, and no worker-preservation bookmarks; it
+  mutates only its selected donor — possibly the caller's own checkout — leaving
+  other workspaces untouched. Completion reports the exact frozen commit and records a
   receipt with an explicitly empty target plan (v4 journals). `prepare --resume`
   continues only source-only preparation; legacy v1/v2/v3 batches — including
   removed-up target mutation — recover solely through `reseed --resume` with

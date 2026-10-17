@@ -298,8 +298,10 @@ that bookmark/remote through `JjClient::fetch_bookmark`, validates/pins the sour
 goal, selects its empty child, and runs trusted configured argv in the donor. It
 then records an explicitly empty target plan (journal v4), finalizes the
 completion receipt, and reports the exact frozen source commit. It never enters
-target planning, never snapshots the invoking workspace, and never allocates
-history bookmarks. Preparation settings alone never activate it. The source-keyed
+target planning and creates no worker-preservation bookmarks; it mutates only its
+selected donor — which may be the caller's own checkout — leaving other
+workspaces untouched. Preparation settings alone never activate it. The
+source-keyed
 journal stays active until its receipt and blocks new borrowing or preparation
 that would invalidate unfinished work, including older unselected target records
 depending on the donor.
@@ -356,8 +358,9 @@ This deliberately replaces the former per-file byte-extraction audit. It is not
 an unconditional raw-byte promise, and because the snapshot runs first, a
 mismatch can be reported after a snapshot was taken, possibly recording a
 rejected edit; the earlier "no snapshot performed" rejection promise is retired
-on this path. Auto-tracking stays off, so a snapshot never adds files, and stale
-workspaces are never auto-updated by a proof.
+on this path. Auto-tracking stays off, so a snapshot never adds files, and
+automatic stale-tree updates are disabled; JJ may still refresh metadata-only
+stale state when the tree identity is unchanged.
 
 Recovery keeps the strict path. A target that crossed the `Prepared` boundary —
 or any sparse-incomplete tree — cannot be trusted to an empty diff, so

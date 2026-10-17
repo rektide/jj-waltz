@@ -50,7 +50,7 @@ supplying files. Verify identity rather than relying on a directory named `defau
 | | `add` / `s` (`switch`) | `reseed` | `prepare` |
 | --- | --- | --- | --- |
 | Outcome | Create; `s` enters existing or creates missing | Renew sharing, keep work | Select/fetch one upstream, prepare the donor, report the exact commit |
-| Target workspaces | Created or entered | Refilled in place; names/groups select | None — never touches workspaces |
+| Target workspaces | Created or entered | Refilled in place; names/groups select | None — only the donor; never selects or refills a worker |
 | Target history | Empty child of source `@`, or `--at` | Keep revision, or reset via `--at` | — |
 | Bare in variant / primary | Name/path required | Current / explicit targets required | Source-only / source-only |
 | Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
@@ -59,7 +59,7 @@ supplying files. Verify identity rather than relying on a directory named `defau
 | Preview / resume | — | `--dry-run` / `--resume` | `--dry-run` / `--resume` |
 
 If “update” leaves keeping versus advancing work unclear, ask which is intended.
-`prepare` never touches a workspace. Consume its exact reported commit with
+`prepare` never selects or refills a worker. Consume its exact reported commit with
 `reseed --at <commit>` — no second prepare is needed. Feature rebasing stays an
 ordinary `jj` operation: `--at` starts an empty child of the chosen base and does
 not rebase the workspace's previous feature commits. [Full
@@ -132,27 +132,28 @@ Inspect with `jw path TOKEN`; a switch carries the relative subdirectory if pres
 at the destination. A printed path or successful `--execute` does not prove the
 parent shell changed directory.
 
-## Renew or advance
+## Renew, or prepare the source
 
 Read the [operator guide](../../docs/reseed.md) before an in-place refill. Pause
 source/target writers, builds, monitors, and external JJ processes. Preview the plan:
 
 ```sh
 jw reseed --dry-run                # keep current variant's revision
-jw up --dry-run                    # advance current variant; source-only at primary
-jw up worker-a worker-b --dry-run  # only these targets
+jw reseed worker --at <commit> --dry-run   # deliberate reset onto a prepared commit
+jw prepare --dry-run               # prospective fetch and preparation commands
 ```
 
-Both require a registered caller, even with `--from`. Names/groups suppress implicit
-current selection; empty selection never means all. Names are literal, not navigation
-tokens. `--from` changes the donor, not the caller's primary/variant role.
+Reseed requires a registered caller, even with `--from`. Names/groups suppress
+implicit current selection; empty selection never means all. Names are literal, not
+navigation tokens. `--from` changes the donor, not the caller's primary/variant role.
 
 **Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
 assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
-differences. Explicit `--at` selects an empty child of that base instead, without
-up's automatic preservation bookmark. Reseed never fetches or prepares dependencies.
+differences. Explicit `--at` selects an empty child of that base instead. Reseed
+never fetches or prepares dependencies.
 
-**Up:**
+**Prepare** is source-only from any registered workspace — plain `jw prepare` at
+the primary prepares the primary donor:
 
 1. Pin upstream before fetch: CLI/local goal, otherwise one applicable native
    tracked pair, otherwise one exact remote at the clean donor base, including
@@ -160,28 +161,30 @@ up's automatic preservation bookmark. Reseed never fetches or prepares dependenc
    mine operation logs, or invent following state. `[freshen].remote` constrains
    selection. A missing explicit `branch@configured-remote` can have an unknown
    preview goal.
-2. Unpublished donor work blocks advancement, even beneath empty scratch work;
+2. Unpublished donor work blocks preparation, even beneath empty scratch work;
    the selected remote must fast-forward. Preserve that refusal rather than
    abandoning source work to force progress.
 3. Local `[freshen]` provides `command` or ordered `commands`, never both even when
    empty. Run argv sequentially in donor cwd, without an implicit shell. Steps must
    leave tracked files unchanged. No commands means existing payload, not a fresh
    build; do not guess an installer or use global build commands.
-4. Targets start new empty changes on the exact fetched goal, not rebases. Work
-   outside that goal's ancestry gets a collision-safe `freshen-<UTC timestamp>`
-   bookmark unless `--no-freshen-bookmark` was selected. Existing feature bookmarks
-   never move. The opt-out affects only that bookmark, not JJ history or source checks.
+4. Completion reports the **exact frozen commit** and writes a source-only receipt.
+   Prepare never selects or refills a worker and creates no worker-preservation
+   bookmarks (native fetch can update refs). Consume the commit with
+   `jw reseed worker --at <commit>`; feature rebasing stays ordinary `jj` work —
+   `--at` does not rebase the worker's previous feature commits, and plain
+   `jw reseed feature` keeps them checked out.
 
 Refills require full, conflict-free eligible JJ-only targets and real CoW.
 `--replace-content` destroys unrecorded target contents, including `.env`, except
 `.jj`; use it only for that requested outcome. Dry-run may snapshot real work, but
-does not fetch, create new changes/bookmarks, run preparation, or refill.
+does not fetch, create new changes, run preparation, or refill.
 
 ## Private payloads and shared links
 
 Ignored-copy lists replace in CLI → primary-local → root global `copy_ignored`
 order; absence inherits, local `[]` does not. `--no-copy-ignored` disables even an
-explicit CLI list. This policy applies to creation, reseed, and up.
+explicit CLI list. This policy applies to creation, reseed, and prepare.
 
 Quote patterns (`*`, `?`, `**`, trailing `/`). Missing matches succeed; nonignored
 source matches are skipped/reported. Selected roots must pass source/target ignore,
@@ -200,20 +203,22 @@ Resume the stored workflow without new donor, revision, copying, group, replacem
 or bookmark overrides:
 
 ```sh
-jw up worker-a worker-b --resume  # all original names/order until plans freeze
-jw up worker-a --resume           # frozen individual/subset recovery
-jw up --resume                   # current target; source-only at primary
-jw reseed feature --resume       # reseed or legacy preparation
+jw prepare --resume               # source-only preparation; frozen goal not refetched
+jw reseed feature --resume        # reseed recovery
+jw reseed worker-a worker-b --resume  # legacy batches, recorded order and intent
 ```
 
 Frozen recovery uses exact recorded intent and receipts, without refetching,
-rebuilding, or reallocating bookmarks. Restore recorded source/payload state when
+rebuilding, or reallocating recorded bookmarks. Restore recorded source/payload
+state when
 validation refuses; do not borrow partially installed dependencies or use
 repository-wide undo. Completed command steps are skipped; interrupted in-flight
 commands may retry after side effects, not exactly-once.
 
-`reseed --freshen` is removed. Legacy v1/v2 batches still use `reseed --resume` with
-their original history intent. Rename legacy `[prepare]` only after recovery;
+`reseed --freshen` is removed. Legacy preparation journals — including removed
+combined-up batches — still use `reseed --resume` with
+their original history intent; `prepare --resume` never reinterprets them.
+Rename legacy `[prepare]` only after recovery;
 frozen local policy bytes must match. [Recovery contract](../../docs/reseed.md#safety-and-recovery).
 
 ## Inspect, adopt, repair, or clean up
@@ -232,8 +237,9 @@ Use the owning app for app-created checkout cleanup. Consult the
   warnings before claiming CoW or complete payload setup.
 - **Reseed:** confirm retained revision/tree or the requested explicit reset, plus
   payload/refill completion.
-- **Up:** confirm exact goal, target parents, preservation bookmarks or opt-out,
-  and command/payload completion. Source-only success has no target.
+- **Prepare:** confirm the exact reported commit, command/payload completion, and
+  the receipt; a source-only success has no target. Consume it via reseed `--at`
+  and verify the worker separately.
 - **Recovery:** distinguish completed, failed, pending, and already-receipted work
   before resuming normal snapshots. Partial progress is not batch success.
 - **Links/lifecycle:** use the branch reference's completion checks; directory,
