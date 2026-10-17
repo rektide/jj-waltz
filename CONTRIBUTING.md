@@ -1,3 +1,19 @@
+---
+type: Guide
+title: Contributing to jj-waltz
+description: Development checks, repeatable performance assessment, compatibility, and contribution boundaries.
+resource: /CONTRIBUTING.md
+status: maintained
+updated: { by: "model:openai/gpt-6-astra", at: 2026-10-17 }
+sources:
+  - resource: opencode://ses_eb8947cfaffeQ1jxia03URCymY
+    title: Added the checked-in performance harness and its contribution entry point
+  - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
+    title: Integrated preparation and performance verification; identified Nextest binary-path and outside-repository temporary-directory requirements
+  - resource: /tools/performance/README.md
+    title: Maintained measurement and process-count regression workflow
+---
+
 # Contributing
 
 Thanks for contributing to `jj-waltz`.
@@ -18,6 +34,20 @@ The Herdr plugin is a separate Cargo workspace, so root Cargo commands do not
 check it. CI runs root integration tests against pinned JJ 0.39.0, 0.44.0,
 0.45.1, and 0.46.0 on Linux, macOS, and Windows. macOS tests require real
 copy-on-write success. Update those explicit pins instead of following `latest`.
+
+For Nextest, expose the built CLI to the older runtime `assert_cmd` helpers:
+
+```sh
+cargo build --locked --bin jw
+CARGO_BIN_EXE_jw="$PWD/target/debug/jw" cargo nextest run --locked
+```
+
+Adjust the binary path for a custom target directory or profile. The full suite's
+temporary directory must be **outside any repository**: some tests deliberately
+exercise discovery with no enclosing checkout. To require real CoW throughout
+the suite, use an outside-repository, reflink-capable `TMPDIR` and set
+`JW_TEST_REQUIRE_COW=1`. The reseed, prepare, and ignored-copy integration fixtures
+already allocate their own project-local CoW scratch directories.
 
 ## Performance assessment
 
