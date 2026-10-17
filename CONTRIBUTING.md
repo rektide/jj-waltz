@@ -19,6 +19,21 @@ check it. CI runs root integration tests against pinned JJ 0.39.0, 0.44.0,
 0.45.1, and 0.46.0 on Linux, macOS, and Windows. macOS tests require real
 copy-on-write success. Update those explicit pins instead of following `latest`.
 
+## Performance assessment
+
+Use the maintained [performance harness](tools/performance/README.md) for
+prepare/reseed changes. Build a release binary, provide a real JJ executable,
+and compare retained, verified fixtures on the same CoW-capable filesystem.
+The harness records JJ/Git command counts and instrumented phase timings;
+small/large fixture comparisons and process-count budgets detect per-file
+subprocess regressions without flaky wall-time gates.
+
+```sh
+python3 -m unittest discover -s tools/performance -p 'test_*.py' -v
+python3 tools/performance/measure.py run \
+  --jw target/release/jw --jj /absolute/path/to/real/jj --files 100
+```
+
 ## Scope
 
 Please prefer small, focused changes with tests where practical.
