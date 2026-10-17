@@ -5,9 +5,11 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3-flash#high
+  by: model:openai/gpt-6.1-sol#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
+    title: Added built-in all membership over registrations while retaining the shared readiness and recovery paths
   - resource: "opencode://ses_eb8a7487affeE2smndZ914OQMS"
     title: Reviewed command isolation and clarified legacy-only source recovery routing
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -256,6 +258,13 @@ target safety. Its aggregate warning is emitted through `run_with_diagnostics`
 before planning (and survives later errors); successful reports retain structured
 skips and selected roots/origins. Empty remaining selections fail. Resume never
 re-expands groups. See [operator syntax](reseed.md#wildcard-groups).
+
+Reserved built-in `all` expands the sorted registration inventory, excluding only
+the verified primary and effective donor by canonical root identity. Donor path
+resolution is shared with source preflight, not repeated per target. Unusable
+registrations become selection issues; all other members enter the existing
+readiness and bookmark checks. A local `all` definition is rejected. See
+[all registered workers](reseed.md#all-registered-workers).
 
 Reseeding records pending intent and successful receipts separately from creation
 metadata, beside the repository-scoped store. A reseed advisory lock serializes

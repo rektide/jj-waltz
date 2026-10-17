@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:openai/gpt-6.1-sol#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
+    title: Implemented and tested the reserved all group, donor-aware stable membership, unchanged readiness/bookmark guards, and literal recovery
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
     title: Implemented aggregate readiness, dirty keep/reset reporting, default-on bookmark coverage and opt-out, frozen proof rechecks, legacy recovery compatibility, and the fast journal/identity path
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -367,7 +369,7 @@ for the sequence and migration implementation.
 
 ## Optional shortcuts
 
-To avoid repeating source arguments, put `.jwreseed.local.toml` in the default
+To avoid repeating source arguments, put `.jwreseed.local.toml` in the verified primary
 workspace and keep it ignored:
 
 ```toml
@@ -393,6 +395,37 @@ removed. CLI source arguments override configuration. Repeated `--copy-ignored`
 flags replace the configured selection;
 `--no-copy-ignored` disables copying it. Reset behavior cannot be configured:
 `--at` must be supplied for that run.
+
+### All registered workers
+
+The built-in `all` group needs no configuration and works from any registered
+workspace, including a worker subdirectory:
+
+```sh
+jw reseed --group all --dry-run
+jw reseed --group all
+# Use an alternate prepared donor, excluding it from the targets:
+jw reseed --group all --from /path/to/prepared-source --dry-run
+```
+
+Membership is every registered workspace except the **verified primary** and
+the effective donor. Donor precedence remains CLI `--from` (relative to caller
+cwd), local `source` (relative to primary), then primary. Existing path aliases
+are compared by canonical identity. A renamed primary is still excluded; a
+worker merely named `default` is not. Names are expanded in stable sorted order,
+deduplicated with other names/groups, and retain their selection origins.
+
+`all` is not an eligibility filter: missing/unusable roots, external ownership,
+colocation, conflicts, pending recovery, and unbookmarked work remain **BLOCKED**
+in readiness, even with `--on-unmatched warn`. No target is refilled if any
+member fails preflight. It neither adopts nor prunes workspaces. Pause writers
+before previewing too: dry-run may record JJ working-copy snapshots.
+
+The group name `all` is reserved: defining `[groups].all` locally is an error.
+An empty worker membership is an error, not implicit target selection.
+Positional `jw reseed all` still names only the literal workspace `all`.
+Recovery uses recorded literal names (`jw reseed NAME... --resume`), never
+`--group all --resume`; later registrations cannot join a frozen recovery plan.
 
 ### Wildcard groups
 

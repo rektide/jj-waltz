@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:openai/gpt-6.1-sol#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
+    title: Added the built-in all group with donor-aware membership, aggregate blockers, and literal recovery guidance
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
     title: Implemented aggregate readiness and default-on named bookmark coverage for fresh reseeds, explicit opt-out, and frozen/legacy recovery semantics
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -285,6 +287,12 @@ reseed without `--at` keeps them checked out. See the
 [full prepare contract](docs/reseed.md#prepare-the-source).
 
 ### Local preparation and groups
+
+`jw reseed --group all --dry-run` selects all registered workers except the
+verified primary and chosen donor, with no configuration required. Unsafe or
+unbookmarked members remain BLOCKED; one blocker prevents every refill. `all`
+is reserved against local group definitions. See [all registered workers](docs/reseed.md#all-registered-workers)
+for donor selection, snapshot precautions, and literal-name recovery.
 
 Keep `.jwreseed.local.toml` ignored in the verified primary checkout:
 

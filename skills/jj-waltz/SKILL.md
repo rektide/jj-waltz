@@ -6,9 +6,11 @@ title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:openai/gpt-6.1-sol#high
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
+    title: Documented reserved all selection, donor exclusions, readiness blockers, and literal recovery
   - resource: "opencode://ses_eb8801331ffeirQrF4GMFCxJHf"
     title: Added aggregate readiness and default-on bookmarked-work coverage, explicit opt-out, and immutable/legacy recovery guidance
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -142,12 +144,19 @@ source/target writers, builds, monitors, and external JJ processes. Preview the 
 ```sh
 jw reseed --dry-run                # keep current variant's revision
 jw reseed worker --at <commit> --dry-run   # deliberate reset onto a prepared commit
+jw reseed --group all --dry-run     # all registrations except verified primary/donor
 jw prepare --dry-run               # prospective fetch and preparation commands
 ```
 
 Reseed requires a registered caller, even with `--from`. Names/groups suppress
 implicit current selection; empty selection never means all. Names are literal, not
 navigation tokens. `--from` changes the donor, not the caller's primary/variant role.
+
+Built-in `--group all` needs no configuration. It excludes the verified primary
+and effective donor by root identity, not the name `default`; unsafe or
+unbookmarked registrations remain BLOCKED, and any blocker prevents all refills.
+Local group `all` definitions are rejected. Resume only recorded literal names,
+never a dynamic group. See [all registered workers](../../docs/reseed.md#all-registered-workers).
 
 **Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
 assertion; otherwise borrow freshly snapshotted donor `@`. Keep mode retains feature
