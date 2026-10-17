@@ -308,18 +308,26 @@ pub(super) fn validate_resume_request(request: &RecordedRequest) -> Result<()> {
     Ok(())
 }
 
+fn resume_command(request: &RecordedRequest) -> Result<String> {
+    let mut argv = vec![
+        "jw",
+        if request.prepare { "prepare" } else { "reseed" },
+        "--resume",
+    ];
+    if !request.names.is_empty() {
+        argv.push("--");
+        argv.extend(request.names.iter().map(String::as_str));
+    }
+    shlex::try_join(argv).context("cannot quote recorded resume command")
+}
+
 pub(super) fn ensure_available(store: &Store, source: &Path, own: Option<&Batch>) -> Result<()> {
     for batch in batches(store)? {
         if batch.source == source && own.is_none_or(|own| own.id != batch.id) {
             bail!(
-                "source has an active preparation batch in phase {:?}; use `jw {} {:?} --resume`; source progress was not rolled back",
+                "source has an active preparation batch in phase {:?}; use `{}`; source progress was not rolled back",
                 batch.phase,
-                if batch.request.prepare {
-                    "prepare"
-                } else {
-                    "reseed"
-                },
-                batch.request.names
+                resume_command(&batch.request)?
             );
         }
     }
@@ -690,6 +698,7 @@ pub(super) fn execute(
     batch: &mut Batch,
     diagnostic: &mut dyn FnMut(&str),
 ) -> Result<()> {
+    let resume = resume_command(&batch.request)?;
     let result = (|| {
         validate(batch)?;
         verify_targets(batch)?;
@@ -893,7 +902,7 @@ pub(super) fn execute(
         ));
         Ok(())
     })();
-    result.with_context(|| format!("source preparation stopped in phase {:?}, frozen goal {:?}; source progress was not rolled back; targets not refilled; resume recorded batch {:?}", batch.phase, batch.goal, batch.request.names))
+    result.with_context(|| format!("source preparation stopped in phase {:?}, frozen goal {:?}; source progress was not rolled back; targets not refilled; use `{resume}`", batch.phase, batch.goal))
 }
 
 fn verify_command_result(
@@ -1002,6 +1011,34 @@ pub(super) fn reserve_bookmarks(store: &Store, names: &mut BookmarkNames) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_guidance_quotes_literal_names_and_has_no_source_only_placeholder() {
+        let mut request = RecordedRequest {
+            prepare: true,
+            ..Default::default()
+        };
+        assert_eq!(resume_command(&request).unwrap(), "jw prepare --resume");
+        request.prepare = false;
+        request.names = vec![
+            "worker with spaces".into(),
+            "quote'worker".into(),
+            "--worker".into(),
+        ];
+        let command = resume_command(&request).unwrap();
+        assert_eq!(
+            shlex::split(&command).unwrap(),
+            [
+                "jw",
+                "reseed",
+                "--resume",
+                "--",
+                "worker with spaces",
+                "quote'worker",
+                "--worker"
+            ]
+        );
+    }
 
     #[test]
     fn local_command_settings_preserve_presence_and_order() {

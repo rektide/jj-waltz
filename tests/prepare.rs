@@ -524,7 +524,8 @@ fn preparation_failure_resumes_from_any_workspace_without_refetch_or_worker_chec
     let gate = f.temp.path().join("allow success");
     f.script(&format!("[ -f {gate:?} ] || exit 17\n"));
     let goal = f.advance();
-    fails(f.prepare(&[]), "command failed");
+    let failed = fails(f.prepare(&[]), "command failed");
+    assert!(failed.contains("use `jw prepare --resume`"), "{failed}");
     let path = f.active();
     let frozen = fs::read(&path).unwrap();
     fs::write(f.target.join("version"), "concurrent target edit\n").unwrap();
@@ -537,10 +538,13 @@ fn preparation_failure_resumes_from_any_workspace_without_refetch_or_worker_chec
         .unwrap());
     assert!(preview.contains("commands completed 0/1"));
     assert_eq!(fs::read(&path).unwrap(), frozen);
-    fails(
+    let blocked = fails(
         f.jw().args(["reseed", "worker"]).output().unwrap(),
         "active preparation batch",
     );
+    assert!(blocked.contains("use `jw prepare --resume`"), "{blocked}");
+    let retry = fails(f.prepare(&[]), "active preparation batch");
+    assert!(retry.contains("use `jw prepare --resume`"), "{retry}");
     fs::write(&gate, "ok").unwrap();
     fs::write(f.remote.join("version"), "later\n").unwrap();
     f.git_commit();
