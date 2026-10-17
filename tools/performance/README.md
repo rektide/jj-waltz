@@ -1,11 +1,16 @@
 ---
 type: ToolGuide
 title: Repeatable prepare and reseed performance assessment
-description: Retained synthetic fixtures, per-tool subprocess counts, instrumented timings, correctness checks, and deterministic regression budgets.
+description: Retained synthetic fixtures, native or instrumented timings, subprocess counts, correctness checks, and deterministic regression budgets.
 resource: /tools/performance/README.md
 status: maintained
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
+updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-17 }
 sources:
+  - resource: opencode://ses_eb87f7b4cffe23FlLmOW2DpE7o
+    title: Added uninstrumented end-to-end timing with explicit methodology compatibility and reviewed the strict-copy baseline
+  - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
+    title: Added a strict GNU cp reflink baseline to separate copying cost from workspace coordination
   - resource: opencode://ses_eb8947cfaffeQ1jxia03URCymY
     title: Formalized the performance harness, isolated interpreter execution, symlink and payload dimensions, JJ/git counting, and comparison checks
   - resource: /design/up-performance/handoff0.glm53m.md
@@ -20,7 +25,8 @@ sources:
 
 `measure.py` measures source-only preparation, exact-commit reseed preview, and
 actual reseed in an isolated synthetic repository. **Subprocess counts are the
-primary regression metric. Timings include instrumentation overhead.** Python 3.9+
+primary regression metric. Default timings include instrumentation overhead;
+use `--timing-mode native` for actual elapsed time without logging wrappers.** Python 3.9+
 stdlib, POSIX, Git, JJ, and a built `jw` are required.
 
 ## Run
@@ -33,6 +39,20 @@ python3 tools/performance/measure.py run \
   --jw target/release/jw --jj /absolute/path/to/real/jj \
   --files 100 --workers 2 --payload-files 100 --payload-bytes 4096
 ```
+
+For end-to-end speed comparisons, run both binaries with `--timing-mode native`:
+
+```sh
+python3 tools/performance/measure.py run \
+  --jw target/release/jw --jj /usr/local/bin/jj --timing-mode native \
+  --files 8555 --symlinks 43 --workers 2 --payload-files 100 --payload-bytes 4096
+```
+
+Native mode uses symlinks to the resolved native JJ/Git executables, not wrappers.
+It records phase elapsed times and performs the same correctness checks, but
+does not claim subprocess counts. Count budgets/growth limits require instrumented
+mode. Comparison always rejects mixed modes; omitted mode in older schema-1
+results means instrumented. Run benchmarks sequentially, not against each other.
 
 Use actual native executables: script/tool-manager shims are rejected, and
 symlinks resolve to their native binary. For mise installations, obtain the real
@@ -122,11 +142,35 @@ and preparation command. Ordinary before/after comparison permits a changed
 `jw` binary and `up` → `prepare` measurement adapter. A mismatched comparison
 returns 2 rather than presenting a misleading delta.
 
+To reuse retained schema-1 count evidence across this harness update, explicitly
+pass `compare --allow-harness-change BEFORE/result.json AFTER/result.json` after
+reviewing the harness changes. This relaxes only the harness hash, prints a
+warning, and retains mode, environment, fixture, and verification checks. It is
+not permission to mix native and instrumented timings. Prefer rerunning both
+sides with the current harness when making elapsed-time claims.
+
 ## Evidence and limits
+
+### Raw copying baseline
+
+On Linux with GNU cp, measure the copying lower bound independently of JJ:
+
+```sh
+python3 tools/performance/copy_baseline.py RETAINED/result.json
+```
+
+This uses `cp -a --reflink=always` to copy the donor's tracked baseline and
+prepared payload into a fresh retained directory. It records uninstrumented
+elapsed time, verifies the copied file/link count and a private tracked inode,
+and retains JSON evidence beside the fixture. It excludes `.jj`, worker clearing,
+feature application, and verification. It is a copying baseline, not a complete
+workspace operation or a replacement for correctness checks.
+
+### Measurement interpretation
 
 `result.json` records schema version, binary path/hash/version, harness hash,
 environment, fixture shape/path, exact source/target commit IDs, phase argv,
-instrumented seconds, per-tool call counts and command histograms, verification,
+timing mode and seconds, per-tool call counts and command histograms (instrumented mode only), verification,
 and raw log references. Each `*.processes.jsonl` record preserves the tool, full
 argument vector, cwd, PID, and timestamp. `commands.jsonl` references stdout and
 stderr for setup, measured commands, and verification; `failure.txt` retains
@@ -138,7 +182,7 @@ invocations too. Absolute-path child execution and Git's private exec-path
 helpers can bypass wrappers; this is a count of observed tool invocations, not
 a system-wide process profiler. Raw argv logs let a reviewer inspect grouping.
 
-Timings are **instrumented warm-cache observations**, including a shell and
+Default timings are **instrumented warm-cache observations**, including a shell and
 Python startup per observed invocation. That overhead can dominate small JJ/Git
 calls and magnify a per-file subprocess bottleneck. Do not report these values
 as raw production latency or infer a universal latency promise. Setup/cloning,
@@ -147,6 +191,10 @@ installer is included in the preparation phase. Setup warms caches, preview
 warms reseed, and this harness does not drop caches. Repeat fresh experiments
 under comparable host load when interpreting elapsed deltas. Keep the same
 interpreter and instrumentation on both sides.
+
+Native mode removes that per-invocation logging overhead, but remains a warm-cache
+synthetic observation with the same exclusions and cache order. It is the mode
+to use for end-to-end elapsed-time improvements, not a cold-cache latency promise.
 
 External commands have bounded timeouts. On timeout the harness kills the POSIX
 process group, including ordinary descendants; independently detached processes

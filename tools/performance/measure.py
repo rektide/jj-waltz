@@ -199,6 +199,7 @@ def run_experiment(args):
               "fixture": {"files": args.files, "symlinks": args.symlinks, "workers": args.workers, "payload_files": args.payload_files,
                           "payload_bytes": args.payload_bytes, "feature_files": args.feature_files},
               "prepare_command": args.prepare_command, "timeout_seconds": args.timeout,
+              "timing_mode": args.timing_mode,
               "phases": [], "verification": {}, "command_log": "commands.jsonl"}
     try:
         if directory.stat().st_dev != PROJECT.stat().st_dev:
@@ -228,7 +229,8 @@ def run_experiment(args):
                                  "filesystem": filesystem(directory)}
         result["harness_sha256"] = hashlib.sha256(
             Path(__file__).read_bytes() + (HERE / "fixture.py").read_bytes()).hexdigest()
-        result["instrumentation"] = "shell -> Python argv logger -> exec native JJ/git; instrumentation included in timings"
+        result["instrumentation"] = ("shell -> Python argv logger -> exec native JJ/git; instrumentation included in timings"
+                                     if args.timing_mode == "instrumented" else "native JJ/git; no process-count wrappers")
         remote, root = directory / "remote", directory / "repo"
         runner.run([git, "init", "--quiet", "--initial-branch=dev", str(remote)], directory)
         (remote / ".gitignore").write_text(".jwreseed.local.toml\ncache/\n")
@@ -257,22 +259,33 @@ def run_experiment(args):
         (root / ".jwreseed.local.toml").write_text(
             'source_at = "dev@origin"\ncopy_ignored = ["cache"]\n[freshen]\ncommand = '
             + json.dumps([python, str(fixture_script), str(args.payload_files), str(args.payload_bytes)]) + "\n")
-        shim = install_shim(directory, python, jj, git)
+        if args.timing_mode == "instrumented":
+            shim = install_shim(directory, python, jj, git)
+        else:
+            shim = directory / "bin"
+            shim.mkdir()
+            for name, binary in (("jj", jj), ("git", git)):
+                (shim / name).symlink_to(binary)
         measured_env = runner.env | {"PATH": str(shim) + os.pathsep + runner.env.get("PATH", os.defpath)}
 
         def measure(label, argv):
             trace = directory / f"{label}.processes.jsonl"
-            trace.touch()
-            phase = {"name": label, "argv": [jw, *argv], "process_log": trace.name}
+            if args.timing_mode == "instrumented":
+                trace.touch()
+            phase = {"name": label, "argv": [jw, *argv]}
+            if args.timing_mode == "instrumented":
+                phase["process_log"] = trace.name
             result["phases"].append(phase)
             start = time.perf_counter()
             try:
-                text, record = runner.run([jw, *argv], root, measured_env | {"JW_PERF_TRACE": str(trace)})
+                env = measured_env | {"JW_PERF_TRACE": str(trace)} if args.timing_mode == "instrumented" else measured_env
+                text, record = runner.run([jw, *argv], root, env)
                 phase.update(stdout=record["stdout"], stderr=record["stderr"])
                 return text
             finally:
                 phase["seconds"] = time.perf_counter() - start
-                phase.update(call_stats(read_calls(trace)))
+                if args.timing_mode == "instrumented":
+                    phase.update(call_stats(read_calls(trace)))
 
         def require(name, condition):
             result["verification"][name] = bool(condition)
@@ -369,11 +382,20 @@ def budget_failures(result, args):
     failures = []
     for metric, limits in (("jj_calls", args.max_jj_calls), ("file_show_calls", args.max_file_show_calls),
                            ("git_calls", args.max_git_calls)):
+        if not limits:
+            continue
+        if timing_mode(result) != "instrumented":
+            raise ValueError("process-count budgets require instrumented timing mode")
         values = counts(result, metric)
         for phase, maximum in limits:
             if values[phase] > maximum:
                 failures.append(f"{phase}: {metric} {values[phase]} exceeds {maximum}")
     return failures
+
+
+def timing_mode(result):
+    # Retained schema-1 experiments predate this field and always used wrappers.
+    return result.get("timing_mode", "instrumented")
 
 
 def validate_result(result):
@@ -382,6 +404,8 @@ def validate_result(result):
         raise ValueError("unsupported result schema_version")
     if result.get("status") != "passed":
         raise ValueError("comparison/check requires a passed, verified experiment")
+    if timing_mode(result) not in ("instrumented", "native"):
+        raise ValueError("invalid timing_mode")
     for key in ("environment", "binary", "fixture", "verification"):
         if not isinstance(result.get(key), dict) or not result[key]:
             raise ValueError(f"missing/invalid {key}")
@@ -434,6 +458,10 @@ def validate_result(result):
         seconds = phase.get("seconds")
         if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
             raise ValueError("invalid phase seconds")
+        if timing_mode(result) == "native":
+            if any(key in phase for key in ("jj_calls", "file_show_calls", "git_calls", "jj_by_command", "git_by_command", "process_log")):
+                raise ValueError("native timing must not claim process counts or logs")
+            continue
         for metric in ("jj_calls", "file_show_calls", "git_calls"):
             if type(phase.get(metric)) is not int or phase[metric] < 0:
                 raise ValueError(f"invalid {metric}")
@@ -456,7 +484,7 @@ def load_result(path):
     return validate_result(json.loads(Path(path).read_text()))
 
 
-def compatibility(before, after, scaling=False):
+def compatibility(before, after, scaling=False, allow_harness_change=False):
     differences = []
 
     def compare_field(old, new, path):
@@ -466,7 +494,9 @@ def compatibility(before, after, scaling=False):
         elif old != new:
             differences.append(f"{path} differs")
 
-    for key in ("harness_sha256", "environment"):
+    if timing_mode(before) != timing_mode(after):
+        differences.append("timing_mode differs")
+    for key in (("environment",) if allow_harness_change else ("harness_sha256", "environment")):
         compare_field(before[key], after[key], key)
     for key in before["fixture"].keys() | after["fixture"].keys():
         if scaling and key == "files":
@@ -483,16 +513,24 @@ def compatibility(before, after, scaling=False):
 
 def compare(args):
     before, after = load_result(args.before), load_result(args.after)
-    differences = compatibility(before, after, args.scaling)
+    differences = compatibility(before, after, args.scaling, args.allow_harness_change)
     if differences:
         raise ValueError("incompatible results: " + "; ".join(differences))
     print("Compatible fixture/environment" + (" (tracked-file scaling)" if args.scaling else ""))
     print(f"Preparation: {before['prepare_command']} -> {after['prepare_command']}")
-    print("phase             JJ calls (delta)    file show (delta)     git calls (delta)    seconds (delta)")
+    instrumented = timing_mode(before) == "instrumented"
+    growth_limits = (args.max_jj_growth, args.max_file_show_growth, args.max_git_growth)
+    if not instrumented and any(value is not None for value in growth_limits):
+        raise ValueError("process-count growth limits require instrumented timing mode")
+    print(f"Timing mode: {timing_mode(before)}")
+    if args.allow_harness_change and before["harness_sha256"] != after["harness_sha256"]:
+        print("WARNING: harness hash mismatch explicitly accepted; inspect methodology changes")
+    print("phase             JJ calls (delta)    file show (delta)     git calls (delta)    seconds (delta)"
+          if instrumented else "phase             seconds (delta)")
     failures = []
     for name in (*PHASES, "total"):
         values = []
-        for metric in ("jj_calls", "file_show_calls", "git_calls", "seconds"):
+        for metric in (("jj_calls", "file_show_calls", "git_calls", "seconds") if instrumented else ("seconds",)):
             old, new = counts(before, metric)[name], counts(after, metric)[name]
             delta = new - old
             values.append(f"{old:.3f}->{new:.3f} ({delta:+.3f})" if metric == "seconds" else f"{old}->{new} ({delta:+})")
@@ -500,8 +538,8 @@ def compare(args):
                        "git_calls": args.max_git_growth}.get(metric)
             if maximum is not None and delta > maximum:
                 failures.append(f"{name}: {metric} grew by {delta}, maximum {maximum}")
-        print(f"{name:18} {values[0]:19} {values[1]:21} {values[2]:19} {values[3]}")
-    if args.scaling:
+        print(f"{name:18} {values[0]:19} {values[1]:21} {values[2]:19} {values[3]}" if instrumented else f"{name:18} {values[0]}")
+    if args.scaling and instrumented:
         extra_files = after["fixture"]["files"] - before["fixture"]["files"]
         growth = counts(after, "jj_calls")["total"] - counts(before, "jj_calls")["total"]
         print(f"Additional tracked files: {extra_files}; additional JJ calls/file: {growth / extra_files:.6f}")
@@ -529,6 +567,8 @@ def main():
     run.add_argument("--payload-bytes", type=nonnegative, default=4096, help="bytes per ignored payload file")
     run.add_argument("--feature-files", type=nonnegative, default=0, help="tracked files modified in a shared target feature commit")
     run.add_argument("--prepare-command", choices=("prepare", "up"), default="prepare", help="up is explicit old-binary measurement compatibility only")
+    run.add_argument("--timing-mode", choices=("instrumented", "native"), default="instrumented",
+                     help="native measures elapsed time without process-count wrappers; instrumented records counts")
     run.add_argument("--output-dir", default=str(PROJECT / ".test-agent/performance"))
     run.add_argument("--timeout", type=positive, default=180, help="seconds per external command, including descendants on timeout")
     add_budgets(run)
@@ -536,6 +576,7 @@ def main():
     comparison.add_argument("before")
     comparison.add_argument("after")
     comparison.add_argument("--scaling", action="store_true", help="permit tracked-file growth, require identical jw binary")
+    comparison.add_argument("--allow-harness-change", action="store_true", help="explicitly accept different harness hashes after reviewing changes; timing modes must still match")
     comparison.add_argument("--max-jj-growth", type=nonnegative)
     comparison.add_argument("--max-file-show-growth", type=nonnegative)
     comparison.add_argument("--max-git-growth", type=nonnegative)
@@ -545,6 +586,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "run":
+            if args.timing_mode == "native" and any((args.max_jj_calls, args.max_file_show_calls, args.max_git_calls)):
+                raise ValueError("process-count budgets require instrumented timing mode")
             return run_experiment(args)
         if args.command == "compare":
             return compare(args)

@@ -61,6 +61,33 @@ class EvidenceTests(unittest.TestCase):
     def test_passed_result_validates(self):
         self.assertEqual(measure.validate_result(result()), result())
 
+    def test_native_mode_and_legacy_count_compatibility(self):
+        legacy = result()
+        explicit = copy.deepcopy(legacy)
+        explicit["timing_mode"] = "instrumented"
+        self.assertEqual(measure.compatibility(legacy, explicit), [])
+        native = copy.deepcopy(legacy)
+        native["timing_mode"] = "native"
+        for phase in native["phases"]:
+            for key in ("jj_calls", "file_show_calls", "git_calls", "jj_by_command", "git_by_command", "process_log"):
+                del phase[key]
+        self.assertEqual(measure.validate_result(native), native)
+        self.assertIn("timing_mode differs", measure.compatibility(legacy, native, allow_harness_change=True))
+        limits = argparse.Namespace(max_jj_calls=[("total", 9)], max_file_show_calls=[], max_git_calls=[])
+        with self.assertRaises(ValueError):
+            measure.budget_failures(native, limits)
+        native["phases"][0]["jj_calls"] = 0
+        with self.assertRaises(ValueError):
+            measure.validate_result(native)
+
+    def test_harness_override_is_explicit_and_keeps_other_guards(self):
+        before, after = result(), result()
+        after["harness_sha256"] = "c" * 64
+        self.assertTrue(measure.compatibility(before, after))
+        self.assertEqual(measure.compatibility(before, after, allow_harness_change=True), [])
+        after["fixture"]["symlinks"] += 1
+        self.assertTrue(measure.compatibility(before, after, allow_harness_change=True))
+
     def test_failed_partial_and_future_results_rejected(self):
         for key, value in (("status", "failed"), ("schema_version", 2), ("schema_version", True),
                            ("phases", []), ("verification", {}), ("fixture", {})):
