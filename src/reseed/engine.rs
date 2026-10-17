@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{BufWriter, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -211,8 +211,16 @@ fn reserve_history(plan: &Pending, names: &mut BookmarkNames) {
 fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path.parent().context("record has no parent")?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    serde_json::to_writer_pretty(&mut temporary, value)?;
-    temporary.write_all(b"\n")?;
+    {
+        // Tree stamps make journals large. Serde writes individual tokens, so
+        // writing directly to the file turns every field into several syscalls
+        // at every write-ahead boundary. Flush the buffer before the same durable
+        // file-sync/rename/directory-sync sequence; no boundary is weakened.
+        let mut writer = BufWriter::new(&mut temporary);
+        serde_json::to_writer_pretty(&mut writer, value)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+    }
     temporary.as_file().sync_all()?;
     temporary.persist(path).map_err(|e| e.error)?;
     File::open(parent)?.sync_all()?;
@@ -1553,6 +1561,10 @@ fn preflight_obstructions(
     if replace {
         return Ok(());
     }
+    let old_paths = old
+        .iter()
+        .map(|entry| entry.path.as_path())
+        .collect::<BTreeSet<_>>();
     for entry in desired {
         // An old tracked path is removed by sparse clearing. Everything else
         // belongs to the operator and cannot silently be overwritten by checkout.
@@ -1561,10 +1573,10 @@ fn preflight_obstructions(
             path.push(component);
             match fs::symlink_metadata(root.join(&path)) {
                 Ok(m) if path == entry.path || !m.is_dir() => {
-                    if m.is_dir() && tracked_only_directory(root, &path, old)? {
+                    if m.is_dir() && tracked_only_directory(root, &path, &old_paths)? {
                         continue;
                     }
-                    if !old.iter().any(|e| e.path == path) {
+                    if !old_paths.contains(path.as_path()) {
                         bail!(
                             "untracked obstruction at {}; use --replace-content only if losing it is intended",
                             path.display()
@@ -1586,7 +1598,7 @@ fn preflight_obstructions(
     Ok(())
 }
 
-fn tracked_only_directory(root: &Path, path: &Path, old: &[Entry]) -> Result<bool> {
+fn tracked_only_directory(root: &Path, path: &Path, old: &BTreeSet<&Path>) -> Result<bool> {
     let children = fs::read_dir(root.join(path))?.collect::<std::io::Result<Vec<_>>>()?;
     if children.is_empty() {
         return Ok(false);
@@ -1597,7 +1609,7 @@ fn tracked_only_directory(root: &Path, path: &Path, old: &[Entry]) -> Result<boo
             if !tracked_only_directory(root, &path, old)? {
                 return Ok(false);
             }
-        } else if !old.iter().any(|e| e.path == path) {
+        } else if !old.contains(path.as_path()) {
             return Ok(false);
         }
     }
@@ -2529,6 +2541,35 @@ fn fault_during_repair(index: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atomic_journal_flushes_large_records_and_preserves_previous_on_serialization_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("journal.json");
+        let value = (0..10_000)
+            .map(|index| format!("tracked/path-{index:05}"))
+            .collect::<Vec<_>>();
+        atomic_json(&path, &value).unwrap();
+        let previous = fs::read(&path).unwrap();
+        assert!(previous.ends_with(b"\n"));
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&previous).unwrap(),
+            value
+        );
+
+        struct FailedRecord;
+        impl Serialize for FailedRecord {
+            fn serialize<S: serde::Serializer>(
+                &self,
+                _: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("injected serialization failure"))
+            }
+        }
+        assert!(atomic_json(&path, &FailedRecord).is_err());
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     fn verification_fixture() -> (tempfile::TempDir, JjClient) {
         let temporary = tempfile::tempdir().unwrap();
