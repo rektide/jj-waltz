@@ -1,18 +1,15 @@
 //! Named-reference coverage of frozen target work, without creating/moving refs.
-use crate::freshen::history::work_tip;
-use crate::jj::{BookmarkRef, JjClient, commit_id_revset};
+use crate::jj::{BookmarkRef, CommitFacts, JjClient, commit_id_revset};
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Guard {
     AllowUnbookmarked,
     Required(Proof),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Proof {
     work_tip: String,
     name: String,
@@ -30,6 +27,37 @@ impl Proof {
 }
 
 impl Guard {
+    pub(super) fn recovery(&self, root: &std::path::Path, old_commit: &str) -> String {
+        let (work, bookmark) = match self {
+            Self::Required(proof) => (proof.work_tip.as_str(), proof.label()),
+            Self::AllowUnbookmarked => (old_commit, old_commit.to_owned()),
+        };
+        let expression = match self {
+            Self::Required(proof) => {
+                let name = serde_json::to_string(&proof.name).expect("JSON string");
+                match &proof.remote {
+                    Some(remote) => format!(
+                        "{name}@{}",
+                        serde_json::to_string(remote).expect("JSON string")
+                    ),
+                    None => name,
+                }
+            }
+            Self::AllowUnbookmarked => commit_id_revset(old_commit).expect("pinned commit ID"),
+        };
+        let revision = shlex::try_quote(&expression).expect("JSON revset has no NUL");
+        match self {
+            Self::Required(_) => format!(
+                "your work tip {work} is covered by bookmark {bookmark}; recover with `jj new {revision}` and `jj sparse reset` in {}, then re-run reseed; jw will not repair it",
+                root.display(),
+            ),
+            Self::AllowUnbookmarked => format!(
+                "bookmark requirement was explicitly bypassed; your prior work is in JJ history at {work}; recover with `jj new {revision}` and `jj sparse reset` in {}, then re-run reseed; jw will not repair it",
+                root.display(),
+            ),
+        }
+    }
+
     pub(super) fn describe(&self) -> String {
         match self {
             Self::AllowUnbookmarked => {
@@ -76,6 +104,14 @@ impl Guard {
 pub(super) struct Coverage {
     tips: BTreeMap<String, String>,
     proofs: BTreeMap<String, Proof>,
+}
+
+fn work_tip(target: &CommitFacts) -> &str {
+    if target.ordinary_empty_child() {
+        &target.parents[0]
+    } else {
+        &target.commit_id
+    }
 }
 
 impl Coverage {

@@ -217,11 +217,7 @@ fn existing_named_change_follows_normal_dirty_snapshots_and_guard_never_creates_
         ),
         "feature"
     );
-    assert!(
-        f.records(".receipt.json")
-            .iter()
-            .all(|record| record["bookmark_guard"]["Required"]["work_tip"] == preserved)
-    );
+    assert!(f.records(".receipt.json").is_empty());
 }
 
 #[test]
@@ -266,7 +262,7 @@ fn descendant_refs_cover_scratch_parents_but_described_empty_changes_and_merges_
 }
 
 #[test]
-fn explicit_opt_out_is_frozen_and_never_bypasses_other_safety_checks() {
+fn explicit_opt_out_never_bypasses_other_safety_checks() {
     let Some(f) = Fixture::new() else { return };
     fs::write(f.a.join("file"), b"deliberately unnamed work\n").unwrap();
     for reset in [false, true] {
@@ -283,11 +279,7 @@ fn explicit_opt_out_is_frozen_and_never_bypasses_other_safety_checks() {
         );
         ok(f.reseed(&["a"], &args));
     }
-    assert!(
-        f.records(".receipt.json")
-            .iter()
-            .all(|record| record["bookmark_guard"] == "AllowUnbookmarked")
-    );
+    assert!(f.records(".receipt.json").is_empty());
     f.jj(&f.a, &["sparse", "set", "--clear", "--add", "file"]);
     for args in [
         &["--allow-unbookmarked"][..],
@@ -295,11 +287,12 @@ fn explicit_opt_out_is_frozen_and_never_bypasses_other_safety_checks() {
     ] {
         let output = f.reseed(&["a"], args);
         assert!(!output.status.success());
-        assert!(text(&output).contains("full sparse patterns only"));
+        assert!(text(&output).contains("full sparse patterns"));
+        assert!(text(&output).contains("jj sparse reset"));
     }
     let output = f.reseed(&["a"], &["--resume", "--allow-unbookmarked"]);
     assert!(!output.status.success());
-    assert!(text(&output).contains("cannot be used with"));
+    assert!(text(&output).contains("unexpected argument '--resume'"));
 }
 
 #[test]

@@ -1,6 +1,5 @@
 //! Native source-line selection with disposable local Git remotes. These tests
 //! exercise graph/reference semantics only, not fetching any operator repository.
-use jj_waltz::freshen::history::{BookmarkNames, TargetHistory};
 use jj_waltz::freshen::source::{SelectionKind, SourceSelection};
 use jj_waltz::jj::JjClient;
 use std::fs;
@@ -131,7 +130,7 @@ impl Fixture {
 }
 
 #[test]
-fn tracked_line_is_frozen_before_fetch_and_survives_journal_serialization() {
+fn tracked_line_is_pinned_before_fetch() {
     let f = Fixture::new();
     let selected = f.select(None, None).unwrap();
     assert_eq!(selected.kind, SelectionKind::Tracked);
@@ -145,59 +144,9 @@ fn tracked_line_is_frozen_before_fetch_and_survives_journal_serialization() {
         f.base,
         "server changes do not change the local ref until fetch"
     );
-    let frozen: SourceSelection =
-        serde_json::from_slice(&serde_json::to_vec(&selected).unwrap()).unwrap();
     f.fetch();
-    assert_eq!(f.fetched(&frozen).unwrap(), goal);
+    assert_eq!(f.fetched(&selected).unwrap(), goal);
     assert_eq!(f.id("@"), selected.source.commit_id);
-}
-
-#[test]
-fn target_publication_is_compared_to_selected_fetched_goal_not_the_old_remote() {
-    let f = Fixture::new();
-    let root = f.temp.path().join("worker");
-    f.jj(&[
-        "workspace",
-        "add",
-        "--name",
-        "worker",
-        "-r",
-        &f.base,
-        root.to_str().unwrap(),
-    ]);
-    fs::write(root.join("local-work"), "work being published\n").unwrap();
-    f.command("jj", &root, &["describe", "-m", "feature"]);
-    let target = JjClient::new(&root);
-    let work = target.resolve_one("@").unwrap().commit_id;
-    f.command("jj", &root, &["new"]);
-    let selected = f.select(None, None).unwrap();
-    let before = target.operation_id().unwrap();
-    let scratch = target.resolve_one_at(&before, "@").unwrap().commit_id;
-    let mut names = BookmarkNames::at(&target, &before, jiff::Timestamp::now()).unwrap();
-    assert!(
-        TargetHistory::plan(&target, &before, &scratch, &f.base, false, &mut names)
-            .unwrap()
-            .bookmark
-            .is_some()
-    );
-    // Transfer disposable fixture objects directly, not a push to a live remote.
-    f.git(&[
-        "fetch",
-        f.source.join(".jj/repo/store/git").to_str().unwrap(),
-        &work,
-    ]);
-    f.git(&["update-ref", "refs/heads/dev", &work]);
-    f.client()
-        .fetch_bookmark(&selected.remote, &selected.name)
-        .unwrap();
-    let fetched = f.fetched(&selected).unwrap();
-    assert_eq!(fetched, work);
-    let operation = target.operation_id().unwrap();
-    let plan =
-        TargetHistory::plan(&target, &operation, &scratch, &fetched, false, &mut names).unwrap();
-    assert_eq!(plan.work_tip, work);
-    assert!(plan.published && plan.bookmark.is_none());
-    assert_eq!(target.operation_id().unwrap(), operation);
 }
 
 #[test]
@@ -456,10 +405,9 @@ fn missing_ref_preview_freezes_unknown_ids_then_fetches_only_the_requested_branc
     assert_eq!(selected.kind, SelectionKind::Explicit);
     assert_eq!(selected.name, "introduced-later");
     assert_eq!(selected.remote, "origin");
-    let json = serde_json::to_value(&selected).unwrap();
-    assert!(json["old_remote"].is_null());
-    assert!(json["old_goal"].is_null());
-    assert!(json["tracked"].is_null());
+    assert!(selected.old_remote.is_none());
+    assert!(selected.old_goal.is_none());
+    assert!(selected.tracked.is_none());
     assert_eq!(f.id("dev@origin"), f.base, "preview must not fetch");
     assert!(
         f.fetched(&selected)
@@ -467,11 +415,10 @@ fn missing_ref_preview_freezes_unknown_ids_then_fetches_only_the_requested_branc
             .to_string()
             .contains("still absent after fetch")
     );
-    let frozen: SourceSelection = serde_json::from_value(json).unwrap();
     f.client()
-        .fetch_bookmark(&frozen.remote, &frozen.name)
+        .fetch_bookmark(&selected.remote, &selected.name)
         .unwrap();
-    assert_eq!(f.fetched(&frozen).unwrap(), goal);
+    assert_eq!(f.fetched(&selected).unwrap(), goal);
     assert_eq!(
         f.id("dev@origin"),
         f.base,
@@ -479,7 +426,7 @@ fn missing_ref_preview_freezes_unknown_ids_then_fetches_only_the_requested_branc
     );
     assert_eq!(
         f.id("@"),
-        frozen.source.commit_id,
+        selected.source.commit_id,
         "resolver must not advance the source"
     );
 }

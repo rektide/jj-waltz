@@ -1,11 +1,6 @@
-//! Frozen, in-place CoW reseeding through stock JJ's sparse checkout interface.
-//!
-//! The repository-scoped journal is intentionally separate from lifecycle metadata.
-//! A pending journal always wins over ordinary snapshotting: recovery first
-//! rebuilds and verifies the recorded current tree from frozen public JJ queries.
-//! Only then may stock JJ's sparse commands snapshot that known-complete tree.
-//! Repair uses only frozen, snapshot-disabled queries; sparse mutations scope
-//! `snapshot.auto-track=none()`, and reset expands only from sparse-empty.
+//! In-place CoW reseeding through stock JJ's sparse checkout interface.
+//! Work is snapshotted and bookmark coverage checked before mutation. Interrupted
+//! refills require deliberate out-of-band recovery, never automatic repair.
 
 use anyhow::Result;
 use clap::ValueEnum;
@@ -40,7 +35,6 @@ pub struct ReseedRequest {
     #[serde(default)]
     pub allow_unbookmarked: bool,
     pub dry_run: bool,
-    pub resume: bool,
 }
 
 /// Source-only preparation, independent of the invoking workspace's role.
@@ -51,35 +45,6 @@ pub struct PrepareRequest {
     pub copy_ignored: Option<Vec<String>>,
     pub no_copy_ignored: bool,
     pub dry_run: bool,
-    pub resume: bool,
-}
-
-/// Private journal compatibility; legacy target advancement is resume-only.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct RecordedRequest {
-    #[serde(flatten)]
-    request: ReseedRequest,
-    #[serde(default)]
-    prepare: bool,
-    #[serde(default)]
-    freshen: bool,
-    #[serde(default)]
-    up: bool,
-    #[serde(default)]
-    no_freshen_bookmark: bool,
-}
-
-impl std::ops::Deref for RecordedRequest {
-    type Target = ReseedRequest;
-    fn deref(&self) -> &Self::Target {
-        &self.request
-    }
-}
-
-impl std::ops::DerefMut for RecordedRequest {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.request
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -112,7 +77,7 @@ impl ReseedReport {
     pub fn has_failures(&self) -> bool {
         self.targets
             .iter()
-            .any(|target| matches!(target.status, ReseedStatus::Failed | ReseedStatus::Pending))
+            .any(|target| target.status == ReseedStatus::Failed)
     }
 }
 
@@ -128,7 +93,6 @@ pub enum ReseedStatus {
     Planned,
     Succeeded,
     Failed,
-    Pending,
 }
 
 pub fn run(request: ReseedRequest) -> Result<ReseedReport> {
@@ -140,13 +104,7 @@ pub fn run_with_diagnostics(
     request: ReseedRequest,
     diagnostic: impl FnMut(&str),
 ) -> Result<ReseedReport> {
-    run_recorded(
-        RecordedRequest {
-            request,
-            ..Default::default()
-        },
-        diagnostic,
-    )
+    run_internal(request, false, diagnostic)
 }
 
 pub fn prepare(request: PrepareRequest) -> Result<ReseedReport> {
@@ -157,33 +115,34 @@ pub fn prepare_with_diagnostics(
     request: PrepareRequest,
     diagnostic: impl FnMut(&str),
 ) -> Result<ReseedReport> {
-    run_recorded(
-        RecordedRequest {
-            prepare: true,
-            request: ReseedRequest {
-                source: request.source,
-                source_at: request.source_at,
-                copy_ignored: request.copy_ignored,
-                no_copy_ignored: request.no_copy_ignored,
-                dry_run: request.dry_run,
-                resume: request.resume,
-                ..Default::default()
-            },
+    run_internal(
+        ReseedRequest {
+            source: request.source,
+            source_at: request.source_at,
+            copy_ignored: request.copy_ignored,
+            no_copy_ignored: request.no_copy_ignored,
+            dry_run: request.dry_run,
             ..Default::default()
         },
+        true,
         diagnostic,
     )
 }
 
-fn run_recorded(request: RecordedRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
+fn run_internal(
+    request: ReseedRequest,
+    source_only: bool,
+    diagnostic: impl FnMut(&str),
+) -> Result<ReseedReport> {
     #[cfg(unix)]
     {
         let mut diagnostic = diagnostic;
-        engine::run(request, &mut diagnostic)
+        engine::run(request, source_only, &mut diagnostic)
     }
     #[cfg(not(unix))]
     {
         let _ = request;
+        let _ = source_only;
         let _ = diagnostic;
         anyhow::bail!("reseed requires Unix filesystem identity and CoW support")
     }

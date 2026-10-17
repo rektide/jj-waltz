@@ -17,7 +17,6 @@ pub(crate) enum Origin {
     Local,
     Global,
     None,
-    Recorded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +72,7 @@ impl Policy {
     }
 
     /// Read global defaults only when they are actually inherited. In particular,
-    /// a recorded explicit [] must not start reading new global policy on resume.
+    /// an explicit [] must not start reading global policy.
     pub fn load(cli: Option<&[String]>, local: Option<&[String]>, disabled: bool) -> Result<Self> {
         if disabled || cli.is_some() || local.is_some() {
             return Ok(Self::resolve(cli, local, None, disabled));
@@ -85,13 +84,6 @@ impl Policy {
             config.copy_ignored.as_deref(),
             false,
         ))
-    }
-
-    pub fn recorded(patterns: &[String]) -> Self {
-        Self {
-            patterns: patterns.to_vec(),
-            origin: Origin::Recorded,
-        }
     }
 
     pub fn describe(&self) -> String {
@@ -368,7 +360,9 @@ impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
                     }
                     continue; // Outermost eligible root already includes descendants.
                 }
-                self.selected.skipped.push(format!("ignored selection skipped source directory {path:?}: not ignored under frozen source rules"));
+                self.selected.skipped.push(format!(
+                    "ignored selection skipped source directory {path:?}: not ignored under frozen source rules"
+                ));
             }
             if self.patterns.can_descend(&next) {
                 self.visit(&path, &next)?;

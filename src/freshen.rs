@@ -1,7 +1,6 @@
-//! Freshening prerequisites, shared by source-only and batch workflows.
+//! Upstream selection for source-only preparation.
 //!
 //! Selection is operation-bound. The coordinator owns working-copy snapshots,
-//! filesystem proofs, fetch/advance mutations, and durable recovery journals.
+//! filesystem proofs, and fetch/advance mutations.
 
-pub mod history;
 pub mod source;

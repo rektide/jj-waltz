@@ -1,9 +1,8 @@
 //! Select one upstream identity before fetch; never rediscover a line afterward.
 use crate::jj::{BookmarkRef, CommitFacts, JjClient, commit_id_revset};
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionKind {
     Explicit,
     Tracked,
@@ -11,9 +10,8 @@ pub enum SelectionKind {
 }
 
 /// Transient operation intent, not a permanent workspace-following association.
-/// Persist this with the preparation journal before fetching.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Pin this identity in memory before fetching.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSelection {
     pub kind: SelectionKind,
     pub operation: String,
@@ -265,7 +263,7 @@ impl SourceSelection {
     }
 
     /// After fetching the pinned remote, validate the SAME bookmark and donor.
-    /// Returns the exact goal to persist before `jj new` or configured commands.
+    /// Returns the exact goal to pin before `jj new` or configured commands.
     /// The coordinator must also revalidate source disk bytes before mutation.
     pub fn resolve_fetched(&self, client: &JjClient, operation: &str) -> Result<String> {
         self.verify_source_at(client, operation)?;
@@ -273,10 +271,12 @@ impl SourceSelection {
         let selected = refs
             .iter()
             .find(|r| r.name == self.name && r.remote.as_deref() == Some(&self.remote))
-            .with_context(|| if self.old_remote.is_some() {
-                "selected remote bookmark disappeared during fetch"
-            } else {
-                "requested remote bookmark is still absent after fetch; source advancement refused"
+            .with_context(|| {
+                if self.old_remote.is_some() {
+                    "selected remote bookmark disappeared during fetch"
+                } else {
+                    "requested remote bookmark is still absent after fetch; source advancement refused"
+                }
             })?;
         if self
             .tracked

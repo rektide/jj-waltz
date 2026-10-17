@@ -141,7 +141,7 @@ impl Repo {
                 path.to_str().unwrap(),
             ],
         );
-        // These filesystem/recovery fixtures model deliberately named work.
+        // These filesystem fixtures model deliberately named work.
         // Dedicated bookmark-policy tests use their own unbookmarked fixtures.
         self.jj_at(
             path,
@@ -324,10 +324,16 @@ exec "$JW_REAL_JJ" "$@"
             "fault must reach {boundary}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(
-            self.pending_records().len(),
-            1,
-            "interruption must retain pending intent"
+        let message = String::from_utf8_lossy(&output.stdout);
+        assert!(message.contains("covered by bookmark"), "{message}");
+        assert!(
+            message.contains("recover with `jj new ") && message.contains("`jj sparse reset`"),
+            "{message}"
+        );
+        assert!(message.contains("then re-run reseed"), "{message}");
+        assert!(
+            self.pending_records().is_empty(),
+            "interruption must not write a journal"
         );
     }
 }
@@ -423,28 +429,6 @@ fn builtin_all_from_worker_excludes_renamed_primary_and_refills_worker_named_def
         b"worker named default\n"
     );
     assert_eq!([identity(&default), identity(&z)], roots);
-    let config = PathBuf::from(repo.jj_at(
-        &repo.root,
-        &["--ignore-working-copy", "config", "path", "--repo"],
-    ));
-    let mut receipts = fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .ends_with(".receipt.json")
-        })
-        .map(|path| serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap())
-        .collect::<Vec<_>>();
-    receipts.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-    assert_eq!(receipts.len(), 2);
-    assert_eq!(receipts[0]["name"], "default");
-    assert_eq!(receipts[1]["name"], "z");
-    for receipt in receipts {
-        assert_eq!(receipt["source"], repo.root.to_str().unwrap());
-    }
     for target in [&default, &z] {
         assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
     }
@@ -546,7 +530,7 @@ fn builtin_all_keeps_bad_members_blocked_and_never_refills_ready_subset() {
 }
 
 #[test]
-fn builtin_all_rejects_local_collision_dynamic_resume_and_empty_membership() {
+fn builtin_all_rejects_local_collision_removed_resume_and_empty_membership() {
     let Some(repo) = Repo::new() else { return };
     let output = repo
         .jw(&repo.root)
@@ -569,7 +553,7 @@ fn builtin_all_rejects_local_collision_dynamic_resume_and_empty_membership() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument '--resume'"));
 }
 
 #[test]
@@ -787,7 +771,7 @@ fn readiness_shared_source_failure_is_not_assessed_and_never_claims_ready() {
 }
 
 #[test]
-fn readiness_pending_target_is_never_snapshotted_while_other_targets_are_checked() {
+fn readiness_sparse_empty_target_is_never_snapshotted_while_other_targets_are_checked() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let pending = repo.workspace("feature");
@@ -802,19 +786,25 @@ fn readiness_pending_target_is_never_snapshotted_while_other_targets_are_checked
     )
     .unwrap();
     let before = frozen_id(&repo, &pending);
-    let records = repo.pending_records();
     let output = repo.reseed(&["feature", "ready"], &source, &["--dry-run"]);
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("BLOCKED feature:"), "{stdout}");
-    assert!(stdout.contains("has a pending reseed/refill"), "{stdout}");
+    assert!(
+        stdout.contains("workspace is sparse or mid-refill"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("jj new <bookmark>") && stdout.contains("jj sparse reset"),
+        "{stdout}"
+    );
     assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
     assert_eq!(frozen_id(&repo, &pending), before);
     assert_eq!(
         fs::read(pending.join("shared")).unwrap(),
         b"partial refill must not be snapshotted\n"
     );
-    assert_eq!(repo.pending_records(), records);
+    assert!(repo.pending_records().is_empty());
     assert_eq!(
         repo.jj_at(&pending, &["--ignore-working-copy", "sparse", "list"]),
         ""
@@ -1131,40 +1121,7 @@ fn primary_default_from_sibling_and_subdirectory_preserves_different_feature_tre
             "keep\n"
         );
         assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
-        let receipt = reseed_receipt(&repo, &repo.root);
-        assert_eq!(receipt["source_operation"], receipt["target_operation"]);
-        assert_eq!(receipt["source"], repo.root.to_str().unwrap());
-        assert!(
-            receipt["clones"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|p| p == "shared")
-        );
-        assert!(
-            !receipt["clones"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|p| p == "modified")
-        );
     }
-}
-
-fn reseed_receipt(repo: &Repo, cwd: &Path) -> serde_json::Value {
-    let config =
-        PathBuf::from(repo.jj_at(cwd, &["--ignore-working-copy", "config", "path", "--repo"]));
-    let receipt = fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .ends_with(".receipt.json")
-        })
-        .unwrap();
-    serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap()
 }
 
 #[test]
@@ -1180,15 +1137,15 @@ fn renamed_primary_is_default_donor_even_with_another_workspace_named_default() 
             let decoy = repo.workspace("default");
             fs::write(decoy.join("modified"), "not the donor\n").unwrap();
         }
-        success(
+        let output = success(
             repo.jw(&target)
                 .args(["reseed", "feature", "--source-at", &repo.baseline])
                 .output()
                 .unwrap(),
         );
-        assert_eq!(
-            reseed_receipt(&repo, &target)["source"],
-            repo.root.to_str().unwrap()
+        assert!(
+            output.contains(&format!("source: {}", repo.root.display())),
+            "{output}"
         );
     }
     let output = repo
@@ -1221,25 +1178,25 @@ fn configured_relative_source_and_explicit_override_win_over_primary() {
     fs::write(repo.root.join("modified"), "dirty primary\n").unwrap();
     let subdir = target.join("cache/subdir");
     fs::create_dir_all(&subdir).unwrap();
-    success(
+    let output = success(
         repo.jw(&subdir)
             .args(["reseed", "feature"])
             .output()
             .unwrap(),
     );
-    assert_eq!(
-        reseed_receipt(&repo, &target)["source"],
-        configured.to_str().unwrap()
+    assert!(
+        output.contains(&format!("source: {}", configured.display())),
+        "{output}"
     );
-    success(
+    let output = success(
         repo.jw(&subdir)
             .args(["reseed", "feature", "--from", "../../../workspace-explicit"])
             .output()
             .unwrap(),
     );
-    assert_eq!(
-        reseed_receipt(&repo, &target)["source"],
-        explicit.to_str().unwrap()
+    assert!(
+        output.contains(&format!("source: {}", explicit.display())),
+        "{output}"
     );
     let before = repo.id(&target, "@");
     let output = repo
@@ -1287,15 +1244,13 @@ fn source_assertions_keep_cli_over_local_precedence_and_reject_before_target_sna
         repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
         "."
     );
-    success(
+    let output = success(
         repo.jw(&target)
             .args(["reseed", "feature", "--source-at", "@"])
             .output()
             .unwrap(),
     );
-    let receipt = reseed_receipt(&repo, &target);
-    assert_eq!(receipt["source_commit"], frozen_id(&repo, &repo.root));
-    assert_eq!(receipt["source_commit"], receipt["source_wc_commit"]);
+    assert!(output.contains(&frozen_id(&repo, &repo.root)), "{output}");
     assert_eq!(
         fs::read(target.join("modified")).unwrap(),
         b"unsnapshotted target\n"
@@ -1338,15 +1293,11 @@ fn bare_reseed_borrows_snapshotted_primary_and_keeps_current_registered_variant(
         "never snapshot another variant"
     );
     assert_ne!(frozen_id(&repo, &repo.root), old_source);
-    let receipt = reseed_receipt(&repo, &target);
-    assert_eq!(receipt["source"], repo.root.to_str().unwrap());
-    assert_eq!(receipt["source_commit"], frozen_id(&repo, &repo.root));
-    assert_eq!(receipt["source_commit"], receipt["source_wc_commit"]);
-    assert_eq!(receipt["old_commit"], frozen_id(&repo, &target));
     assert!(
-        receipt["base_commit"].is_null(),
-        "default keeps target history"
+        output.contains(&format!("source: {}", repo.root.display())),
+        "{output}"
     );
+    assert!(output.contains(&frozen_id(&repo, &repo.root)), "{output}");
     assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
 }
 
@@ -1528,112 +1479,6 @@ exec "$JW_REAL_JJ" "$@"
 }
 
 #[test]
-fn primary_fallback_refuses_pending_donor_without_snapshotting_it() {
-    use sha2::{Digest, Sha256};
-    let Some(repo) = Repo::new() else { return };
-    let source = repo.workspace("source");
-    let feature = repo.workspace("feature");
-    let target = repo.workspace("other");
-    if !repo.cow(&source, &feature) {
-        return;
-    }
-    repo.interrupt_reseed(&source, "clear", &[]);
-    // Simulate an existing pending journal on the inferred donor. Its complete
-    // frozen record must be detected before any donor snapshot is attempted.
-    let (path, bytes) = repo.pending_records().pop().unwrap();
-    let mut pending: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    pending["name"] = "default".into();
-    let digest = Sha256::digest(b"default")
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    fs::write(
-        path.parent()
-            .unwrap()
-            .join(format!("workspace-{digest}.pending.json")),
-        serde_json::to_vec(&pending).unwrap(),
-    )
-    .unwrap();
-    fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
-    let output = repo
-        .jw(&target)
-        .args(["reseed", "other", "--source-at", &repo.baseline])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("source has a pending reseed"));
-    assert_eq!(
-        repo.jj_at(
-            &repo.root,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "@",
-                "-T",
-                "commit_id"
-            ]
-        ),
-        repo.baseline
-    );
-}
-
-#[test]
-fn bare_current_resume_uses_frozen_source_and_pending_lookup_never_snapshots() {
-    let Some(repo) = Repo::new() else { return };
-    let source = repo.workspace("source");
-    let target = repo.workspace("feature");
-    if !repo.cow(&source, &target) {
-        return;
-    }
-    let donor = frozen_id(&repo, &source);
-    repo.interrupt_reseed_with_assertion(&source, "clear", &[], None);
-    fs::write(repo.root.join("modified"), "unsnapshotted primary\n").unwrap();
-    fs::write(
-        repo.root.join(".jwreseed.local.toml"),
-        "source = 'nonexistent'\nsource_at = 'nonexistent'\n",
-    )
-    .unwrap();
-    let before = operation(&repo, &repo.root);
-    let partial = frozen_id(&repo, &target);
-    let pending = repo.pending_records();
-    let output = repo.jw(&target).arg("reseed").output().unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("has a pending reseed"));
-    assert_eq!(operation(&repo, &repo.root), before);
-    assert_eq!(frozen_id(&repo, &target), partial);
-    assert_eq!(repo.pending_records(), pending);
-    success(
-        repo.jw(&target)
-            .args(["reseed", "--resume"])
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(
-        reseed_receipt(&repo, &target)["source"],
-        source.to_str().unwrap()
-    );
-    assert_eq!(reseed_receipt(&repo, &target)["source_commit"], donor);
-    assert_eq!(
-        repo.jj_at(
-            &repo.root,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "@",
-                "-T",
-                "commit_id"
-            ]
-        ),
-        repo.baseline
-    );
-    assert!(repo.pending_records().is_empty());
-}
-
-#[test]
 fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
@@ -1692,7 +1537,7 @@ fn keep_preserves_feature_tree_types_modes_and_literal_paths() {
 }
 
 #[test]
-fn symlink_bytes_and_patch_like_names_survive_keep_and_expansion_recovery() {
+fn symlink_bytes_and_patch_like_names_survive_keep() {
     let Some(mut repo) = Repo::new() else { return };
     let cases = [
         ("embedded-newline", "one\ntwo"),
@@ -1704,7 +1549,7 @@ fn symlink_bytes_and_patch_like_names_survive_keep_and_expansion_recovery() {
     ];
     for (name, target_bytes) in cases {
         // Unchanged paths exercise source reads/cloning; sibling feature paths
-        // exercise frozen target reads/materialization and recovery.
+        // exercise frozen target reads/materialization.
         symlink(target_bytes, repo.root.join(format!("unchanged-{name}"))).unwrap();
         symlink("shared", repo.root.join(name)).unwrap();
     }
@@ -1723,35 +1568,6 @@ fn symlink_bytes_and_patch_like_names_survive_keep_and_expansion_recovery() {
     let jj = identity(&target.join(".jj"));
     success(repo.reseed(&["feature"], &source, &[]));
     assert_eq!(repo.id(&target, "@"), before);
-    for (name, target_bytes) in cases {
-        assert_eq!(
-            fs::read_link(target.join(name)).unwrap(),
-            Path::new(target_bytes)
-        );
-        assert_eq!(
-            fs::read_link(target.join(format!("unchanged-{name}"))).unwrap(),
-            Path::new(target_bytes)
-        );
-    }
-    repo.interrupt_reseed(&source, "expand", &[]);
-    for (name, _) in cases {
-        fs::remove_file(target.join(name)).unwrap();
-        symlink("corrupted feature symlink", target.join(name)).unwrap();
-        let unchanged = target.join(format!("unchanged-{name}"));
-        fs::remove_file(&unchanged).unwrap();
-        symlink("corrupted cloned symlink", unchanged).unwrap();
-    }
-    success(
-        repo.jw(&repo.root)
-            .args(["reseed", "--resume", "feature"])
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(
-        repo.id(&target, "@"),
-        before,
-        "recovery must not snapshot corrupted symlink bytes"
-    );
     for (name, target_bytes) in cases {
         assert_eq!(
             fs::read_link(target.join(name)).unwrap(),
@@ -1835,7 +1651,11 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
             &source,
             &["--at", &repo.baseline],
         ));
-        assert_eq!([repo.id(&a, "@"), repo.id(&b, "@")], ids);
+        assert_ne!(
+            [repo.id(&a, "@"), repo.id(&b, "@")],
+            ids,
+            "explicit --at starts fresh children"
+        );
         for target in [&a, &b] {
             assert_eq!(repo.id(target, "@-"), repo.baseline);
             assert!(!target.join("old-only").exists());
@@ -2007,7 +1827,10 @@ fn global_ignored_policy_skips_tracked_build_and_selects_eligible_descendants_on
     let output = repo.reseed(&["feature"], &source, &[]);
     assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Global"));
     let output = success(output);
-    assert!(output.contains("ignored roots [\"build/packages/a/node_modules\", \"packages/a/dist\", \"packages/a/node_modules\", \"packages/a/target\"]"), "{output}");
+    assert!(
+        output.contains("ignored roots [\"build/packages/a/node_modules\", \"packages/a/dist\", \"packages/a/node_modules\", \"packages/a/target\"]"),
+        "{output}"
+    );
     assert!(
         output.contains("not ignored under frozen source rules"),
         "{output}"
@@ -2216,6 +2039,11 @@ fn sparse_target_is_rejected_without_changing_patterns_or_checkout() {
     assert!(
         !output.status.success(),
         "sparse targets are outside the initial contract"
+    );
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("jj new <bookmark>") && message.contains("jj sparse reset"),
+        "{message}"
     );
     assert_eq!(repo.id(&target, "@"), before);
     assert_eq!(repo.jj_at(&target, &["sparse", "list"]), patterns);
@@ -2469,8 +2297,8 @@ fn required_internal_link_target_is_preflight_rejected_when_replace_will_erase_i
 }
 
 #[test]
-fn required_link_target_in_copied_ignored_root_works_in_keep_replace_and_resume() {
-    for mode in ["keep", "replace", "resume"] {
+fn required_link_target_in_copied_ignored_root_works_in_keep_and_replace() {
+    for mode in ["keep", "replace"] {
         let Some(mut repo) = Repo::new() else { return };
         repo.prepare_links(
             "[[link]]\nsource = \"dependency\"\ntarget = \"cache/fresh\"\nrequired = true\n",
@@ -2495,21 +2323,7 @@ fn required_link_target_in_copied_ignored_root_works_in_keep_replace_and_resume(
         } else {
             vec!["--copy-ignored", "cache"]
         };
-        if mode == "resume" {
-            repo.interrupt_reseed(&source, "expand", &extra);
-            assert!(
-                !target.join("cache").exists(),
-                "fault must precede ignored copy"
-            );
-            success(
-                repo.jw(&repo.root)
-                    .args(["reseed", "--resume", "feature"])
-                    .output()
-                    .unwrap(),
-            );
-        } else {
-            success(repo.reseed(&["feature"], &source, &extra));
-        }
+        success(repo.reseed(&["feature"], &source, &extra));
         assert!(
             fs::symlink_metadata(target.join("dependency"))
                 .unwrap()
@@ -2652,104 +2466,31 @@ fn colocated_source_is_supported_but_colocated_primary_target_is_not() {
 }
 
 #[test]
-fn resume_after_sparse_expansion_does_not_snapshot_partial_prefill() {
-    let Some(repo) = Repo::new() else { return };
-    let source = repo.workspace("source");
-    let target = repo.workspace("feature");
-    if !repo.cow(&source, &target) {
-        return;
-    }
-    fs::write(target.join("modified"), "feature\n").unwrap();
-    let before = repo.id(&target, "@");
-    let root = identity(&target);
-    let jj = identity(&target.join(".jj"));
-    repo.interrupt_reseed(&source, "expand", &[]);
-    assert_eq!(identity(&target), root);
-    assert_eq!(identity(&target.join(".jj")), jj);
-    // Model an incomplete/invalid prefill at the expanded-but-unsnapshotted
-    // boundary. Do not run an ordinary JJ command before recovery.
-    fs::write(target.join("shared"), "partial prefill\n").unwrap();
-    // This differs from the source and was materialized by JJ, not cloned.
-    // Recovery must reconstruct frozen target bytes for both kinds of paths
-    // before a normal sparse mutation can snapshot the expanded checkout.
-    fs::write(target.join("modified"), "corrupted materialized feature\n").unwrap();
-    success(
-        repo.jw(&repo.root)
-            .args(["reseed", "--resume", "feature"])
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(repo.id(&target, "@"), before);
-    assert_eq!(
-        fs::read(target.join("shared")).unwrap(),
-        vec![b's'; 128 * 1024]
-    );
-    assert_eq!(
-        fs::read_to_string(target.join("modified")).unwrap(),
-        "feature\n"
-    );
-    assert_eq!(identity(&target), root);
-    assert_eq!(identity(&target.join(".jj")), jj);
-    assert_shared_extents(&source.join("shared"), &target.join("shared"));
-}
-
-#[test]
-fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
-    let Some(repo) = Repo::new() else { return };
-    let source = repo.workspace("source");
-    let target = repo.workspace("feature");
-    if !repo.cow(&source, &target) {
-        return;
-    }
-    fs::write(target.join("modified"), "feature\n").unwrap();
-    let before = repo.id(&target, "@");
-    // Source and target are sibling children of the immutable fixture baseline.
-    // Rewriting the source child therefore cannot rewrite the pending target.
-    let original_source_wc = repo.id(&source, "@");
-    let root = identity(&target);
-    let jj = identity(&target.join(".jj"));
-    repo.interrupt_reseed(&source, "clear", &[]);
-    assert_eq!(
-        repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
-        ""
-    );
-    assert!(!target.join("shared").exists());
-    let pending = repo.pending_records();
-    fs::write(
-        source.join("modified"),
-        "source changed during interruption\n",
-    )
-    .unwrap();
-    let dirty_source_wc = repo.id(&source, "@");
-    assert_ne!(
-        dirty_source_wc, original_source_wc,
-        "fixture must snapshot a source rewrite"
-    );
-    let refused = repo
-        .jw(&repo.root)
-        .args(["reseed", "--resume", "feature"])
-        .output()
-        .unwrap();
-    assert!(
-        !refused.status.success(),
-        "changed frozen source must block resume"
-    );
-    let diagnostics = format!(
-        "{}{}",
-        String::from_utf8_lossy(&refused.stdout),
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert!(
-        diagnostics.to_lowercase().contains("source"),
-        "must explain source refusal: {diagnostics}"
-    );
-    assert_eq!(
-        repo.pending_records(),
-        pending,
-        "refusal must preserve pending intent"
-    );
-    assert_eq!(
-        repo.jj_at(
+fn interrupted_refill_requires_out_of_band_bookmark_recovery() {
+    for boundary in ["clear", "new"] {
+        let Some(repo) = Repo::new() else { return };
+        let source = repo.workspace("source");
+        let target = repo.workspace("feature");
+        if !repo.cow(&source, &target) {
+            return;
+        }
+        fs::write(target.join("modified"), "feature\n").unwrap();
+        let before = repo.id(&target, "@");
+        repo.jj_at(&target, &["bookmark", "create", "feature-bookmark"]);
+        let bookmarks = repo.jj_at(
+            &repo.root,
+            &[
+                "--ignore-working-copy",
+                "bookmark",
+                "list",
+                "-T",
+                "name ++ normal_target.commit_id()",
+            ],
+        );
+        let root = identity(&target);
+        let jj = identity(&target.join(".jj"));
+        repo.interrupt_reseed(&source, boundary, &["--at", &repo.baseline]);
+        let child = repo.jj_at(
             &target,
             &[
                 "--ignore-working-copy",
@@ -2758,152 +2499,64 @@ fn resume_after_sparse_clear_refuses_changed_source_until_restored() {
                 "-r",
                 "@",
                 "-T",
-                "commit_id"
-            ]
-        ),
-        before
-    );
-    assert_eq!(identity(&target), root);
-    assert_eq!(identity(&target.join(".jj")), jj);
-    assert!(!target.join("shared").exists());
-    // Restore through JJ rather than just rewriting bytes: timestamps, stat
-    // identity, and the source WC commit may all differ from the frozen receipt.
-    repo.jj_at(&source, &["restore", "--from", &repo.baseline]);
-    let restored_source_wc = repo.id(&source, "@");
-    assert_ne!(restored_source_wc, dirty_source_wc);
-    assert_ne!(
-        restored_source_wc, original_source_wc,
-        "fixture must restore the tree without restoring the old WC commit identity"
-    );
-    assert_eq!(
-        fs::read_to_string(source.join("modified")).unwrap(),
-        "baseline\n"
-    );
-    success(
-        repo.jw(&repo.root)
-            .args(["reseed", "--resume", "feature"])
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(repo.id(&target, "@"), before);
-    assert_eq!(
-        fs::read_to_string(target.join("modified")).unwrap(),
-        "feature\n"
-    );
-    assert_eq!(identity(&target), root);
-    assert_eq!(identity(&target.join(".jj")), jj);
-    assert!(repo.pending_records().is_empty());
-    let frozen: serde_json::Value = serde_json::from_slice(&pending[0].1).unwrap();
-    let receipt_path = pending[0].0.with_file_name(
-        pending[0]
-            .0
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .replace(".pending.json", ".receipt.json"),
-    );
-    let receipt: serde_json::Value =
-        serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap();
-    for field in ["source_operation", "source_commit", "source_wc_commit"] {
-        assert_eq!(
-            receipt[field], frozen[field],
-            "receipt must retain original {field} provenance"
+                "commit_id",
+            ],
         );
+        if boundary == "new" {
+            assert_ne!(child, before, "fault must follow a successful fresh jj new");
+        }
+        assert_eq!(
+            repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
+            ""
+        );
+        // Material left behind by an interrupted writer must not become history.
+        fs::write(target.join("shared"), vec![b's'; 128 * 1024]).unwrap();
+        let output = repo.reseed(&["feature"], &source, &[]);
+        assert!(!output.status.success());
+        let message = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            message.contains("jj new <bookmark>") && message.contains("jj sparse reset"),
+            "{message}"
+        );
+        assert_eq!(
+            frozen_id(&repo, &target),
+            child,
+            "refusal must not snapshot partial bytes"
+        );
+        assert_eq!(
+            fs::read(target.join("shared")).unwrap(),
+            vec![b's'; 128 * 1024]
+        );
+        // The operator, not jw, restores a complete checkout before retrying.
+        repo.jj_at(&target, &["new", "feature-bookmark"]);
+        repo.jj_at(&target, &["sparse", "reset"]);
+        success(repo.reseed(&["feature"], &source, &[]));
+        assert_eq!(
+            fs::read_to_string(target.join("modified")).unwrap(),
+            "feature\n"
+        );
+        assert_eq!(
+            repo.jj_at(
+                &repo.root,
+                &[
+                    "--ignore-working-copy",
+                    "bookmark",
+                    "list",
+                    "-T",
+                    "name ++ normal_target.commit_id()"
+                ]
+            ),
+            bookmarks
+        );
+        assert_eq!(identity(&target), root);
+        assert_eq!(identity(&target.join(".jj")), jj);
+        assert!(repo.pending_records().is_empty());
+        assert_shared_extents(&source.join("shared"), &target.join("shared"));
     }
-    assert_shared_extents(&source.join("shared"), &target.join("shared"));
-}
-
-#[test]
-fn resume_after_lost_new_result_reuses_created_child_and_preserves_bookmarks() {
-    let Some(repo) = Repo::new() else { return };
-    let source = repo.workspace("source");
-    let target = repo.workspace("feature");
-    if !repo.cow(&source, &target) {
-        return;
-    }
-    fs::write(target.join("modified"), "feature\n").unwrap();
-    let before = repo.id(&target, "@");
-    repo.jj_at(&target, &["bookmark", "create", "feature-bookmark"]);
-    let bookmarks = repo.jj_at(
-        &repo.root,
-        &[
-            "--ignore-working-copy",
-            "bookmark",
-            "list",
-            "-T",
-            "name ++ normal_target.commit_id()",
-        ],
-    );
-    let root = identity(&target);
-    let jj = identity(&target.join(".jj"));
-    repo.interrupt_reseed(&source, "new", &["--at", &repo.baseline]);
-    let child = repo.jj_at(
-        &target,
-        &[
-            "--ignore-working-copy",
-            "log",
-            "--no-graph",
-            "-r",
-            "@",
-            "-T",
-            "commit_id",
-        ],
-    );
-    assert_ne!(child, before, "fault must follow a successful fresh jj new");
-    assert_eq!(
-        repo.jj_at(
-            &target,
-            &[
-                "--ignore-working-copy",
-                "log",
-                "--no-graph",
-                "-r",
-                "@-",
-                "-T",
-                "commit_id"
-            ]
-        ),
-        repo.baseline
-    );
-    assert_eq!(
-        repo.jj_at(&target, &["--ignore-working-copy", "sparse", "list"]),
-        ""
-    );
-    // Material left behind by an interrupted writer must not become history.
-    fs::write(target.join("shared"), "partial prefill\n").unwrap();
-    success(
-        repo.jw(&repo.root)
-            .args(["reseed", "--resume", "feature"])
-            .output()
-            .unwrap(),
-    );
-    assert_eq!(
-        repo.id(&target, "@"),
-        child,
-        "resume must not create a second child"
-    );
-    assert_eq!(repo.id(&target, "@-"), repo.baseline);
-    assert_eq!(
-        fs::read_to_string(target.join("modified")).unwrap(),
-        "baseline\n"
-    );
-    assert_eq!(
-        repo.jj_at(
-            &repo.root,
-            &[
-                "--ignore-working-copy",
-                "bookmark",
-                "list",
-                "-T",
-                "name ++ normal_target.commit_id()"
-            ]
-        ),
-        bookmarks
-    );
-    assert_eq!(identity(&target), root);
-    assert_eq!(identity(&target.join(".jj")), jj);
-    assert!(repo.pending_records().is_empty());
-    assert_shared_extents(&source.join("shared"), &target.join("shared"));
 }
 
 // FIEMAP verifies shared physical extents, not merely equal bytes or distinct

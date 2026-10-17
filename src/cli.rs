@@ -394,7 +394,7 @@ struct ReseedCommand {
     #[arg(long = "group", value_name = "GROUP")]
     groups: Vec<String>,
     /// Override group selection misses: error (default) or warn and skip; names stay strict.
-    #[arg(long, value_enum, conflicts_with = "resume")]
+    #[arg(long, value_enum)]
     on_unmatched: Option<crate::reseed::UnmatchedPolicy>,
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
@@ -403,48 +403,42 @@ struct ReseedCommand {
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
     /// Start a fresh empty change at this base instead of keeping target revisions.
-    #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
+    #[arg(long, value_name = "REVSET")]
     at: Option<String>,
     /// Select eligible ignored source roots (repeatable; replaces local/global selection).
-    #[arg(long, value_name = "PATTERN", conflicts_with = "resume")]
+    #[arg(long, value_name = "PATTERN")]
     copy_ignored: Vec<String>,
     /// Disable ignored copying for this run, including an explicit selection.
-    #[arg(long, conflicts_with = "resume")]
+    #[arg(long)]
     no_copy_ignored: bool,
     /// Delete unrecorded target contents except .jj before refilling.
-    #[arg(long, conflicts_with = "resume")]
+    #[arg(long)]
     replace_content: bool,
     /// Allow work without a covering local/remote bookmark; all other guards still apply.
-    #[arg(long, conflicts_with = "resume")]
+    #[arg(long)]
     allow_unbookmarked: bool,
     /// Report READY/BLOCKED for every target without refilling/resetting files; may snapshot working copies.
     #[arg(long)]
     dry_run: bool,
-    /// Safely finish an interrupted operation using its frozen pending plan.
-    #[arg(long, conflicts_with_all = ["source", "source_at", "groups"])]
-    resume: bool,
 }
 
 #[derive(Debug, Args)]
 struct PrepareCommand {
     /// Source root (default: configured source or verified primary checkout).
-    #[arg(long = "from", value_name = "PATH", conflicts_with = "resume")]
+    #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
     /// Upstream goal override; otherwise infer one native tracked or exact remote line before fetch.
-    #[arg(long, value_name = "REVSET", conflicts_with = "resume")]
+    #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
     /// Verify selected ignored source payload (repeatable; replaces local/global selection).
-    #[arg(long, value_name = "PATTERN", conflicts_with = "resume")]
+    #[arg(long, value_name = "PATTERN")]
     copy_ignored: Vec<String>,
     /// Disable ignored payload selection, including an explicit selection.
-    #[arg(long, conflicts_with = "resume")]
+    #[arg(long)]
     no_copy_ignored: bool,
     /// Explain prospective fetch and preparation commands without performing them.
     #[arg(long)]
     dry_run: bool,
-    /// Resume source-only preparation; no refetch after goal freeze.
-    #[arg(long)]
-    resume: bool,
     #[arg(long, value_enum, default_value_t)]
     format: OutputFormat,
 }
@@ -500,9 +494,7 @@ pub fn run() -> Result<()> {
             .take_while(|a| *a != "--")
             .any(|a| a == "--freshen")
     {
-        bail!(
-            "reseed --freshen was removed; use `jw prepare` to prepare the source, or `jw reseed --resume` to finish a legacy preparation without changing its recorded intent"
-        );
+        bail!("reseed --freshen was removed; use `jw prepare` to prepare the source");
     }
     let cli = Cli::parse_from(args);
 
@@ -612,7 +604,6 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         replace_content: cmd.replace_content,
         allow_unbookmarked: cmd.allow_unbookmarked,
         dry_run: cmd.dry_run,
-        resume: cmd.resume,
     })
 }
 
@@ -624,7 +615,6 @@ fn run_prepare(cmd: PrepareCommand) -> Result<()> {
             copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
             no_copy_ignored: cmd.no_copy_ignored,
             dry_run: cmd.dry_run,
-            resume: cmd.resume,
         },
         |diagnostic| eprintln!("{diagnostic}"),
     )?;
@@ -679,7 +669,6 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
             ReseedStatus::Succeeded => "OK",
             ReseedStatus::Failed if report.dry_run => "BLOCKED",
             ReseedStatus::Failed => "FAIL",
-            ReseedStatus::Pending => "PENDING",
         };
         println!("{label} {}: {}", target.name, target.message);
     }
@@ -690,16 +679,15 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
                 report
                     .targets
                     .iter()
-                    .filter(|target| matches!(
-                        target.status,
-                        ReseedStatus::Failed | ReseedStatus::Pending
-                    ))
+                    .filter(|target| target.status == ReseedStatus::Failed)
                     .map(|target| format!("{}: {}", target.name, target.message))
                     .collect::<Vec<_>>()
                     .join("; ")
             );
         }
-        bail!("{command} did not complete for every target; use --resume for pending targets")
+        bail!(
+            "{command} did not complete for every target; follow the reported recovery instructions before retrying"
+        )
     }
     Ok(())
 }
@@ -1384,7 +1372,7 @@ mod reseed_cli_tests {
     use super::*;
 
     #[test]
-    fn prepare_is_source_only_and_freezes_resume_policy() {
+    fn prepare_is_source_only_and_rejects_resume() {
         let cli = Cli::try_parse_from(["jw", "prepare", "--source-at", "new@origin"]).unwrap();
         let Some(Commands::Prepare(cmd)) = cli.command else {
             panic!("expected prepare")
@@ -1392,7 +1380,7 @@ mod reseed_cli_tests {
         assert_eq!(cmd.source_at.as_deref(), Some("new@origin"));
         assert!(Cli::try_parse_from(["jw", "up"]).is_err());
         assert!(Cli::try_parse_from(["jw", "prepare"]).is_ok());
-        assert!(Cli::try_parse_from(["jw", "prepare", "--resume", "--dry-run"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "prepare", "--resume"]).is_err());
         for args in [
             vec!["worker"],
             vec!["--group", "workers"],
@@ -1408,12 +1396,9 @@ mod reseed_cli_tests {
             vec!["--copy-ignored", "node_modules"],
             vec!["--no-copy-ignored"],
         ] {
-            assert!(
-                Cli::try_parse_from(["jw", "prepare", "--resume"].into_iter().chain(args)).is_err()
-            );
+            assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_ok());
         }
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen"]).is_err());
-        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen", "--resume"]).is_err());
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--no-freshen"]).is_err());
     }
 
@@ -1438,24 +1423,14 @@ mod reseed_cli_tests {
     }
 
     #[test]
-    fn reseed_resume_rejects_replacement_policy_changes() {
-        for option in ["--replace-content", "--no-copy-ignored"] {
-            assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option]).is_err());
-        }
-        for option in [
-            "--at",
-            "--from",
-            "--source-at",
-            "--group",
-            "--copy-ignored",
-            "--on-unmatched",
+    fn reseed_rejects_resume_and_validates_group_miss_policy() {
+        for args in [
+            vec!["feature", "--resume"],
+            vec!["--group", "all", "--resume"],
+            vec!["--resume", "--dry-run"],
         ] {
-            assert!(
-                Cli::try_parse_from(["jw", "reseed", "feature", "--resume", option, "value"])
-                    .is_err()
-            );
+            assert!(Cli::try_parse_from(["jw", "reseed"].into_iter().chain(args)).is_err());
         }
-        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--resume", "--dry-run"]).is_ok());
         assert!(
             Cli::try_parse_from([
                 "jw",
