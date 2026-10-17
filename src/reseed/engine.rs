@@ -2136,7 +2136,11 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         plan.target_operation = operation.clone();
         store.save(plan)?;
     } else if current != plan.desired_commit {
-        bail!("target WC revision changed since frozen plan; pending retained without snapshot");
+        bail!(
+            "target WC revision changed since frozen plan: recorded desired {}, observed {}; pending retained without another target snapshot; verification may have recorded rejected edits; preserve those changes before deliberately restoring the recorded target revision and retrying --resume",
+            plan.desired_commit,
+            current,
+        );
     }
     if !reconstruct && !resume {
         require_full(&client)?;
@@ -2884,6 +2888,52 @@ mod tests {
         plan.root_identity.verify(&plan.root).unwrap();
         plan.jj_identity.verify(&plan.root.join(".jj")).unwrap();
         assert!(store.pending("worker").unwrap().is_none());
+    }
+
+    #[test]
+    fn rejected_materialized_tree_snapshot_blocks_resume_and_preserves_recorded_edits() {
+        let Some((_temporary, store, mut plan)) = fixture(false) else {
+            return;
+        };
+        // The keep-mode fixture already has the complete desired tracked tree.
+        // Model a completed sparse reset whose post-materialization proof rejects
+        // a concurrent edit after recording it in JJ.
+        plan.phase = Phase::Expanding;
+        store.save(&plan).unwrap();
+        let pending_path = store.path(&plan.name, "pending");
+        let pending_before = fs::read(&pending_path).unwrap();
+        let target = JjClient::new(&plan.root);
+        let rejected_bytes = b"concurrent edit retained by verification\n";
+        fs::write(plan.root.join("shared"), rejected_bytes).unwrap();
+        let error = verify_disk(
+            &target,
+            &plan.target_operation,
+            &plan.desired_commit,
+            &plan.root,
+            &plan.entries,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("JJ snapshot performed"));
+        let (operation, observed) = current_commit(&target).unwrap();
+        assert_ne!(observed, plan.desired_commit);
+        assert_eq!(
+            file_bytes(&target, &operation, &observed, Path::new("shared")).unwrap(),
+            rejected_bytes,
+        );
+
+        let default = plan.source.clone();
+        let error = execute(&store, &default, &mut plan, true).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(&format!("recorded desired {}", plan.desired_commit)));
+        assert!(message.contains(&format!("observed {observed}")));
+        assert!(message.contains("verification may have recorded rejected edits"));
+        assert!(message.contains("preserve those changes before deliberately restoring"));
+        assert_eq!(current_commit(&target).unwrap().1, observed);
+        assert_eq!(fs::read(plan.root.join("shared")).unwrap(), rejected_bytes);
+        assert_eq!(fs::read(&pending_path).unwrap(), pending_before);
+        let pending = store.pending(&plan.name).unwrap().unwrap();
+        assert_eq!(pending.phase, Phase::Expanding);
+        assert_eq!(pending.desired_commit, plan.desired_commit);
     }
 
     #[test]
