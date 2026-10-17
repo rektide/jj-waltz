@@ -771,9 +771,7 @@ pub(super) fn run(
             // Symlink extraction is a real CLI capability, not inferred from
             // file-list typing. Prove both current and future trees before any
             // target's sparse checkout or pending state is changed.
-            for entry in target_entries.iter().filter(|e| e.kind == "symlink") {
-                symlink_bytes(&client, &operation, tree_commit, &entry.path)?;
-            }
+            verify_symlink_support(&client, &operation, tree_commit, &target_entries)?;
             preflight_obstructions(
                 &root,
                 &old_entries,
@@ -1274,6 +1272,118 @@ fn symlink_bytes(client: &JjClient, operation: &str, commit: &str, path: &Path) 
     )?;
     diagnostics(output.stderr());
     parse_added_symlink(output.stdout_bytes()).with_context(|| format!("JJ cannot expose the frozen symlink target at {}; capability gap detected before materialization", path.display()))
+}
+
+/// JJ computes whole-tree copy records before applying a diff's fileset. Batch
+/// capability checks so that cost is paid once per group, not once per symlink.
+/// Keep the individual immutable extractor for recovery and future-link queries.
+fn verify_symlink_support(
+    client: &JjClient,
+    operation: &str,
+    commit: &str,
+    entries: &[Entry],
+) -> Result<()> {
+    let paths = entries
+        .iter()
+        .filter(|entry| entry.kind == "symlink")
+        .map(|entry| entry.path.as_path())
+        .collect::<Vec<_>>();
+    // Bound argv size while preserving JJ file-list/tree-diff traversal order.
+    for paths in paths.chunks(128) {
+        let mut args = vec![
+            "--config=diff.git.show-path-prefix=true".to_owned(),
+            "diff".to_owned(),
+            "--from".to_owned(),
+            "root()".to_owned(),
+            "--to".to_owned(),
+            commit.to_owned(),
+            "--git".to_owned(),
+        ];
+        for path in paths {
+            args.push(format!(
+                "file:{}",
+                serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?
+            ));
+        }
+        let output = client.run_at(operation, &args)?;
+        diagnostics(output.stderr());
+        parse_added_symlink_batch(output.stdout_bytes(), paths)
+            .context("JJ cannot expose frozen symlink targets; capability gap detected before materialization")?;
+    }
+    Ok(())
+}
+
+fn parse_added_symlink_batch(mut remaining: &[u8], paths: &[&Path]) -> Result<()> {
+    fn consume<'a>(remaining: &mut &'a [u8], expected: &[u8]) -> Result<()> {
+        *remaining = remaining
+            .strip_prefix(expected)
+            .context("unexpected symlink diff header or boundary")?;
+        Ok(())
+    }
+    fn line<'a>(remaining: &mut &'a [u8]) -> Result<&'a [u8]> {
+        let end = remaining
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .context("truncated symlink diff line")?
+            + 1;
+        let (line, rest) = remaining.split_at(end);
+        *remaining = rest;
+        Ok(line)
+    }
+    for path in paths {
+        let start = remaining;
+        let path = path.to_str().context("tracked path not UTF-8")?;
+        // Consume known pathname bytes literally. Splitting at apparent headers
+        // would let newline filenames spoof another file or a payload hunk.
+        consume(
+            &mut remaining,
+            format!("diff --git a/{path} b/{path}\nnew file mode 120000\nindex ").as_bytes(),
+        )?;
+        let index = std::str::from_utf8(line(&mut remaining)?)?.trim_end_matches('\n');
+        let (old, new) = index
+            .split_once("..")
+            .context("invalid symlink diff index")?;
+        if old.is_empty()
+            || !old.bytes().all(|b| b == b'0')
+            || new.is_empty()
+            || !new.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            bail!("invalid added symlink diff index");
+        }
+        consume(
+            &mut remaining,
+            format!("--- /dev/null\n+++ b/{path}\n").as_bytes(),
+        )?;
+        let hunk = std::str::from_utf8(line(&mut remaining)?)?;
+        let range = hunk
+            .strip_prefix("@@ -0,0 +1")
+            .and_then(|s| s.strip_suffix(" @@\n"))
+            .context("JJ did not provide a full-addition symlink hunk")?;
+        let count = if range.is_empty() {
+            1
+        } else {
+            range
+                .strip_prefix(',')
+                .context("invalid symlink hunk range")?
+                .parse::<usize>()?
+        };
+        if count == 0 {
+            bail!("empty symlink targets are unsupported");
+        }
+        for _ in 0..count {
+            if !line(&mut remaining)?.starts_with(b"+") {
+                bail!("symlink diff contains a non-addition");
+            }
+        }
+        if remaining.starts_with(b"\\ No newline at end of file\n") {
+            consume(&mut remaining, b"\\ No newline at end of file\n")?;
+        }
+        parse_added_symlink(&start[..start.len() - remaining.len()])?;
+    }
+    if !remaining.is_empty() {
+        bail!("symlink diff contains unexpected files or trailing data");
+    }
+    Ok(())
 }
 
 fn parse_added_symlink(diff: &[u8]) -> Result<Vec<u8>> {
@@ -2456,6 +2566,21 @@ mod tests {
                 assert!(commands.contains("--config=fsmonitor.backend=none --config=snapshot.auto-track=none() --config=snapshot.auto-update-stale=false diff"), "{commands}");
                 assert!(!commands.contains("file show"), "{commands}");
             }
+            for count in [0usize, 43, 129] {
+                for index in 0..count {
+                    let path = temporary.path().join(format!("link-{index:03}"));
+                    if !path.is_symlink() {
+                        std::os::unix::fs::symlink("tracked", path).unwrap();
+                    }
+                }
+                snapshot(&client).unwrap();
+                let (operation, commit) = current_commit(&client).unwrap();
+                let entries = entries(&client, &operation, &commit).unwrap();
+                fs::write(&log, "").unwrap();
+                verify_symlink_support(&client, &operation, &commit, &entries).unwrap();
+                let commands = fs::read_to_string(&log).unwrap();
+                assert_eq!(commands.lines().count(), count.div_ceil(128), "{commands}");
+            }
             return;
         }
         // Child-process environment keeps the executable wrapper isolated from
@@ -2493,6 +2618,31 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn batched_symlink_proof_preserves_unusual_path_and_payload_boundaries() {
+        let (temporary, client) = verification_fixture();
+        for (path, target) in [
+            ("a", "ordinary"),
+            ("b\n@@ -0,0 +1,999 @@\n", "one\ntwo\n"),
+            ("c space", "diff --git a/fake b/fake\nnew file mode 120000"),
+            ("d\n+++ b/fake", "+target\n\\ No newline at end of file\n"),
+        ] {
+            let path = temporary.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(target, path).unwrap();
+        }
+        snapshot(&client).unwrap();
+        let (operation, commit) = current_commit(&client).unwrap();
+        let entries = entries(&client, &operation, &commit).unwrap();
+        verify_symlink_support(&client, &operation, &commit, &entries).unwrap();
+        let diff = b"diff --git a/a b/a\nnew file mode 120000\nindex 0000000000..1234567890\n--- /dev/null\n+++ b/a\n@@ -0,0 +1 @@\n+target\n\\ No newline at end of file\n";
+        parse_added_symlink_batch(diff, &[Path::new("a")]).unwrap();
+        assert!(parse_added_symlink_batch(diff, &[Path::new("b")]).is_err());
+        assert!(parse_added_symlink_batch(diff, &[Path::new("a"), Path::new("b")]).is_err());
+        assert!(parse_added_symlink_batch(&diff[..diff.len() - 3], &[Path::new("a")]).is_err());
+        assert!(parse_added_symlink_batch(diff, &[]).is_err());
     }
 
     #[test]

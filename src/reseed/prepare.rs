@@ -766,9 +766,7 @@ pub(super) fn execute(
                 &goal_entries,
             )?;
         }
-        for entry in goal_entries.iter().filter(|entry| entry.kind == "symlink") {
-            symlink_bytes(&client, &operation, &goal, &entry.path)?;
-        }
+        verify_symlink_support(&client, &operation, &goal, &goal_entries)?;
         if batch.selected_commit.is_none() {
             let unchanged_source = if let Some(selected) = &batch.source_selection {
                 selected.verify_source_at(&client, &operation).is_ok()
