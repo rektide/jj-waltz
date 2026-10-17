@@ -365,7 +365,7 @@ pub(super) fn preflight(
             );
         }
     }
-    let context = crate::context::discover(Some(source));
+    let context = checked_context(&JjClient::new(source))?;
     let name = context
         .jj
         .workspace_name
@@ -558,12 +558,9 @@ fn validate(batch: &Batch) -> Result<()> {
     batch.source_identity.verify(&batch.source)?;
     batch.source_jj_identity.verify(&batch.source.join(".jj"))?;
     let client = JjClient::new(&batch.source);
+    let context = checked_context(&client)?;
     if repository(&client)? != batch.repository
-        || crate::context::discover(Some(&batch.source))
-            .jj
-            .workspace_name
-            .as_ref()
-            != Some(&batch.source_name)
+        || context.jj.workspace_name.as_ref() != Some(&batch.source_name)
     {
         bail!("preparation source/repository registration changed");
     }

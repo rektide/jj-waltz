@@ -449,6 +449,7 @@ pub(super) fn run(
         if repository(&source_client)? != repository_path {
             bail!("source must belong to the same JJ repository as the targets");
         }
+        checked_context(&source_client)?;
         for (name, root) in &inventory.roots {
             if root == &source && store.pending(name)?.is_some() {
                 bail!("source has a pending reseed; resume it before using it as a source");
@@ -735,6 +736,7 @@ pub(super) fn run(
             bail!("source changed during initial verified capture; pause writers before retrying");
         }
         let facts = client.workspace_target_facts_at(&operation)?;
+        let mut symlink_commits = BTreeSet::new();
         for name in &names {
             let root = inventory.root(name)?.canonicalize()?;
             let fact = facts.get(name).context("selected workspace disappeared")?;
@@ -779,7 +781,9 @@ pub(super) fn run(
             // Symlink extraction is a real CLI capability, not inferred from
             // file-list typing. Prove both current and future trees before any
             // target's sparse checkout or pending state is changed.
-            verify_symlink_support(&client, &operation, tree_commit, &target_entries)?;
+            if symlink_commits.insert(tree_commit) {
+                verify_symlink_support(&client, &operation, tree_commit, &target_entries)?;
+            }
             preflight_obstructions(
                 &root,
                 &old_entries,
@@ -967,8 +971,13 @@ impl Inventory {
                 }
             }
         }
-        let context = crate::context::discover(Some(client.cwd()));
-        let expected_repository = repository(client)?;
+        let context = checked_context(client)?;
+        let expected_repository = context
+            .jj
+            .repository_path
+            .as_ref()
+            .context("cannot verify JJ repository identity")?
+            .canonicalize()?;
         // A workspace named `default` need not own the repository. Only the
         // unique registered checkout containing the actual repository qualifies.
         let owners = roots
@@ -1001,7 +1010,7 @@ impl Inventory {
         {
             bail!("primary JJ workspace discovery disagrees with repository owner registration");
         }
-        let primary = crate::context::discover(Some(default));
+        let primary = checked_context(&JjClient::new(default))?;
         if primary.jj.workspace_root.as_ref() != Some(default)
             || primary.jj.workspace_name.as_ref() != Some(primary_name)
             || repository(&JjClient::new(default))? != expected_repository
@@ -1033,6 +1042,16 @@ impl Inventory {
 }
 
 fn repository(client: &JjClient) -> Result<PathBuf> {
+    // Native metadata already names the repository. Full Git/JJ topology is
+    // inspected at selection/ownership boundaries, not rediscovered for every
+    // repeated identity proof while refilling the same registered directories.
+    crate::context::repository_path(client.cwd())
+        .map_err(anyhow::Error::msg)?
+        .canonicalize()
+        .context("cannot resolve JJ repository identity")
+}
+
+fn checked_context(client: &JjClient) -> Result<crate::context::ContextReport> {
     let context = crate::context::discover(Some(client.cwd()));
     if context
         .diagnostics
@@ -1049,12 +1068,7 @@ fn repository(client: &JjClient) -> Result<PathBuf> {
                 .join("; ")
         );
     }
-    context
-        .jj
-        .repository_path
-        .context("cannot verify JJ repository identity")?
-        .canonicalize()
-        .context("cannot resolve JJ repository identity")
+    Ok(context)
 }
 
 fn link_config_bytes(root: &Path) -> Result<Vec<(String, Option<Vec<u8>>)>> {
@@ -1105,7 +1119,7 @@ fn validate_target(
     if root == default || root == source || root.starts_with(source) || source.starts_with(root) {
         bail!("workspace {name} is primary/source or overlaps the source; not an eligible target");
     }
-    let context = crate::context::discover(Some(root));
+    let context = checked_context(&JjClient::new(root))?;
     if context
         .jj
         .primary_checkout
@@ -1322,7 +1336,7 @@ fn verify_symlink_support(
 }
 
 fn parse_added_symlink_batch(mut remaining: &[u8], paths: &[&Path]) -> Result<()> {
-    fn consume<'a>(remaining: &mut &'a [u8], expected: &[u8]) -> Result<()> {
+    fn consume(remaining: &mut &[u8], expected: &[u8]) -> Result<()> {
         *remaining = remaining
             .strip_prefix(expected)
             .context("unexpected symlink diff header or boundary")?;
@@ -1962,6 +1976,11 @@ fn validate_identities(plan: &Pending) -> Result<()> {
     {
         bail!("repository identity changed since pending plan");
     }
+    match fs::symlink_metadata(plan.root.join(".git")) {
+        Ok(_) => bail!("target acquired Git metadata since frozen plan; pending retained"),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("cannot recheck target Git metadata"),
+    }
     if plan.sparse != ["."] {
         bail!("pending sparse pattern unsupported");
     }
@@ -2302,13 +2321,12 @@ fn execute(store: &Store, default: &Path, plan: &mut Pending, resume: bool) -> R
         transition(store, plan, Phase::Clearing)?;
         reconstruct_current_tree(plan)?;
     } else {
-        let expected = entries(&client, &plan.target_operation, &plan.desired_commit)?;
         verify_disk(
             &client,
             &plan.target_operation,
             &plan.desired_commit,
             &plan.root,
-            &expected,
+            &plan.entries,
         )?;
         if current_commit(&client)?.1 != plan.desired_commit {
             bail!("target WC revision changed during tracked-tree verification; pending retained");
@@ -3049,6 +3067,29 @@ mod tests {
         let target = JjClient::new(&plan.root);
         let (operation, commit) = current_commit(&target).unwrap();
         assert!(exact_empty_child(&target, &operation, &commit, &plan.source_commit).unwrap());
+    }
+
+    #[test]
+    fn identity_recheck_refuses_replaced_repository_pointer_and_new_git_metadata() {
+        let Some((_temporary, _store, plan)) = fixture(false) else {
+            return;
+        };
+        validate_identities(&plan).unwrap();
+        let pointer = plan.root.join(".jj/repo");
+        let original = fs::read(&pointer).unwrap();
+        fs::write(&pointer, plan.root.to_str().unwrap()).unwrap();
+        let error = validate_identities(&plan).unwrap_err();
+        assert!(error.to_string().contains("repository identity changed"));
+        fs::write(pointer, original).unwrap();
+        validate_identities(&plan).unwrap();
+
+        fs::write(plan.root.join(".git"), "gitdir: operator-owned\n").unwrap();
+        let error = validate_identities(&plan).unwrap_err();
+        assert!(error.to_string().contains("target acquired Git metadata"));
+        assert_eq!(
+            fs::read(plan.root.join("different")).unwrap(),
+            b"feature change\n"
+        );
     }
 
     #[test]
