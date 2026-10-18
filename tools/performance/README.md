@@ -1,265 +1,152 @@
 ---
 type: ToolGuide
-title: Repeatable prepare and reseed performance assessment
-description: Retained synthetic fixtures, native or instrumented timings, subprocess counts, correctness checks, and deterministic regression budgets.
+title: Rust-owned preparation and reseed performance controls
+description: Checked-in native fixtures, balanced variants, single-reseed samples, Rust JJ/Git process counting and retained correctness evidence.
 resource: /tools/performance/README.md
-status: maintained
+status: native-implemented-retirement-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
-updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-17 }
+updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
 sources:
-  - resource: opencode://ses_eb75a514cffe7jUOMWNZAIm3fX
-    title: Measured journal deletion with matched native executables, verified no per-file subprocess growth, and retained results without changing the harness
-  - resource: opencode://ses_eb87f7b4cffe23FlLmOW2DpE7o
-    title: Added uninstrumented end-to-end timing with explicit methodology compatibility and reviewed the strict-copy baseline
-  - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
-    title: Added a strict GNU cp reflink baseline to separate copying cost from workspace coordination
-  - resource: opencode://ses_eb8947cfaffeQ1jxia03URCymY
-    title: Formalized the performance harness, isolated interpreter execution, symlink and payload dimensions, JJ/git counting, and comparison checks
-  - resource: /design/up-performance/handoff0.glm53m.md
-    title: Incident context motivating per-file process scaling checks and mise-safe executable selection
+  - resource: "opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu"
+    title: Replaced supported performance commands with native Rust, diagnosed the old feature fixture expectation and proved native/counting cases against preserved BEFORE
+  - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
+    title: Historical matched native journal-deletion measurements and process-count controls
+  - resource: "opencode://ses_eb87f7b4cffe23FlLmOW2DpE7o"
+    title: Historical separation of native and instrumented timing
+  - resource: "opencode://ses_eb8a7487affeE2smndZ914OQMS"
+    title: Historical strict GNU cp baseline
+  - resource: "opencode://ses_eb8947cfaffeQ1jxia03URCymY"
+    title: Original performance harness, fixtures, subprocess counts and compatibility checks
   - resource: /src/reseed/prepare.rs
-    title: Source-only preparation contract and freshen argv configuration
+    title: Source-only preparation contract measured by native phases
   - resource: /tests/prepare.rs
-    title: Local-remote fixture and isolated configuration precedent
+    title: Isolated local remote and configuration precedent
+  - resource: /design/up-performance/handoff0.glm53m.md
+    title: Historical motivation for per-file process-count regression controls
 ---
 
-# Performance assessment
+# Native performance tooling
 
-`measure.py` measures source-only preparation, exact-commit reseed preview, and
-actual reseed in an isolated synthetic repository. **Subprocess counts are the
-primary regression metric. Default timings include instrumentation overhead;
-use `--timing-mode native` for actual elapsed time without logging wrappers.** Python 3.9+
-stdlib, POSIX, Git, JJ, and a built `jw` are required.
+`jw-perf` is a **development-only Cargo member**, not a production dependency.
+It shares the Rust artifact/schedule/execution/report primitives in the sibling
+`diff-dirs/perf/runner` checkout. No Python runtime, import, shell wrapper or
+package installation is needed by supported commands. Linux, native JJ/Git,
+GNU cp and a required-reflink filesystem are needed. Use configured Rust 1.101
+nightly; this does not change JW's production compiler policy or release profile.
 
 ## Run
 
-Build the binary before measuring; prefer the same release profile for both sides:
-
 ```sh
-cargo build --release --locked
-python3 tools/performance/measure.py run \
-  --jw target/release/jw --jj /absolute/path/to/real/jj \
-  --files 100 --workers 2 --payload-files 100 --payload-bytes 4096
+cargo build --locked --release -p jj-waltz-perf
+target/release/jw-perf run .test-agent/native-clean-NEW \
+  --baseline .test-agent/inline-policy/jw-before \
+  --baseline-provenance .test-agent/inline-policy/baseline.json \
+  --scenario clean --destinations 2 --feature-files 2 --blocks 8 --seed 1701
 ```
 
-For end-to-end speed comparisons, run both binaries with `--timing-mode native`:
+Every output must be NEW. Without `--candidate` / `--candidate-provenance`, both
+labels intentionally use the SAME saved baseline: this is a plumbing/noise
+control, not an optimization. Add an independently built candidate and its JSON
+build provenance (original binary `sha256`/`binary_sha256` required) for real A/B.
+Only a named incremental candidate should get `--require-clean-label candidate`.
+The historical baseline rewrites clean payload inodes; that is recorded behavior,
+not failed baseline latency/correctness. A mislabeled incremental candidate is
+rejected with its measured phases and rewrite counts retained.
+
+Scenarios: `init`, `clean`, `sparse`, `subtree`. All use equivalent NEW private
+payload resets, source guards and N independent destination workspaces.
+`--files`, `--symlinks`, `--feature-files`, `--payload-files`, `--payload-bytes`
+control dimensions; excessive feature requests fail rather than being truncated.
+The native fixture is synthetic, not an imported live source or an opencode
+performance claim. It exercises the actual nested ignored policy, relative
+symlinks and distinct named feature histories.
+
+`--phase prepare|preview|reseed` selects one native phase. `--phase all --scenario
+init` measures preparation, preview, and first-fill reseed separately and retains
+their sum. Preparation uses only a freshly created OWNED local Git remote and a
+Rust fixture installer; no network/live-donor fetch or user install is invoked.
+The installer counter must be exactly one; preview/preparation must preserve
+worker commits and payloads. Setup explicitly creates `.jj` repositories and
+checks every root/repository link before adding or measuring any workspace.
+
+**Feature contract:** reseed creates an empty child of the explicit donor goal;
+omitting `--at` does NOT retain the old worker feature tree. The old Python N2
+failure expected the wrong final tree. Rust checks the requested final goal/tree,
+actual root and parent, exact feature-file delta, and preserved old feature
+bookmark IDs/content separately. Payload bytes, links, modes and regular-file
+mtimes are checked outside native timing. Clean inode/mtime changes are streamed
+to disk and counted without a full-tree runtime map.
+
+## Native versus instrumented counts
 
 ```sh
-python3 tools/performance/measure.py run \
-  --jw target/release/jw --jj /usr/local/bin/jj --timing-mode native \
-  --files 8555 --symlinks 43 --workers 2 --payload-files 100 --payload-bytes 4096
+target/release/jw-perf run .test-agent/native-counts-NEW \
+  --baseline .test-agent/inline-policy/jw-before \
+  --baseline-provenance .test-agent/inline-policy/baseline.json \
+  --phase all --scenario init --destinations 1 --timing instrumented
+target/release/jw-perf check .test-agent/native-counts-NEW --max-jj-calls total=500
+target/release/jw-perf compare SMALL LARGE --scaling \
+  --max-jj-growth 0 --max-file-show-growth 0 --max-git-growth 0
 ```
 
-Native mode uses symlinks to the resolved native JJ/Git executables, not wrappers.
-It records phase elapsed times and performs the same correctness checks, but
-does not claim subprocess counts. Count budgets/growth limits require instrumented
-mode. Comparison always rejects mixed modes; omitted mode in older schema-1
-results means instrumented. Run benchmarks sequentially, not against each other.
+Native mode runs the real tools directly. Instrumented mode uses Rust symlink/
+exec wrappers to log argv boundaries, cwd, PID and chronology for JJ/Git calls;
+wrapper overhead is included and **must not be called native latency**. Count
+gates require instrumented mode and successful complete campaigns. Budgets use
+`PHASE=N` for `prepare`, `preview`, `reseed`, `total`; file-show and Git budgets
+have corresponding flags. Scaling allows only increased regular-file count,
+requires identical JW binaries, tool/adapter hashes and Rust engine identity,
+and gates maximum observed phase counts. Comparisons never silently pool runs.
+Absolute native child paths/private Git exec helpers can bypass PATH wrappers:
+these are observed tool calls, not system-wide process accounting.
 
-Use actual native executables: script/tool-manager shims are rejected, and
-symlinks resolve to their native binary. For mise installations, obtain the real
-JJ path with `mise which jj` in your normal environment. The installer uses the
-running interpreter's resolved `sys.executable`, never `which python3` under the
-isolated HOME. Logging wrappers execute the resolved binaries directly.
+`campaign.json`, append-only `samples.jsonl`, `summary.json`, immutable artifact
+copies, per-command stdout/stderr/process JSON and raw `*.processes.jsonl` all
+remain under the owned output. Mirrored seeded blocks balance chronology;
+external I/O load is not eliminated. API timing is never substituted for JW
+native-process timing. Setup/reset/hash/verification costs are retained and
+excluded. Native command records include CPU, Linux peak RSS and timeout status;
+180s command timeouts kill ordinary descendant process groups. No global cache
+drops, automatic cleanup, significance test or causal load correction exists.
 
-Each invocation prints its retained directory to stderr and `result.json` path
-to stdout. Default output is ignored `.test-agent/performance/files-N-<unique>/`.
-`--output-dir` selects another retained location on the **same filesystem as this
-checkout**; a device mismatch fails. All donor/worker roots share that filesystem.
-Use a filesystem supporting the CoW operation required by `jw`; unsupported CoW
-is a failed experiment, not a speed result. No existing repository is reseeded.
-Fixtures and failures are retained until deliberately removed by the operator.
-
-Dimensions:
-
-| Option | Default | Meaning |
-| --- | ---: | --- |
-| `--files` | 1000 | Regular tracked data files; try 100, 1000, and 8555 |
-| `--symlinks` | 0 | Additional tracked relative symlinks pointing to data files |
-| `--workers` | 2 | Workspace refill targets |
-| `--payload-files` | 100 | Ignored payload files in groups of 100 |
-| `--payload-bytes` | 4096 | Bytes per payload file, with deterministic contents |
-| `--feature-files` | 0 | Data files modified in a common feature commit used by targets |
-| `--timeout` | 180 | Per-command timeout in seconds; increase explicitly for slow baselines |
-
-There is also one tracked `.gitignore` and one ignored preparation counter.
-For the incident's 8512-regular-file/43-symlink shape, use `--files 8512
---symlinks 43` (plus the harness's `.gitignore`). This reproduces the shape, not
-the original application's contents. Payload data is repetitive, so filesystem
-compression and cache behavior differ from real dependency trees. Feature mode
-tests a shared modified target tree; it does not simulate arbitrary merge conflicts.
-
-The preparation command runs exactly once, generates the ignored payload, and
-increments a counter. Its reported immutable source commit is passed unchanged
-to both preview and actual reseed. The tool checks that preparation and preview
-preserve target commit IDs, preview copies no payload, reseed never reruns the
-installer, and every target has the expected tracked tree, data, symlinks, and
-payload bytes/count. Verification commands are excluded from phase measurements.
-
-To measure an older binary with the previous **source-only** `up` interface:
+Raw copy control (owned source from a retained sample, never a live workspace):
 
 ```sh
-python3 tools/performance/measure.py run \
-  --jw /absolute/path/to/preserved-before-jw --jj /absolute/path/to/real/jj \
-  --prepare-command up --files 100 --timeout 1800
+target/release/jw-perf copy-baseline OWNED_CASE/repo .test-agent/native-copy-NEW
 ```
 
-This explicit measurement adapter parses that old command's source ID; it does
-not enable `up` in the production CLI or support arbitrary older workflows.
+This uses strict GNU cp on tracked/payload selections, excluding JJ administration
+and fixture config, with independent payload verification. It is not whole reseed.
 
-## Compare and gate process counts
+## Verified checkpoint and development
 
-Keep fixture options and environment identical when comparing before/after:
+Preserved BEFORE SHA: `03e0ada406426d9496c602e22c9dd0de452f788e424dab9b7069c07f812e715c`.
+Actual native N2/two-feature clean, N2/two-feature full first-fill phases, N1 sparse
+and N2 subtree smokes passed. Clean BEFORE rewrote four regular payload inodes per
+target with zero mtime changes, correctly retained as historical behavior.
+Instrumented full phases passed at 4 and 100 tracked files; zero JJ/file-show/Git
+process growth gates passed. Those tiny controls are NOT real performance wins.
+
+Evidence is retained at `.test-agent/rust-native-*`. Earlier failed first-fill
+attempts are retained too: preparation correctly refused a local-only goal, then
+a described unpublished source child. The corrected isolated local-remote,
+undescribed-empty-WC fixture passed. The deliberate
+`rust-native-reject-legacy-as-incremental` campaign fails only the explicit
+candidate invariant, preserving baseline correctness and all raw results.
 
 ```sh
-python3 tools/performance/measure.py compare BEFORE/result.json AFTER/result.json
-python3 tools/performance/measure.py check AFTER/result.json \
-  --max-file-show-calls total=0 --max-jj-calls reseed=500
+cargo nextest run -p jj-waltz-perf
+cargo clippy -p jj-waltz-perf --all-targets -- -D warnings
+cargo fmt -p jj-waltz-perf -- --check
 ```
 
-Budgets above are examples to choose deliberately, not established guarantees.
-`run` accepts the same repeated `--max-jj-calls`, `--max-file-show-calls`, and
-`--max-git-calls PHASE=N` options. `PHASE` is `prepare`, `reseed-preview`, `reseed`,
-or `total`. A correctness or budget failure makes `run` return 1 and retain its
-failed result. `check` and `compare` reject failed or malformed results.
+Five tests cover literal Rust exec-wrapper argv, command classification, native
+count requirements, exact feature dimension refusal and streaming inode order.
+Shared Rust primitives and actual library scenario instruments have their own
+tests in diff-dirs. Integrated candidate/large-workload timing is separate work.
 
-For a deterministic per-file subprocess regression check, run **the same binary**
-with 100 and 8555 files, holding all other options fixed:
-
-```sh
-python3 tools/performance/measure.py compare SMALL/result.json LARGE/result.json \
-  --scaling --max-jj-growth 0 --max-file-show-growth 0 --max-git-growth 0
-```
-
-Growth limits apply to each phase and the total; zero detects any additional
-processes as tracked-file count grows. Adjust the accepted fixed growth only
-with an explained reason. Normal comparison also accepts these growth limits.
-No wall-time CI gate is supplied.
-
-Comparison requires schema v1, successful correctness checks, identical harness
-hash and recorded environment (JJ/Git/Python identities, host/platform, CPU count,
-filesystem identity/options), and matching fixture configuration. `--scaling`
-allows only increased regular-file count, and also requires the same `jw` hash
-and preparation command. Ordinary before/after comparison permits a changed
-`jw` binary and `up` → `prepare` measurement adapter. A mismatched comparison
-returns 2 rather than presenting a misleading delta.
-
-To reuse retained schema-1 count evidence across this harness update, explicitly
-pass `compare --allow-harness-change BEFORE/result.json AFTER/result.json` after
-reviewing the harness changes. This relaxes only the harness hash, prints a
-warning, and retains mode, environment, fixture, and verification checks. It is
-not permission to mix native and instrumented timings. Prefer rerunning both
-sides with the current harness when making elapsed-time claims.
-
-## Evidence and limits
-
-### Journal deletion checkpoint
-
-On 2026-10-17, the unchanged harness measured the preserved pre-cut executable
-and the forward-only reseed/prepare implementation sequentially. Both native
-runs passed all correctness checks with 8,555 tracked data files, 43 symlinks,
-two workers, and 100 payload files of 4,096 bytes:
-
-| Phase | Preserved pre-cut | Journal-free | + payload-walk removal |
-| --- | ---: | ---: | ---: |
-| Prepare | 5.387s | 2.778s | 2.418s |
-| Reseed preview | 2.223s | 1.918s | 1.768s |
-| Reseed | 7.456s | 5.926s | 5.080s |
-| Total | 15.066s | 10.622s | 9.267s |
-
-The third column removes payload hashing/stat-stamping, the untracked-
-`.gitignore` tree hunt, double-walk cloning, and the per-target symlink scan.
-Reseed lands about 24% below the separately supplied 6.64s/two-worker baseline;
-the matched run is about 32% faster. These are warm-cache native synthetic
-observations, not isolated measurements of any single cost or production
-latency. Native result files retain executable hashes and the matching
-JJ/Git/Python, host, filesystem, harness, and fixture identities:
-
-- Before: `.test-agent/performance/files-8555-er11c5f8/result.json`
-- After: `.test-agent/performance/files-8555-1nmrhylp/result.json`
-- Payload-walk removal: `.test-agent/performance/files-8555-3wcbnecv/result.json`
-
-The payload-walk pass also timed `jw add --copy-ignored` on a separate
-30,000-file/123 MB donor (`python3 .test-agent/speed/demo.py`): 3.56s with the
-preserved executable versus 1.53s after, both copying all 30,000 files. This
-responds to reported `jw add` and `reseed --dry-run` timeouts against a large
-real `node_modules` donor, where three full byte-read passes dominated.
-
-Instrumented scaling used the same journal-free executable with 100 then 8,555
-files, keeping symlink/worker/payload dimensions fixed. Comparison passed
-`--scaling --max-jj-growth 0 --max-file-show-growth 0 --max-git-growth 0`:
-183/102/276 JJ calls for prepare/preview/reseed, 561 total, at both sizes.
-The fixed 18 `file show` calls assemble ignore rules; there are no per-data-file
-calls. The bounded-verifier unit gate separately requires zero `file show` calls.
-
-- Small: `.test-agent/performance/files-100-ucef8t5j/result.json`
-- Large: `.test-agent/performance/files-8555-budtek5u/result.json`
-
-No harness changes were needed for removal of the resume flags. Fixtures remain
-ignored retained evidence, not committed source or automatically pruned data.
-
-### Raw copying baseline
-
-On Linux with GNU cp, measure the copying lower bound independently of JJ:
-
-```sh
-python3 tools/performance/copy_baseline.py RETAINED/result.json
-```
-
-This uses `cp -a --reflink=always` to copy the donor's tracked baseline and
-prepared payload into a fresh retained directory. It records uninstrumented
-elapsed time, verifies the copied file/link count and a private tracked inode,
-and retains JSON evidence beside the fixture. It excludes `.jj`, worker clearing,
-feature application, and verification. It is a copying baseline, not a complete
-workspace operation or a replacement for correctness checks.
-
-### Measurement interpretation
-
-`result.json` records schema version, binary path/hash/version, harness hash,
-environment, fixture shape/path, exact source/target commit IDs, phase argv,
-timing mode and seconds, per-tool call counts and command histograms (instrumented mode only), verification,
-and raw log references. Each `*.processes.jsonl` record preserves the tool, full
-argument vector, cwd, PID, and timestamp. `commands.jsonl` references stdout and
-stderr for setup, measured commands, and verification; `failure.txt` retains
-exception details. Paths in log references are relative to the retained directory.
-
-JJ histograms distinguish `file show`, `diff --git`, and other `diff` calls; Git
-histograms expose `check-ignore` separately. PATH wrappers count nested JJ/Git
-invocations too. Absolute-path child execution and Git's private exec-path
-helpers can bypass wrappers; this is a count of observed tool invocations, not
-a system-wide process profiler. Raw argv logs let a reviewer inspect grouping.
-
-Default timings are **instrumented warm-cache observations**, including a shell and
-Python startup per observed invocation. That overhead can dominate small JJ/Git
-calls and magnify a per-file subprocess bottleneck. Do not report these values
-as raw production latency or infer a universal latency promise. Setup/cloning,
-binary hashing, and correctness checks are excluded; the configured payload
-installer is included in the preparation phase. Setup warms caches, preview
-warms reseed, and this harness does not drop caches. Repeat fresh experiments
-under comparable host load when interpreting elapsed deltas. Keep the same
-interpreter and instrumentation on both sides.
-
-Native mode removes that per-invocation logging overhead, but remains a warm-cache
-synthetic observation with the same exclusions and cache order. It is the mode
-to use for end-to-end elapsed-time improvements, not a cold-cache latency promise.
-
-External commands have bounded timeouts. On timeout the harness kills the POSIX
-process group, including ordinary descendants; independently detached processes
-cannot be guaranteed covered. A failed phase keeps its partial process log and
-all prior evidence. There is no automatic pruning or reconciliation.
-
-## Maintain
-
-```sh
-python3 -m unittest discover -s tools/performance -p 'test_*.py' -v
-```
-
-Tests cover argv boundaries, grouping, malformed/partial results, compatibility,
-scaling restrictions, and deterministic budgets. After changing the harness,
-rerun both sides: harness hashes intentionally prevent mixing methodologies.
-Keep schema changes explicit and update the validator/tests together.
-
-See [contributing](../../CONTRIBUTING.md#performance-assessment) for the development
-entry point, [the incident handoff](../../design/up-performance/handoff0.glm53m.md)
-for the per-file verification failure that motivates these checks, and
-[source-only preparation](../../src/reseed/prepare.rs) for the measured contract.
+Python tooling is being deliberately retired after native parity; it is not a
+dependency or supported alternative. Historical methods/results remain in exact
+committed history, raw fixtures and frozen evidence. Recover the earlier guide
+with `git show a35da35d7635e14be70fb4aab37ea6edbd933ef8:tools/performance/README.md`;
+the same revision preserves its old `measure.py`, fixtures and test sources.
