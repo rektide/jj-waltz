@@ -7,7 +7,7 @@ status: commissioned-design
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Recovered the child-session discussion, commissioned the blocked Astra xhigh follow-up, and reviewed its returned authority-based design
+    title: Recovered the child-session discussion, reviewed Astra's returned design, then commissioned and source-reviewed the corrected JJ state and directory-move research
   - resource: /design/sync-scope/design0.gpt6a.md
     revision: b707a51d
     title: Returned independent design separating path preservation, presence updates, absence authority and JJ revision ownership
@@ -47,6 +47,12 @@ the proposed broader JW default are separate decisions: same-name overwrites,
 vanished mirror roots and future snapshot eligibility need human selection.
 The proposal includes alternatives and bounded semantic verification; it does
 not authorize implementation or reopening the cancelled benchmark.
+
+The subsequent human request for JJ/upstream-JW state research is answered by
+[G's corrected report](jj-state0.glm53max.md) and the
+[parent source-review conclusions](jj-state-review0.gpt6a.md). These distinguish
+target identity from reusable donor file-state caches and bound the proposed
+move-aside/restore protocol. They are research, not implemented move behavior.
 
 ## Present direction
 
