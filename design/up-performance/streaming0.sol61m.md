@@ -129,10 +129,14 @@ recovery applies; no journal, receipt, automatic repair or resume was added.
 Stat-key convergence does not repair mode-only or same-size/same-mtime byte edits.
 Stable paths and mount topology remain required, not a hostile-writer sandbox.
 
-No latency benchmarks or new benchmark framework were run. Incoming reviewed Rust
-tooling should measure process counts, clean zero-write behavior, sparse/one-sided
-changes and real-shaped multi-target workloads against the preserved binary.
-Library test reports were accepted from the parent, not redundantly rerun here.
+The accepted Rust tools now drive bounded sequential native synthetic controls;
+their immutable inputs, scope and raw locations are recorded in
+[integrated controls](integrated-controls0.sol61m.md): 16/16 campaigns and 64/64
+samples passed, including clean candidate identity invariants. Mixed descriptive
+timings do not select a default. Main-workload import and
+separate instrumented process-count evidence remain outstanding. No new benchmark
+framework was written. Library test reports were accepted from the parent, not
+redundantly rerun here.
 
 The experimental pool integration passed clean inode/mtime/ctime, sparse/subtree,
 selected leaf-root, and equal/one-sided refusal tests in default and feature

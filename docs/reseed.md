@@ -426,6 +426,9 @@ Each new prepare/reseed resolves its own policy and source selection.
   [reviewed library seam](../design/up-performance/diffdirs-review0.gpt6a.md).
 - [Streaming implementation](../design/up-performance/streaming0.sol61m.md):
   integration boundaries, native correctness checks and outstanding measurements.
+- [Integrated native controls](../design/up-performance/integrated-controls0.sol61m.md):
+  preserved serial/P4 build identities and bounded synthetic campaign evidence;
+  not a claim about the primary opencode workload.
 - [Incident handoff](../design/up-performance/handoff0.glm53m.md): preserved measurement evidence.
 - [Earlier reseed design](../design/workspace-reseed/reseed0.gpt6a.md) and [source design](../design/workspace-reseed/source-freshen0.gpt61sol.md): historical rationale, not the current recovery contract.
 - [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md): selection rationale.
