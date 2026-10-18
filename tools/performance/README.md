@@ -79,6 +79,23 @@ to disk and counted without a full-tree runtime map.
 
 ## Native versus instrumented counts
 
+### Integrated build variants
+
+The Cargo owner has wired non-default `payload-parallel` to optional `rayon`,
+`diff-dirs/parallel` and `diff-dirs-sync/parallel`. The default remains serial.
+Application pool code is owned separately; enabling the feature is not itself
+evidence that P4 ran. After that implementation is checkpointed:
+
+```sh
+cargo build --locked --release -p jj-waltz --target-dir target/perf-serial
+cargo build --locked --release -p jj-waltz --features payload-parallel --target-dir target/perf-p4
+```
+
+Preserve both executables with their exact source/feature/compiler/profile/hash
+provenance before timing. Supply each separately as `--candidate` with its own
+`--candidate-provenance`, using NEW runs of the same scenario/dimensions/seed.
+No rebuild belongs inside a measured campaign.
+
 ```sh
 target/release/jw-perf run .test-agent/native-counts-NEW \
   --baseline .test-agent/inline-policy/jw-before \
