@@ -7,7 +7,9 @@ status: proposed
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Traced current reseed and diff-dirs paths and designed command-scoped facts plus shared inline guards
+    title: Designed frozen facts and inline guards, then moved mount checks to batch topology preflight and reflink feasibility to actual application following human direction
+  - resource: "https://man7.org/linux/man-pages/man5/proc_pid_mountinfo.5.html"
+    title: Verified namespace-local mount topology and bind/stacked mount semantics for the revised front guard
   - resource: "file:///home/rektide/src/diff-dirs/design/fit/policy0.gpt6a.md"
     title: Main design, API semantics, recursive coverage, concurrency, and alternatives
   - resource: "file:///home/rektide/src/diff-dirs/design/fit/policy0.glm53m.md"
@@ -28,9 +30,11 @@ sources:
 
 # Reseed with frozen selection facts and inline payload guards
 
-**Recommendation:** freeze ignore/selection facts once per command; preserve
-selected payload through tracked refill; let comparison and recursive application
-perform payload guards using observations they already need.
+**Recommendation:** freeze ignore/selection facts and assess mount topology once
+per command; preserve selected payload through tracked refill; let comparison and
+recursive application perform cheap name/type guards using observations they
+already need. Actual reflink failures surface at application, without mandatory
+synthetic probes or per-entry mount-ID checks.
 
 The detailed design and alternatives live in
 [diff-dirs: inline inspection policy](file:///home/rektide/src/diff-dirs/design/fit/policy0.gpt6a.md).
@@ -43,7 +47,8 @@ This companion identifies the jw-specific changes. Both documents are proposals.
 - Workspace/repository ownership and root identities; target/source separation.
 - Full sparse state, conflicts, stale-state checks, paused-writer contract.
 - Snapshotted tracked work and whole-batch bookmark coverage.
-- Real reflink capability, selected-root path confinement and mount boundaries.
+- Selected-root path confinement and a batch mount-topology front guard covering
+  source traversal, tracked refill, and payload copy/removal footprints.
 - Selected roots ignored under both frozen source and desired rules; no tracked
   overlap under the trees whose paths will be removed or materialized.
 - Tracked-path obstructions and configured-link overlap/future existence.
@@ -51,12 +56,42 @@ This companion identifies the jw-specific changes. Both documents are proposals.
 ### Move to the payload's actual traversal
 
 - Nested administrative names on either side, including identical clean entries.
-- Unsupported special entries and nested mounted boundaries.
+- Unsupported special entries, using the file type already inspected.
 - Absolute-source-link diagnostics using the literal link already inspected.
+- Actual reflink success/failure during staged copying; an unchanged payload
+  requires no synthetic clone probe.
 
 The diff walker handles paired directories. The sync copier/remover handles
 one-sided descendants, absent-target initialization, and type transitions.
 A walker-only hook cannot replace all current guards.
+
+### Front-load topology, keep it out of the loop
+
+Read `/proc/self/mountinfo` once after binding workspace roots and before recursive
+selection/inspection. Reject nested mount points, including same-device bind
+mounts and mounted regular files, in every operated scope. Allow a mount at the
+workspace root itself; a mount at a selected payload root is still a nested
+boundary relative to that workspace. Include broader deletion scope for
+`--replace-content`. Keep source/target identity and overlap checks; different
+mount IDs do not prove separate storage.
+
+The main design specifies parsing, stacked mounts, bind aliases, platform limits,
+and unavailable-procfs behavior. This is a process-namespace topology assessment
+under stable mounts/path bindings, not a per-entry check or a guarantee against
+concurrent mount changes. Selection and payload walks then do no mount syscalls
+or per-entry mount-table lookups. Preparation that can change mount topology
+requires a fresh assessment after its external-command boundary.
+
+Drop mandatory `cow::probe_between` from the proposed fast path. Keep an optional
+small early-diagnostic probe if useful, but let real staged reflink operations
+report unsupported clones. A clone failure preserves the old destination leaf;
+earlier completed work remains partial progress. `ReflinkRequired` still means
+no silent copy fallback. Clone failures cannot protect recursive deletion, which
+is why the topology front guard remains important.
+
+Place an `INSERT MORE CHECKS HERE` comment at the front-guard seam, directing
+future stronger checks there rather than into the inner loop. The current code
+comment is a placement marker; it does not itself change existing validation.
 
 ## Scope partition is the prerequisite
 
@@ -93,6 +128,8 @@ Based on `324606bed3b562d866d57b0adc449f90c355c37c`:
 | Site | Proposed treatment |
 | --- | --- |
 | `run_inner`: early `validate_contents(source/target)` | Split immediate root/state checks from recursive validation; perform scope-aware validation once frozen selection is available. Leaving these full walks intact defeats fusion. |
+| `validate_same_mount` in selection/validation/copy/removal | Replace repeated per-entry calls with the batch topology assessment on the Linux fast path. Keep checks until that front guard is implemented. |
+| planning `cow::probe_between` | Remove the mandatory probe; actual staged clones report capability failures. An optional early-diagnostic mode may probe once per relevant filesystem pair. |
 | `IgnoreRules::new` during source/target planning | Build a command-owned context per distinct frozen tree + effective excludes; share target contexts where equal. |
 | `Patterns::select` | Keep adaptive outermost-root semantics; use a persistent native Git oracle, with memoized answers, rather than one process per candidate. |
 | initial `validate_payload_root` loop | Move interior guards and link warnings to guarded execution; use the same inspection kernel in read-only audit for dry-run. |
@@ -151,8 +188,8 @@ existing JJ snapshot behavior is separate from payload writes.
 3. Select streaming or strict-plan refusal timing; implement the complete
    comparison-plus-recursive-action guard coverage.
 4. Remove redundant interior walks and amend the maintained operator contract.
-5. Measure combined metadata/mount inspection and shared-source multi-target
-   streaming independently.
+5. Measure zero per-entry mount calls and zero mandatory probe work, then
+   shared-source multi-target streaming independently.
 
 Use native end-to-end measurements and separate syscall/process attribution, as
 in the [previous performance assessment](measurement1.gpt6a.md). That earlier

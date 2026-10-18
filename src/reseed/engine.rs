@@ -274,6 +274,10 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     }
     ensure_quiescence(&source_client)?;
     require_full(&source_client)?;
+    // INSERT MORE CHECKS HERE: future batch/root front guards, before traversal or mutation.
+    // See design/up-performance/inline-policy0.gpt6a.md: assess mount topology for
+    // source and selected targets once, instead of per-entry mount checks. Existing
+    // checks remain until that guard lands; actual reflink errors belong in apply.
     validate_contents(&source, true)?;
     let mut roots = BTreeSet::new();
     for name in &names {
