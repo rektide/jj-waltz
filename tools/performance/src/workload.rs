@@ -1,4 +1,4 @@
-use crate::{context::Context, instrumentation};
+use crate::{context::Context, instrumentation, snapshot::Snapshot};
 use clap::ValueEnum;
 use diff_dirs_perf_runner::{
     Result,
@@ -33,6 +33,7 @@ pub enum Timing {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    pub fixture: Option<PathBuf>,
     pub scenario: Scenario,
     pub phase: Phase,
     pub timing: Timing,
@@ -53,11 +54,19 @@ pub struct Reseed {
     own: PathBuf,
     fixture: Option<Fixture>,
     starting: Option<Vec<Option<String>>>,
+    imported: Option<Snapshot>,
+    payload_roots: Vec<PathBuf>,
+    feature_paths: Vec<PathBuf>,
 }
 
 impl Reseed {
     pub fn new(output: &Path, config: Config, jj: PathBuf, git: PathBuf) -> Result<Self> {
-        if config.destinations == 0 || config.files == 0 || config.payload_files == 0 || config.payload_bytes == 0 || config.feature_files > config.files {
+        if config.destinations == 0
+            || config.files == 0
+            || config.payload_files == 0
+            || config.payload_bytes == 0
+            || (config.fixture.is_none() && config.feature_files > config.files)
+        {
             return Err("positive dimensions required; requested feature count must not exceed tracked regular files".into());
         }
         if config.phase == Phase::All && config.scenario != Scenario::Init {
@@ -71,6 +80,9 @@ impl Reseed {
             own: std::env::current_exe()?,
             fixture: None,
             starting: None,
+            imported: None,
+            payload_roots: Vec::new(),
+            feature_paths: Vec::new(),
         })
     }
 }
@@ -82,30 +94,64 @@ impl Workload for Reseed {
         fs::copy(&self.own, &own)?;
         fs::set_permissions(&own, fs::Permissions::from_mode(0o555))?;
         self.own = own;
-        let seed = self.output.join("payload-seed");
-        fs::create_dir(&seed)?;
-        for index in 0..self.config.payload_files {
-            let directory = seed.join(format!("package-{:05}", index / 100));
-            fs::create_dir_all(&directory)?;
-            fs::write(directory.join(format!("file-{index:05}")), vec![(index % 251) as u8; self.config.payload_bytes])?;
-        }
-        std::os::unix::fs::symlink("package-00000/file-00000", seed.join("link"))?;
-        let base = self.output.join("payload-fixture");
-        fixture::setup(&base, Some(&seed))?;
-        let fixture: Fixture = serde_json::from_slice(&fs::read(base.join("fixture.json"))?)?;
+        let fixture = if let Some(root) = &self.config.fixture {
+            let root = fs::canonicalize(root)?;
+            let fixture: Fixture = serde_json::from_slice(&fs::read(root.join("fixture.json"))?)?;
+            fixture::verify(&root, &fixture, true)?;
+            let snapshot: Snapshot = serde_json::from_slice(&fs::read(root.join("snapshot.json"))?)?;
+            if snapshot.payload_roots.is_empty() {
+                return Err("import has no selected payload roots".into());
+            }
+            for path in snapshot.tracked.iter().chain(&snapshot.payload_roots) {
+                crate::snapshot::safe(path)?;
+            }
+            self.payload_roots = snapshot.payload_roots.clone();
+            self.feature_paths = snapshot
+                .tracked
+                .iter()
+                .filter(|path| {
+                    path.file_name().is_some_and(|n| n != ".gitignore")
+                        && fs::symlink_metadata(fixture.root.join("source").join(path)).is_ok_and(|m| m.is_file())
+                })
+                .take(self.config.feature_files)
+                .cloned()
+                .collect();
+            if self.feature_paths.len() != self.config.feature_files {
+                return Err("import does not contain the exact requested regular feature-file count".into());
+            }
+            self.imported = Some(snapshot);
+            fixture
+        } else {
+            let seed = self.output.join("payload-seed");
+            fs::create_dir(&seed)?;
+            for index in 0..self.config.payload_files {
+                let directory = seed.join("node_modules").join(format!("package-{:05}", index / 100));
+                fs::create_dir_all(&directory)?;
+                fs::write(directory.join(format!("file-{index:05}")), vec![(index % 251) as u8; self.config.payload_bytes])?;
+            }
+            std::os::unix::fs::symlink("package-00000/file-00000", seed.join("node_modules/link"))?;
+            let base = self.output.join("payload-fixture");
+            fixture::setup(&base, Some(&seed))?;
+            let fixture: Fixture = serde_json::from_slice(&fs::read(base.join("fixture.json"))?)?;
+            self.payload_roots = vec!["node_modules".into()];
+            self.feature_paths = (0..self.config.feature_files)
+                .map(|file| PathBuf::from(format!("files/file-{file:05}")))
+                .collect();
+            fixture
+        };
         self.fixture = Some(fixture);
         Ok(
             json!({"config":self.config,"scope":"native JW process incl startup; instrumented mode includes Rust exec wrappers",
             "environment":{"jj":instrumentation::identity(&self.jj)?,"git":instrumentation::identity(&self.git)?,"adapter":instrumentation::identity(&self.own)?},
             "feature_contract":"reseed creates an empty child of explicit donor goal; feature bookmarks preserve old work, not its current materialization",
-            "source_identity":diff_dirs_perf_runner::source_identity()}),
+            "source_identity":diff_dirs_perf_runner::source_identity(),"import":self.imported,"payload_roots":self.payload_roots}),
         )
     }
     fn sample(&mut self, control: &Control, stem: &Path, sample: &mut Sample) -> Result<()> {
         let setup_start = Instant::now();
         let config = &self.config;
         let fixture = self.fixture.as_ref().ok_or("uninitialized payload fixture")?;
-        let case = scenario::prepare(fixture, &stem.with_extension("case"), config.scenario, config.destinations)?;
+        let case = scenario::prepare_scoped(fixture, &stem.with_extension("case"), config.scenario, config.destinations, &self.payload_roots)?;
         if let Some(expected) = &self.starting {
             if expected != &case.starting_equivalence {
                 return Err("unmatched JW payload starting state".into());
@@ -115,23 +161,29 @@ impl Workload for Reseed {
         }
         let mut ctx = Context::new(&case.root, &self.jj, &self.git, &self.own)?;
         let source = case.root.join("repo");
-        fs::create_dir(&source)?;
-        fs::create_dir(source.join("files"))?;
-        for index in 0..config.files {
-            fs::write(source.join(format!("files/file-{index:05}")), tracked(index))?;
-        }
-        if config.symlinks > 0 {
-            fs::create_dir(source.join("links"))?;
-            for index in 0..config.symlinks {
-                std::os::unix::fs::symlink(
-                    format!("../files/file-{:05}", index % config.files),
-                    source.join(format!("links/link-{index:05}")),
-                )?;
+        fixture::clone_tree(&case.source(), &source)?;
+        if self.imported.is_none() {
+            fs::create_dir(source.join("files"))?;
+            for index in 0..config.files {
+                fs::write(source.join(format!("files/file-{index:05}")), tracked(index))?;
             }
+            if config.symlinks > 0 {
+                fs::create_dir(source.join("links"))?;
+                for index in 0..config.symlinks {
+                    std::os::unix::fs::symlink(
+                        format!("../files/file-{:05}", index % config.files),
+                        source.join(format!("links/link-{index:05}")),
+                    )?;
+                }
+            }
+            fs::write(source.join(".gitignore"), "node_modules/\ndist/\n")?;
         }
-        fs::write(source.join(".gitignore"), "node_modules/\ndist/\n.jwreseed.local.toml\n.perf-owned-native\n")?;
+        OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(source.join(".gitignore"))?
+            .write_all(b"\n.jwreseed.local.toml\n.perf-owned-native\n")?;
         fs::write(source.join(".perf-owned-native"), source.display().to_string())?;
-        fixture::clone_tree(&case.source(), &source.join("node_modules"))?;
         let install = serde_json::to_string(&vec![self.own.display().to_string(), "install".into(), source.display().to_string()])?;
         fs::write(
             source.join(".jwreseed.local.toml"),
@@ -148,7 +200,33 @@ impl Workload for Reseed {
             &case.root,
             None,
         )?;
-        ctx.run(&git, &["add".into(), ".".into()], &remote, None)?;
+        if let Some(imported) = &self.imported {
+            let list = case.root.join("tracked-paths.nul");
+            let mut paths = imported.tracked.clone();
+            if !paths.contains(&PathBuf::from(".gitignore")) {
+                paths.push(".gitignore".into());
+            }
+            let mut bytes = Vec::new();
+            for path in paths {
+                bytes.extend_from_slice(path.to_str().ok_or("non-UTF8 inventory")?.as_bytes());
+                bytes.push(0);
+            }
+            fs::write(&list, bytes)?;
+            ctx.run(
+                &git,
+                &[
+                    "add".into(),
+                    "--force".into(),
+                    "--pathspec-from-file".into(),
+                    list.display().to_string(),
+                    "--pathspec-file-nul".into(),
+                ],
+                &remote,
+                None,
+            )?;
+        } else {
+            ctx.run(&git, &["add".into(), ".".into()], &remote, None)?;
+        }
         ctx.run(
             &git,
             &["commit".into(), "--quiet".into(), "-m".into(), "owned fixture source".into()],
@@ -165,7 +243,7 @@ impl Workload for Reseed {
                 source.to_str().ok_or("non-UTF8 owned source")?,
             ],
         )?;
-        fixture::clone_tree(&remote.join("node_modules"), &source.join("node_modules"))?;
+        copy_roots(&remote, &source, &self.payload_roots)?;
         for ignored in [".jwreseed.local.toml", ".perf-owned-native"] {
             fs::copy(remote.join(ignored), source.join(ignored))?;
         }
@@ -179,6 +257,7 @@ impl Workload for Reseed {
         let mut workers = Vec::new();
         let mut old_commits = Vec::new();
         let mut payload_before = Vec::new();
+        let mut feature_hashes = Vec::new();
         for index in 0..config.destinations {
             let name = format!("worker-{index}");
             let worker = case.root.join(&name);
@@ -200,21 +279,25 @@ impl Workload for Reseed {
                 return Err("worker belongs to the wrong JJ repository".into());
             }
             if case.target(index).exists() {
-                fixture::clone_tree(&case.target(index), &worker.join("node_modules"))?;
+                copy_roots(&case.target(index), &worker, &self.payload_roots)?;
             }
+            let mut hashes = Vec::new();
             if config.feature_files > 0 {
-                for file in 0..config.feature_files {
+                for path in &self.feature_paths {
                     OpenOptions::new()
                         .append(true)
-                        .open(worker.join(format!("files/file-{file:05}")))?
+                        .open(worker.join(path))?
                         .write_all(format!("feature {index}\n").as_bytes())?;
+                    hashes.push(artifacts::sha256(&worker.join(path))?);
                 }
                 ctx.jj(&worker, &["describe", "-m", &format!("owned feature {index}")])?;
                 ctx.jj(&worker, &["bookmark", "create", &format!("performance-feature-{index}"), "-r", "@"])?;
             }
             let actual_features = ctx.jj(&worker, &["diff", "--from", &goal, "--to", "@", "--summary"])?;
-            let expected_features = (0..config.feature_files)
-                .map(|file| format!("M files/file-{file:05}"))
+            let expected_features = self
+                .feature_paths
+                .iter()
+                .map(|path| format!("M {}", path.display()))
                 .collect::<Vec<_>>()
                 .join("\n");
             if actual_features != expected_features {
@@ -222,12 +305,9 @@ impl Workload for Reseed {
             }
             old_commits.push(ctx.jj(&worker, &["log", "--no-graph", "-r", "@", "-T", "commit_id"])?);
             let before = case.root.join(format!("inodes-before-{index}.jsonl"));
-            write_inodes(&worker.join("node_modules"), &before)?;
-            payload_before.push(if worker.join("node_modules").exists() {
-                Some(fixture::tree(&worker.join("node_modules"), true, true)?)
-            } else {
-                None
-            });
+            write_inodes_scoped(&worker, &self.payload_roots, &before)?;
+            payload_before.push(payload_identity(&worker, &self.payload_roots)?);
+            feature_hashes.push(hashes);
             workers.push((name, worker));
         }
         let setup_ns = setup_start.elapsed().as_nanos();
@@ -260,7 +340,7 @@ impl Workload for Reseed {
             if fs::read_to_string(source.join("node_modules/__install_count"))? != "1" {
                 return Err("owned installer did not run exactly once".into());
             }
-            verify_unchanged(&mut ctx, &workers, &old_commits, &payload_before)?;
+            verify_unchanged(&mut ctx, &workers, &old_commits, &payload_before, &self.payload_roots)?;
             verification_ns += start.elapsed().as_nanos();
         }
         let mut args = vec!["reseed".into()];
@@ -284,7 +364,7 @@ impl Workload for Reseed {
             sample.details["phases"] = json!(&phases);
             sample.process_ns = measured;
             let start = Instant::now();
-            verify_unchanged(&mut ctx, &workers, &old_commits, &payload_before)?;
+            verify_unchanged(&mut ctx, &workers, &old_commits, &payload_before, &self.payload_roots)?;
             verification_ns += start.elapsed().as_nanos();
         }
         if config.phase == Phase::Reseed || config.phase == Phase::All {
@@ -295,12 +375,18 @@ impl Workload for Reseed {
             sample.details["phases"] = json!(&phases);
             sample.process_ns = measured;
             let verify = Instant::now();
-            let expected = fixture::payload(&source.join("node_modules"))?;
+            let expected = self
+                .payload_roots
+                .iter()
+                .map(|p| fixture::payload(&source.join(p)))
+                .collect::<Result<Vec<_>>>()?;
             let mut rewrites = Vec::new();
             for (index, (_, worker)) in workers.iter().enumerate() {
                 ctx.root_check(worker)?;
-                if fixture::payload(&worker.join("node_modules"))? != expected {
-                    return Err("reseed payload bytes/link/mode/file-mtime mismatch".into());
+                for (path, hash) in self.payload_roots.iter().zip(&expected) {
+                    if fixture::payload(&worker.join(path))? != *hash {
+                        return Err(format!("reseed payload mismatch at {}", path.display()).into());
+                    }
                 }
                 // The BEFORE source and retained logs explicitly specify this empty-child-of-goal contract.
                 if !ctx.jj(worker, &["diff", "--from", &goal, "--to", "@", "--summary"])?.is_empty() {
@@ -314,14 +400,13 @@ impl Workload for Reseed {
                     if ctx.jj(worker, &["--ignore-working-copy", "log", "--no-graph", "-r", &bookmark, "-T", "commit_id"])? != old_commits[index] {
                         return Err("old feature history was not preserved".into());
                     }
-                    for file in 0..config.feature_files {
-                        let data = ctx.jj(worker, &["file", "show", "-r", &bookmark, &format!("files/file-{file:05}")])?;
-                        if data != format!("{}feature {index}", String::from_utf8(tracked(file))?) {
+                    for (path, expected) in self.feature_paths.iter().zip(&feature_hashes[index]) {
+                        if ctx.historical_file_hash(worker, &bookmark, path)? != *expected {
                             return Err("feature history content mismatch".into());
                         }
                     }
                 }
-                let changes = inode_changes(&worker.join("node_modules"), &case.root.join(format!("inodes-before-{index}.jsonl")))?;
+                let changes = inode_changes_scoped(worker, &self.payload_roots, &case.root.join(format!("inodes-before-{index}.jsonl")))?;
                 rewrites.push(changes.clone());
                 sample.details["payload_changes"] = json!(&rewrites);
                 if config.scenario == Scenario::Clean
@@ -386,22 +471,40 @@ fn phase(ctx: &mut Context, control: &Control, source: &Path, name: &str, args: 
     Ok((text, json!({"argv":args,"process":process,"counts":counts,"timing":timing})))
 }
 
-fn verify_unchanged(ctx: &mut Context, workers: &[(String, PathBuf)], old: &[String], payload: &[Option<String>]) -> Result<()> {
+fn verify_unchanged(ctx: &mut Context, workers: &[(String, PathBuf)], old: &[String], payload: &[Vec<Option<String>>], roots: &[PathBuf]) -> Result<()> {
     for (index, (_, worker)) in workers.iter().enumerate() {
         ctx.root_check(worker)?;
         if ctx.jj(worker, &["log", "--no-graph", "-r", "@", "-T", "commit_id"])? != old[index] {
             return Err("prepare/preview changed a worker commit".into());
         }
-        let actual = if worker.join("node_modules").exists() {
-            Some(fixture::tree(&worker.join("node_modules"), true, true)?)
-        } else {
-            None
-        };
+        let actual = payload_identity(worker, roots)?;
         if actual != payload[index] {
             return Err("prepare/preview mutated worker payload".into());
         }
     }
     Ok(())
+}
+
+fn copy_roots(from: &Path, to: &Path, roots: &[PathBuf]) -> Result<()> {
+    for path in roots {
+        let target = to.join(path);
+        fs::create_dir_all(target.parent().ok_or("payload has no parent")?)?;
+        fixture::clone_tree(&from.join(path), &target)?;
+    }
+    Ok(())
+}
+fn payload_identity(root: &Path, roots: &[PathBuf]) -> Result<Vec<Option<String>>> {
+    roots
+        .iter()
+        .map(|p| {
+            let path = root.join(p);
+            if fs::symlink_metadata(&path).is_ok() {
+                Ok(Some(fixture::tree(&path, true, true)?))
+            } else {
+                Ok(None)
+            }
+        })
+        .collect()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -433,46 +536,59 @@ fn regular(root: &Path, path: &Path, visit: &mut impl FnMut(Inode) -> Result<()>
     Ok(())
 }
 
+#[cfg(test)]
 fn write_inodes(root: &Path, output: &Path) -> Result<()> {
+    write_inodes_scoped(root, &[PathBuf::new()], output)
+}
+fn write_inodes_scoped(root: &Path, scopes: &[PathBuf], output: &Path) -> Result<()> {
     let mut out = OpenOptions::new().write(true).create_new(true).open(output)?;
-    regular(root, root, &mut |row| {
-        serde_json::to_writer(&mut out, &row)?;
-        out.write_all(b"\n")?;
-        Ok(())
-    })
+    for scope in scopes {
+        regular(root, &root.join(scope), &mut |row| {
+            serde_json::to_writer(&mut out, &row)?;
+            out.write_all(b"\n")?;
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
+#[cfg(test)]
 fn inode_changes(root: &Path, before: &Path) -> Result<Value> {
+    inode_changes_scoped(root, &[PathBuf::new()], before)
+}
+fn inode_changes_scoped(root: &Path, scopes: &[PathBuf], before: &Path) -> Result<Value> {
     let mut rows = BufReader::new(File::open(before)?)
         .lines()
         .map(|line| -> Result<Inode> { Ok(serde_json::from_str(&line?)?) })
         .peekable();
     let (mut added, mut removed, mut inode, mut mtime, mut common) = (0u64, 0u64, 0u64, 0u64, 0u64);
-    regular(root, root, &mut |now| {
-        while rows.peek().is_some_and(|row| {
-            row.as_ref()
-                .is_ok_and(|old| Path::new(&old.path).components().cmp(Path::new(&now.path).components()).is_lt())
-        }) {
-            rows.next().transpose()?;
-            removed += 1;
-        }
-        if rows.peek().is_some_and(|row| row.as_ref().is_err()) {
-            rows.next().transpose()?;
-        }
-        if rows.peek().is_some_and(|row| row.as_ref().is_ok_and(|old| old.path == now.path)) {
-            let old = rows.next().transpose()?.ok_or("inode stream ended")?;
-            common += 1;
-            if old.ino != now.ino {
-                inode += 1;
+    for scope in scopes {
+        regular(root, &root.join(scope), &mut |now| {
+            while rows.peek().is_some_and(|row| {
+                row.as_ref()
+                    .is_ok_and(|old| Path::new(&old.path).components().cmp(Path::new(&now.path).components()).is_lt())
+            }) {
+                rows.next().transpose()?;
+                removed += 1;
             }
-            if old.mtime != now.mtime {
-                mtime += 1;
+            if rows.peek().is_some_and(|row| row.as_ref().is_err()) {
+                rows.next().transpose()?;
             }
-        } else {
-            added += 1;
-        }
-        Ok(())
-    })?;
+            if rows.peek().is_some_and(|row| row.as_ref().is_ok_and(|old| old.path == now.path)) {
+                let old = rows.next().transpose()?.ok_or("inode stream ended")?;
+                common += 1;
+                if old.ino != now.ino {
+                    inode += 1;
+                }
+                if old.mtime != now.mtime {
+                    mtime += 1;
+                }
+            } else {
+                added += 1;
+            }
+            Ok(())
+        })?;
+    }
     for row in rows {
         row?;
         removed += 1;
@@ -509,6 +625,7 @@ mod tests {
     #[test]
     fn excessive_feature_request_is_rejected_before_fixture_creation() {
         let config = Config {
+            fixture: None,
             scenario: Scenario::Clean,
             phase: Phase::Reseed,
             timing: Timing::Native,

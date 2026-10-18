@@ -67,6 +67,10 @@ impl Context {
         })
     }
     pub fn run(&mut self, binary: &Path, args: &[String], cwd: &Path, trace: Option<&Path>) -> Result<(String, process::Outcome)> {
+        let (stdout, result) = self.run_raw(binary, args, cwd, trace)?;
+        Ok((fs::read_to_string(stdout)?.trim().into(), result))
+    }
+    fn run_raw(&mut self, binary: &Path, args: &[String], cwd: &Path, trace: Option<&Path>) -> Result<(PathBuf, process::Outcome)> {
         let stem = self.root.join("commands").join(format!("{:04}", self.sequence));
         self.sequence += 1;
         let mut command = Command::new(binary);
@@ -80,7 +84,19 @@ impl Context {
         if result.code != Some(0) || result.timed_out {
             return Err(format!("native command failed; see {}.stderr", stem.display()).into());
         }
-        Ok((fs::read_to_string(stem.with_extension("stdout"))?.trim().into(), result))
+        Ok((stem.with_extension("stdout"), result))
+    }
+    pub fn historical_file_hash(&mut self, root: &Path, revision: &str, path: &Path) -> Result<String> {
+        let binary = self.jj.clone();
+        let args = vec![
+            "file".into(),
+            "show".into(),
+            "-r".into(),
+            revision.into(),
+            path.to_str().ok_or("non-UTF8 tracked path")?.into(),
+        ];
+        let (stdout, _) = self.run_raw(&binary, &args, root, None)?;
+        diff_dirs_perf_runner::artifacts::sha256(&stdout)
     }
     pub fn jj(&mut self, cwd: &Path, args: &[&str]) -> Result<String> {
         let binary = self.jj.clone();

@@ -1,6 +1,8 @@
+mod build;
 mod context;
 mod diagnostics;
 mod instrumentation;
+mod snapshot;
 mod workload;
 
 use clap::{Parser, Subcommand};
@@ -21,6 +23,28 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Preserve a native app variant from pinned, matching current source inputs (no checkout/reset).
+    Build {
+        repository: PathBuf,
+        output: PathBuf,
+        #[arg(long)]
+        revision: Option<String>,
+        #[arg(long, default_value = "../diff-dirs")]
+        library: PathBuf,
+        #[arg(long)]
+        library_revision: Option<String>,
+        #[arg(long, value_enum, default_value = "serial")]
+        variant: build::Variant,
+        #[arg(long, default_value = "/usr/local/bin/jj")]
+        jj: PathBuf,
+    },
+    /// Read-only JJ tracked inventory plus node_modules / nested dist private reflink import.
+    Snapshot {
+        donor: PathBuf,
+        output: PathBuf,
+        #[arg(long, default_value = "/usr/local/bin/jj")]
+        jj: PathBuf,
+    },
     Run(Box<RunArgs>),
     Check {
         root: PathBuf,
@@ -55,6 +79,9 @@ enum Action {
 
 #[derive(clap::Args)]
 struct RunArgs {
+    /// Owned full-tree import produced by snapshot; includes tracked inventory and all selected roots.
+    #[arg(long)]
+    fixture: Option<PathBuf>,
     output: PathBuf,
     #[arg(long)]
     baseline: PathBuf,
@@ -124,6 +151,24 @@ fn main() -> Result<()> {
         return Ok(());
     }
     match Cli::parse().action {
+        Action::Build {
+            repository,
+            output,
+            revision,
+            library,
+            library_revision,
+            variant,
+            jj,
+        } => build::build(
+            &repository,
+            &output,
+            revision.as_deref(),
+            &library,
+            library_revision.as_deref(),
+            variant,
+            &instrumentation::native(&jj)?,
+        )?,
+        Action::Snapshot { donor, output, jj } => snapshot::import(&donor, &output, &instrumentation::native(&jj)?)?,
         Action::Install { root } => workload::install(&root)?,
         Action::CopyBaseline { source, output } => diagnostics::copy_baseline(&source, &output)?,
         Action::Check {
@@ -162,6 +207,7 @@ fn main() -> Result<()> {
         }
         Action::Run(args) => {
             let RunArgs {
+                fixture,
                 output,
                 baseline,
                 baseline_provenance,
@@ -191,6 +237,7 @@ fn main() -> Result<()> {
                 same
             };
             let config = Config {
+                fixture,
                 scenario,
                 phase,
                 timing,
