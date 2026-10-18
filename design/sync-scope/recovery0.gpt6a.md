@@ -7,7 +7,10 @@ status: commissioned-design
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Recovered the child-session discussion after the human returned, separated implementation/evidence/design questions, and commissioned the blocked Astra xhigh follow-up
+    title: Recovered the child-session discussion, commissioned the blocked Astra xhigh follow-up, and reviewed its returned authority-based design
+  - resource: /design/sync-scope/design0.gpt6a.md
+    revision: b707a51d
+    title: Returned independent design separating path preservation, presence updates, absence authority and JJ revision ownership
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
     title: Human cancellation and cleanup direction, zoom-out, ignore-rule questions, synchronization-boundary challenge, and Astra xhigh design request at 16:44–19:31 UTC
   - resource: /design/up-performance/primary0.sol61m.md
@@ -33,6 +36,17 @@ sources:
 ---
 
 # Recovering the synchronization-boundary questions
+
+## Design returned
+
+[Astra xhigh's proposal](design0.gpt6a.md) is committed at `b707a51d`.
+It recommends broad donor updates with explicit preservation and mirror regions,
+and moves recursive synchronization plus listed tracked-leaf installation into
+diffdirs. JJ keeps revision/materialization ownership. The generic engine and
+the proposed broader JW default are separate decisions: same-name overwrites,
+vanished mirror roots and future snapshot eligibility need human selection.
+The proposal includes alternatives and bounded semantic verification; it does
+not authorize implementation or reopening the cancelled benchmark.
 
 ## Present direction
 
