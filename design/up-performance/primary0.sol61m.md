@@ -3,11 +3,12 @@ type: MeasurementReport
 title: Actual opencode imported reseed campaign
 description: Predeclared bounded native full-command comparisons and separate Rust process-count controls using a read-only import of the primary workload.
 resource: /design/up-performance/primary0.sol61m.md
-status: approved-reduced-campaign-in-progress
+status: cancelled-by-operator
 generated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
+updated: { by: "model:openai/gpt-6.1-sol#high", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
-    title: Predeclared bounded actual-shape campaign using frozen application variants and checked-in Rust importer/runner
+    title: Imported the actual workload, retained five verified samples, then cancelled the expensive campaign and cleaned disposable fixtures at operator direction
   - resource: /tools/performance/README.md#actual-opencode-import-and-n2-campaign
     title: Accepted read-only donor import, full selected-root reset and verified native command contract
   - resource: /design/up-performance/integrated-controls0.sol61m.md
@@ -181,11 +182,63 @@ logs retain tracked-copy **0.608s**, selected-payload-copy **19.469s**, fixture
 setup **23.187s**, and fixture verification **312.407s**; these are separate
 component scopes, not a claimed whole-import wall timer. Inventory, discovery,
 isolated ignore probes and additional untimed census overhead are not folded into
-native reseed time. `fixture/snapshot.json` retains all 8,557 tracked paths and
+native reseed time. `retained-snapshot.json` (originally `fixture/snapshot.json`) retains all 8,557 tracked paths and
 the root list (SHA `da9ab86ceef98b92032d023decb44082b937413efa0f14647fcf8d7781ab3cf9`).
 
-`fixture/fixture.json` (SHA
+`retained-fixture.json` (originally `fixture/fixture.json`, SHA
 `6a7b1a51ce6192c32cbb1f4a82a099df8103e21a9dde1756b9227599fdafb9e1`)
 binds source/control full byte/metadata/inode fingerprints:
 `37794654b919aa8d95e45ed56787acf2b6b6600909190e7a56bb385a9a0c7d0e:b011adc38fbe094ef3b7c2e93c59bd7e9532db67dfb76017b7aac9073e943d2d`.
-Native campaign verification must preserve this owned frozen input throughout.
+Native campaign verification preserved this input during the completed serial
+campaign. The operator subsequently requested fixture deletion; retained metadata
+is now `opencode-import/retained-fixture.json` and `retained-snapshot.json`, not a
+claim that the original fixture remains available for another run.
+
+## Cancelled campaign: retained observations, not completed matrix
+
+The operator cancelled further work after excessive fixture overhead and disk
+pressure. **Five of the approved twenty native samples completed**, with no
+correctness errors in those five. Serial/N2 clean completed both balanced pairs
+and its final frozen-input check. Capped-P4/N2 clean completed one candidate
+sample only; the next baseline sample was interrupted during untimed copying.
+There is no completed P4 pair/campaign, no actual-shape mutable result, and no
+instrumented/scaling result from this sequence. None should be reported as done.
+
+| Completed sample | Native reseed seconds | Untimed setup seconds | Untimed verification seconds |
+| --- | ---: | ---: | ---: |
+| serial candidate, block 0 | 21.145493 | 336.044722 | 153.641478 |
+| baseline, block 0 | 108.312832 | 394.014121 | 175.823049 |
+| baseline, block 1 | 99.106087 | 421.416909 | 142.054860 |
+| serial candidate, block 1 | 17.644120 | 438.356953 | 91.467301 |
+| capped-P4 candidate, unpaired | 8.812496 | 459.621768 | 114.811405 |
+
+Serial's two paired reductions were 80.477389% and 82.196734% (descriptive median
+81.337062%). This is a small warm/cache-uncontrolled N2-clean observation, not a
+complete performance result or a reason to change the default. The unpaired P4
+sample cannot establish a pool speedup. Every completed candidate target retained
+all 171,567 common regular payload inodes and mtimes with zero additions/removals;
+the historical baseline rewrote all those inodes, preserving mtimes as expected.
+
+The experiment repeatedly created several full independent trees per sample and
+hashed approximately 11.36 GB per tree. This was far more work than one ordinary
+copy or reseed. At cancellation `df` reported 99% utilization, about 38 GB free;
+the current `cp` was in kernel `reserve_bytes` wait. The benchmark's copying and
+retention worsened the operational burden; attributing all disk usage to this
+session would be unsupported. No further experiment was authorized or started.
+
+The coordinator PID 1688687, runner 2229653 and copy process 2367005 were paused,
+then terminated for cleanup. They will not resume. The separate waiting process
+exited. Condensed campaign/sample/summary JSON, command logs, import membership,
+census/fingerprints and canonical saved executables are retained. Disposable case
+trees, imported seed/fixture/probe, synthetic payload fixtures, redundant per-run
+binary copies and this session's two release build caches were removed and
+verified absent. Live donor/workspaces and unrelated scratch were not deletion targets.
+Command logs were moved from `sample-*.case/commands` to sibling
+`sample-*.commands`; small case metadata is `sample-*.case.json`.
+
+Final cleanup checks found no benchmark/coordinator/copy/wait processes remaining.
+The retained evidence roots occupy 7.0 MB (`primary-reseed`) and 26 MB
+(`integrated-reseed`) including canonical saved executables. The busy filesystem
+still reported 99% utilization and about 36 GB available; no reclaimed-space
+delta is claimed from that global figure. No further measurement or cleanup of
+unrelated data is scheduled.

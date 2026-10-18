@@ -5,6 +5,7 @@ description: Immutable serial/P4 application builds and balanced synthetic corre
 resource: /design/up-performance/integrated-controls0.sol61m.md
 status: synthetic-controls-complete-primary-workload-pending
 generated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
+updated: { by: "model:openai/gpt-6.1-sol#high", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
     title: Implemented experimental shared payload execution and ran sequential native Rust controls from preserved release binaries
@@ -69,10 +70,15 @@ PATH=/usr/local/bin:$PATH target/release/jw-perf run \
   --blocks 2 --seed 1701 --require-clean-label candidate
 ```
 
-Campaigns run sequentially, with no competing agent campaign/build/test started
+Campaigns ran sequentially, with no competing agent campaign/build/test started
 by this session. The first serial/N2 clean campaign preceded the loop over the
 remaining 15. Raw `campaign.json`, `samples.jsonl`, `summary.json`, command logs,
-private cases and immutable binaries remain under each named output.
+and identities remain under each named output. At later operator-requested
+cleanup, bulk private cases/fixtures and redundant executable copies were removed;
+canonical BEFORE/serial/P4 binaries remain at the paths in the input table.
+The old control runner is retained once at
+`.test-agent/integrated-reseed/jw-perf-controls`. Command logs were moved from
+`sample-*.case/commands` to sibling `sample-*.commands`.
 
 Native timing includes process startup and full `jw reseed`, not merely library
 API time. Setup/reset/hash/verification costs are retained but excluded. Private

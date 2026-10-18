@@ -8,7 +8,7 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#medium
+  by: model:openai/gpt-6.1-sol#high
   at: 2026-10-18
 sources:
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
@@ -429,6 +429,9 @@ Each new prepare/reseed resolves its own policy and source selection.
 - [Integrated native controls](../design/up-performance/integrated-controls0.sol61m.md):
   preserved serial/P4 build identities and bounded synthetic campaign evidence;
   not a claim about the primary opencode workload.
+- [Actual-workload observations](../design/up-performance/primary0.sol61m.md):
+  real imported root census and partial clean measurements; the operator cancelled
+  the rest because of excessive fixture overhead and disk pressure.
 - [Incident handoff](../design/up-performance/handoff0.glm53m.md): preserved measurement evidence.
 - [Earlier reseed design](../design/workspace-reseed/reseed0.gpt6a.md) and [source design](../design/workspace-reseed/source-freshen0.gpt61sol.md): historical rationale, not the current recovery contract.
 - [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md): selection rationale.

@@ -5,6 +5,7 @@ description: Delivered payload synchronization, frozen native ignore contexts, t
 resource: /design/up-performance/streaming0.sol61m.md
 status: implemented-awaiting-parent-review
 generated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
+updated: { by: "model:openai/gpt-6.1-sol#high", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
     title: Implemented and verified authorized streaming reseed integration without changing performance tooling
@@ -133,8 +134,11 @@ The accepted Rust tools now drive bounded sequential native synthetic controls;
 their immutable inputs, scope and raw locations are recorded in
 [integrated controls](integrated-controls0.sol61m.md): 16/16 campaigns and 64/64
 samples passed, including clean candidate identity invariants. Mixed descriptive
-timings do not select a default. Main-workload import and
-separate instrumented process-count evidence remain outstanding. No new benchmark
+timings do not select a default. The [actual-workload report](primary0.sol61m.md)
+retains an import and five verified N2-clean observations; the operator cancelled
+the remaining expensive campaign and requested fixture cleanup. Actual-shape
+mutable comparisons and separate instrumented counts were not completed. No
+automatic restart is authorized. No new benchmark
 framework was written. Library test reports were accepted from the parent, not
 redundantly rerun here.
 
