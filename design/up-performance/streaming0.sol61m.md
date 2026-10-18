@@ -25,7 +25,11 @@ sources:
 - Cargo path dependencies on `../diff-dirs` and its `sync` crate. Normal payload
   execution calls `new_replacing_checked(..., ReflinkRequired, guard).mirror()`;
   no intermediate tree map, audit or clone probe. Ordinary serial execution uses
-  the library's streaming loop; no additional pool/scheduler is introduced.
+  the library's streaming loop. Non-default `payload-parallel` borrows one pool
+  per command, reused across roots/targets and created only for actual payload
+  work. Workers are capped at `min(available_parallelism, 4)`, J matches workers
+  and K is 256; JJ and rule caches remain serial. No per-root pools or runtime
+  configuration framework were introduced.
 - `reseed::payload::Guard` checks native names and observed file types, including
   equal entries and recursive one-sided actions. Only rare absolute source-link
   diagnostics format paths and lock a deduplicated set. No Git in the checker.
@@ -129,3 +133,9 @@ No latency benchmarks or new benchmark framework were run. Incoming reviewed Rus
 tooling should measure process counts, clean zero-write behavior, sparse/one-sided
 changes and real-shaped multi-target workloads against the preserved binary.
 Library test reports were accepted from the parent, not redundantly rerun here.
+
+The experimental pool integration passed clean inode/mtime/ctime, sparse/subtree,
+selected leaf-root, and equal/one-sided refusal tests in default and feature
+builds. A two-root/two-target regression passed in both variants; the pool's
+lazy/capped construction test passed. Updated package all-target/all-feature
+Clippy passed. Default selection remains serial pending integrated evidence.

@@ -139,6 +139,12 @@ this is not an archive-metadata/ownership/ACL/xattr sweep. Newly copied files
 preserve permissions and mtime. Absent roots and selected target file/link roots
 are supported; final target symlinks are replaced, never followed.
 
+The default build reconciles payload serially. Experimental Cargo feature
+`payload-parallel` uses one command-owned borrowed pool across all selected roots
+and targets, capped at four available workers, with matching directory admission
+and 256 speculative directories. JJ operations remain serial. The feature is a
+measurement variant, not a new runtime option or the selected default.
+
 `--replace-content` explicitly permits deleting all non-administrative target
 contents, including `.env`, except `.jj`, before refill. It does not copy arbitrary
 source dotfiles and has no further confirmation prompt.

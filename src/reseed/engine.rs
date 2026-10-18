@@ -596,6 +596,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         // target's own clearing boundary. Never refill an initially-invalid subset.
         bookmarks::verify_batch(&client, plans.iter().map(|plan| &plan.bookmark_guard))?;
     }
+    let payload_execution = payload::Execution::new(!request.dry_run && plans.iter().any(|plan| !plan.ignored.is_empty()))?;
     for mut plan in plans {
         if request.dry_run {
             let consequence = format!("SYNC to {}; tracked work saved in JJ history at {}", plan.base_commit, plan.old_commit);
@@ -611,7 +612,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             continue;
         }
         let started = std::time::Instant::now();
-        let outcome = execute(&default, &mut plan);
+        let outcome = execute(&default, &mut plan, &payload_execution);
         let (status, message) = match outcome {
             Ok(()) => (
                 ReseedStatus::Succeeded,
@@ -1419,7 +1420,7 @@ fn exact_empty_child(client: &JjClient, operation: &str, commit: &str, base: &st
 
 /// A single forward pass. Nothing persists intermediate progress, and no path
 /// attempts to reconstruct a partially filled target.
-fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
+fn execute(default: &Path, plan: &mut Plan, payload_execution: &payload::Execution) -> Result<()> {
     if default != plan.config_root {
         bail!("default workspace changed since frozen plan");
     }
@@ -1529,7 +1530,7 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
                 diff_dirs_sync::CopyPolicy::ReflinkRequired,
                 guard.borrowed(),
             )?;
-            let result = applier.mirror();
+            let result = payload_execution.mirror(&applier);
             for warning in guard.warnings() {
                 if !plan.execution_diagnostics.contains(&warning) {
                     diagnostics(format!("Warning: {warning}"));
@@ -2061,7 +2062,7 @@ mod tests {
         };
         let default = plan.source.clone();
         fs::write(plan.root.join("shared"), "new user work\n").unwrap();
-        let error = execute(&default, &mut plan).unwrap_err();
+        let error = execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap_err();
         assert!(format!("{error:#}").contains("tracked tree differs"));
         assert_eq!(fs::read(plan.root.join("shared")).unwrap(), b"new user work\n");
     }
@@ -2077,7 +2078,7 @@ mod tests {
         assert!(metadata.get("worker").unwrap().is_none());
         validate_target(&client, &metadata, &plan.source, &plan.source, "worker", &plan.root).unwrap();
         let default = plan.source.clone();
-        execute(&default, &mut plan).unwrap();
+        execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap();
         assert!(metadata.get("worker").unwrap().is_none());
         assert!(metadata.list().unwrap().is_empty());
         assert!(metadata.root().join("manifest.json").is_file());
@@ -2120,7 +2121,7 @@ mod tests {
         plan.entries = desired_entries;
         plan.old_paths = old_entries.into_iter().map(|e| e.path).collect();
         let default = plan.source.clone();
-        execute(&default, &mut plan).unwrap();
+        execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap();
         assert_eq!(fs::read(plan.root.join("directory-to-file")).unwrap(), b"new file\n");
         assert_eq!(fs::read(plan.root.join("symlink-to-directory/child")).unwrap(), b"new child\n");
         assert_eq!(fs::read(plan.root.join(".env")).unwrap(), b"retained\n");

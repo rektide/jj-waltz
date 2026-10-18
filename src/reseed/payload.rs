@@ -7,6 +7,47 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// One command-owned pool, borrowed only by filesystem comparison/application.
+/// JJ operations and frozen rule caches stay on the caller thread.
+#[derive(Debug, Default)]
+pub(super) struct Execution {
+    #[cfg(feature = "payload-parallel")]
+    pool: Option<rayon::ThreadPool>,
+}
+impl Execution {
+    pub(super) fn new(has_payload: bool) -> Result<Self> {
+        #[cfg(feature = "payload-parallel")]
+        {
+            let pool = if has_payload {
+                let workers = std::thread::available_parallelism()?.get().min(4);
+                Some(
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(workers)
+                        .thread_name(|index| format!("jw-payload-{index}"))
+                        .build()?,
+                )
+            } else {
+                None
+            };
+            Ok(Self { pool })
+        }
+        #[cfg(not(feature = "payload-parallel"))]
+        {
+            let _ = has_payload;
+            Ok(Self {})
+        }
+    }
+
+    pub(super) fn mirror<C: Check>(&self, applier: &diff_dirs_sync::Applier<C>) -> Result<diff_dirs_sync::Report, diff_dirs_sync::Failure> {
+        #[cfg(feature = "payload-parallel")]
+        if let Some(pool) = &self.pool {
+            let jobs = std::num::NonZeroUsize::new(pool.current_num_threads()).expect("pool has workers");
+            return applier.mirror_in_pool(pool, diff_dirs::ParallelLimits::new(jobs, 256));
+        }
+        applier.mirror()
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Guard {
     warnings: Mutex<BTreeSet<String>>,
@@ -97,5 +138,14 @@ mod tests {
         outside(temp.path(), false, &["pkg/cache".into()]).unwrap();
         fs::create_dir_all(temp.path().join("pkg/cache-other/.git")).unwrap();
         assert!(outside(temp.path(), false, &["pkg/cache".into()]).is_err());
+    }
+
+    #[cfg(feature = "payload-parallel")]
+    #[test]
+    fn command_pool_is_lazy_capped_and_has_matching_admission() {
+        assert!(Execution::new(false).unwrap().pool.is_none());
+        let execution = Execution::new(true).unwrap();
+        let workers = execution.pool.as_ref().unwrap().current_num_threads();
+        assert_eq!(workers, std::thread::available_parallelism().unwrap().get().min(4));
     }
 }

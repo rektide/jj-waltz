@@ -1730,14 +1730,42 @@ fn incremental_payload_preserves_clean_inodes_and_reconciles_sparse_changes() {
     assert_eq!(observations(), before, "clean payload must not be replaced or chmodded");
     fs::write(source.join("cache/nested/change"), "new and longer").unwrap();
     fs::write(source.join("cache/new"), "added").unwrap();
+    fs::remove_file(source.join("cache/link")).unwrap();
+    fs::create_dir(source.join("cache/link")).unwrap();
+    fs::write(source.join("cache/link/child"), "link becomes directory").unwrap();
     fs::create_dir_all(target.join("cache/stale/deep")).unwrap();
     fs::write(target.join("cache/stale/deep/file"), "remove").unwrap();
     success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
     assert_eq!(identity(&target.join("cache/clean")).1, before[1].0);
     assert_eq!(fs::read_to_string(target.join("cache/nested/change")).unwrap(), "new and longer");
     assert_eq!(fs::read_to_string(target.join("cache/new")).unwrap(), "added");
+    assert_eq!(fs::read_to_string(target.join("cache/link/child")).unwrap(), "link becomes directory");
     assert!(!target.join("cache/stale").exists());
     assert_shared_extents(&source.join("cache/clean"), &target.join("cache/clean"));
+}
+
+#[test]
+fn incremental_payload_batch_reuses_execution_across_roots_and_targets() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let targets = [repo.workspace("one"), repo.workspace("two")];
+    if !repo.cow(&source, &targets[0]) {
+        return;
+    }
+    for path in ["cache/tree", "packages/pkg/cache/tree"] {
+        fs::create_dir_all(source.join(path)).unwrap();
+        fs::write(source.join(path).join("data"), "initial").unwrap();
+    }
+    let extra = ["--copy-ignored", "cache", "--copy-ignored", "packages/pkg/cache"];
+    success(repo.reseed(&["one", "two"], &source, &extra));
+    let clean: Vec<_> = targets.iter().map(|target| identity(&target.join("cache/tree/data"))).collect();
+    fs::remove_dir_all(source.join("packages/pkg/cache/tree")).unwrap();
+    symlink("../relative", source.join("packages/pkg/cache/tree")).unwrap();
+    success(repo.reseed(&["one", "two"], &source, &extra));
+    for (target, clean) in targets.iter().zip(clean) {
+        assert_eq!(identity(&target.join("cache/tree/data")), clean);
+        assert_eq!(fs::read_link(target.join("packages/pkg/cache/tree")).unwrap(), Path::new("../relative"));
+    }
 }
 
 #[test]
