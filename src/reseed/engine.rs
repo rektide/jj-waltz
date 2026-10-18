@@ -1789,9 +1789,7 @@ mod tests {
         fs::create_dir_all(source.join("cache")).unwrap();
         fs::create_dir(&default).unwrap();
         fs::write(source.join("cache/fresh"), "payload\n").unwrap();
-        let rules = IgnoreRules {
-            directory: tempfile::tempdir().unwrap(),
-        };
+        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
         checked_git(rules.directory.path(), ["init", "--quiet"]).unwrap();
         fs::write(rules.directory.path().join(".gitignore"), "dependency-link\n").unwrap();
         let client = JjClient::new(&root);

@@ -2,18 +2,109 @@
 use crate::jj::JjClient;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 /// Git's native ignore parser, over an isolated tree of frozen desired .gitignore
 /// files and copies of JJ's backend/global excludes. No target revision is changed.
 #[derive(Debug)]
 pub(crate) struct IgnoreRules {
     pub(crate) directory: tempfile::TempDir,
+    oracle: RefCell<Option<Oracle>>,
+    answers: RefCell<BTreeMap<(PathBuf, bool), bool>>,
+}
+
+#[derive(Debug)]
+struct Oracle {
+    child: Child,
+    input: Option<ChildStdin>,
+    output: BufReader<ChildStdout>,
+    stderr: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+}
+impl Oracle {
+    fn start(root: &Path) -> Result<Self> {
+        let mut child = isolated_git(root)
+            .env("GIT_FLUSH", "1")
+            .args(["check-ignore", "--no-index", "--stdin", "-z", "--verbose", "--non-matching"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut stderr = child.stderr.take().unwrap();
+        let reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            // Drain even excessive diagnostics so the child cannot block on stderr.
+            let mut chunk = [0; 4096];
+            loop {
+                let count = stderr.read(&mut chunk)?;
+                if count == 0 {
+                    break;
+                }
+                if bytes.len() < 65536 {
+                    bytes.extend_from_slice(&chunk[..count]);
+                }
+            }
+            Ok(bytes)
+        });
+        Ok(Self {
+            input: child.stdin.take(),
+            output: BufReader::new(child.stdout.take().unwrap()),
+            child,
+            stderr: Some(reader),
+        })
+    }
+    fn query(&mut self, input: &[u8]) -> Result<bool> {
+        self.input.as_mut().context("closed ignore oracle")?.write_all(input)?;
+        self.input.as_mut().unwrap().flush()?;
+        let mut fields = Vec::with_capacity(4);
+        for _ in 0..4 {
+            let mut field = Vec::new();
+            let count = (&mut self.output).take(1024 * 1024).read_until(0, &mut field)?;
+            if count == 0 || field.pop() != Some(0) {
+                bail!("ignore-rule probe failed or returned malformed output");
+            }
+            fields.push(field);
+        }
+        if fields[3] != input[..input.len() - 1] {
+            bail!("ignore-rule probe returned a mismatched path");
+        }
+        Ok(!fields[2].is_empty() && fields[2][0] != b'!')
+    }
+}
+impl Drop for Oracle {
+    fn drop(&mut self) {
+        drop(self.input.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(stderr) = self.stderr.take() {
+            let _ = stderr.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod oracle_tests {
+    use super::*;
+
+    #[test]
+    fn persistent_oracle_frames_negation_nonmatches_and_memoizes() {
+        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
+        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
+        fs::write(rules.directory.path().join(".gitignore"), "*.cache\n!keep.cache\nfolder/\n").unwrap();
+        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
+        let pid = rules.oracle.borrow().as_ref().unwrap().child.id();
+        assert!(!rules.is_ignored(Path::new("keep.cache"), false).unwrap());
+        assert!(!rules.is_ignored(Path::new("other"), true).unwrap());
+        assert!(rules.is_ignored(Path::new("folder"), true).unwrap());
+        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
+        assert_eq!(rules.answers.borrow().len(), 4);
+        assert_eq!(rules.oracle.borrow().as_ref().unwrap().child.id(), pid);
+    }
 }
 impl IgnoreRules {
     pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Self> {
@@ -64,7 +155,14 @@ impl IgnoreRules {
         checked_git(directory.path(), ["config", "core.excludesFile", global])?;
         let info = backend.as_ref().map(|p| p.join("info/exclude"));
         fs::write(directory.path().join(".git/info/exclude"), read_optional(info.as_deref())?)?;
-        Ok(Self { directory })
+        Ok(Self::from_directory(directory))
+    }
+    pub(crate) fn from_directory(directory: tempfile::TempDir) -> Self {
+        Self {
+            directory,
+            oracle: RefCell::new(None),
+            answers: RefCell::new(BTreeMap::new()),
+        }
     }
     pub(crate) fn require_ignored(&self, path: &Path) -> Result<()> {
         self.check(path, true)
@@ -83,30 +181,26 @@ impl IgnoreRules {
     }
     fn is_ignored(&self, path: &Path, directory: bool) -> Result<bool> {
         relative(path)?;
-        let mut child = isolated_git(self.directory.path())
-            .args(["check-ignore", "--no-index", "-z", "--stdin"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let key = (path.to_path_buf(), directory);
+        if let Some(answer) = self.answers.borrow().get(&key) {
+            return Ok(*answer);
+        }
         let mut input = path.to_str().context("ignored path not UTF-8")?.as_bytes().to_vec();
         if directory {
             input.push(b'/');
         }
         input.push(0);
-        child.stdin.take().unwrap().write_all(&input)?;
-        let output = child.wait_with_output()?;
-        if output.status.success() && output.stdout == input {
-            Ok(true)
-        } else if output.status.code() == Some(1) && output.stdout.is_empty() && output.stderr.is_empty() {
-            Ok(false)
-        } else {
-            bail!(
-                "ignore-rule probe failed or returned malformed output for {}: {}",
-                path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            );
+        let mut oracle = self.oracle.borrow_mut();
+        if oracle.is_none() {
+            *oracle = Some(Oracle::start(self.directory.path())?);
         }
+        let answer = oracle
+            .as_mut()
+            .unwrap()
+            .query(&input)
+            .with_context(|| format!("ignore-rule probe failed for {}", path.display()))?;
+        self.answers.borrow_mut().insert(key, answer);
+        Ok(answer)
     }
 }
 
