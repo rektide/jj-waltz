@@ -459,6 +459,10 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             let tree_commit = &base;
             require_unconflicted(&client, &operation, tree_commit)?;
             let target_entries = entries(&client, &operation, tree_commit)?;
+            let changed = changed_paths(&client, &operation, &source_commit, tree_commit)?;
+            if changed.is_empty() {
+                frozen_rules.same_tree(tree_commit, &source_commit);
+            }
             let target_rules = frozen_rules.get(&JjClient::new(&root), &operation, tree_commit, &target_entries)?;
             for path in &ignored {
                 target_rules.require_ignored(path)?;
@@ -473,7 +477,6 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             }
             #[cfg(not(target_os = "linux"))]
             validate_contents(&root, false)?;
-            let changed = changed_paths(&client, &operation, &source_commit, tree_commit)?;
             let target_paths = target_entries.iter().map(|e| &e.path).collect::<BTreeSet<_>>();
             let clones = source_entries
                 .iter()
@@ -2182,6 +2185,12 @@ mod tests {
         let first = cache.get(&client, &operation, &commit, &entries).unwrap();
         let repeated = cache.get(&client, &operation, &commit, &entries).unwrap();
         assert!(Rc::ptr_eq(&first, &repeated));
+        client.run(["new"]).unwrap();
+        let (next_operation, equal_commit) = current_commit(&client).unwrap();
+        assert!(changed_paths(&client, &next_operation, &commit, &equal_commit).unwrap().is_empty());
+        cache.same_tree(&equal_commit, &commit);
+        let equal = cache.get(&client, &next_operation, &equal_commit, &entries).unwrap();
+        assert!(Rc::ptr_eq(&first, &equal));
         let private = PathBuf::from(format!("jw-frozen-rule-cache-{}", std::process::id()));
         assert!(!first.is_ignored_directory(&private).unwrap());
         let backend = PathBuf::from(client.run(["--ignore-working-copy", "git", "root"]).unwrap().trimmed_stdout().unwrap());

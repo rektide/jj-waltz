@@ -23,18 +23,27 @@ struct Excludes {
 pub(crate) struct FrozenRules {
     files: BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>,
     rules: BTreeMap<(String, Excludes), Rc<IgnoreRules>>,
+    equivalent: BTreeMap<String, String>,
 }
 impl FrozenRules {
+    /// Caller supplies a JJ whole-tracked-tree equality proof, not merely equal
+    /// revisions or matching .gitignore path names. Excludes remain independent.
+    pub(crate) fn same_tree(&mut self, commit: &str, equivalent: &str) {
+        if commit != equivalent {
+            self.equivalent.insert(commit.to_owned(), equivalent.to_owned());
+        }
+    }
     pub(crate) fn get(&mut self, client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Rc<IgnoreRules>> {
         let excludes = Excludes::capture(client, operation)?;
-        let key = (commit.to_owned(), excludes);
+        let coordinate = self.equivalent.get(commit).map(String::as_str).unwrap_or(commit);
+        let key = (coordinate.to_owned(), excludes);
         if let Some(rules) = self.rules.get(&key) {
             return Ok(Rc::clone(rules));
         }
-        if !self.files.contains_key(commit) {
-            self.files.insert(commit.to_owned(), ignore_files(client, operation, commit, entries)?);
+        if !self.files.contains_key(coordinate) {
+            self.files.insert(coordinate.to_owned(), ignore_files(client, operation, commit, entries)?);
         }
-        let rules = Rc::new(IgnoreRules::build(&self.files[commit], &key.1)?);
+        let rules = Rc::new(IgnoreRules::build(&self.files[coordinate], &key.1)?);
         self.rules.insert(key, Rc::clone(&rules));
         Ok(rules)
     }
@@ -133,37 +142,6 @@ impl Drop for Oracle {
     }
 }
 
-#[cfg(test)]
-mod oracle_tests {
-    use super::*;
-
-    #[test]
-    fn persistent_oracle_frames_negation_nonmatches_and_memoizes() {
-        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
-        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
-        fs::write(rules.directory.path().join(".gitignore"), "*.cache\n!keep.cache\nfolder/\n").unwrap();
-        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
-        let pid = rules.oracle.borrow().as_ref().unwrap().child.id();
-        assert!(!rules.is_ignored(Path::new("keep.cache"), false).unwrap());
-        assert!(!rules.is_ignored(Path::new("other"), true).unwrap());
-        assert!(rules.is_ignored(Path::new("folder"), true).unwrap());
-        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
-        assert_eq!(rules.answers.borrow().len(), 4);
-        assert_eq!(rules.oracle.borrow().as_ref().unwrap().child.id(), pid);
-    }
-
-    #[test]
-    fn failed_oracle_is_joined_and_not_memoized_as_a_negative() {
-        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
-        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
-        *rules.oracle.borrow_mut() = Some(Oracle::start(rules.directory.path()).unwrap());
-        rules.oracle.borrow_mut().as_mut().unwrap().child.kill().unwrap();
-        assert!(rules.is_ignored_directory(Path::new("unknown")).is_err());
-        assert!(rules.answers.borrow().is_empty());
-        assert!(rules.oracle.borrow().is_none());
-        assert!(!rules.is_ignored_directory(Path::new("unknown")).unwrap());
-    }
-}
 impl IgnoreRules {
     pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Self> {
         Self::build(&ignore_files(client, operation, commit, entries)?, &Excludes::capture(client, operation)?)
@@ -403,4 +381,36 @@ pub(crate) fn confined_parents(root: &Path, path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod oracle_tests {
+    use super::*;
+
+    #[test]
+    fn persistent_oracle_frames_negation_nonmatches_and_memoizes() {
+        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
+        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
+        fs::write(rules.directory.path().join(".gitignore"), "*.cache\n!keep.cache\nfolder/\n").unwrap();
+        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
+        let pid = rules.oracle.borrow().as_ref().unwrap().child.id();
+        assert!(!rules.is_ignored(Path::new("keep.cache"), false).unwrap());
+        assert!(!rules.is_ignored(Path::new("other"), true).unwrap());
+        assert!(rules.is_ignored(Path::new("folder"), true).unwrap());
+        assert!(rules.is_ignored(Path::new("one.cache"), false).unwrap());
+        assert_eq!(rules.answers.borrow().len(), 4);
+        assert_eq!(rules.oracle.borrow().as_ref().unwrap().child.id(), pid);
+    }
+
+    #[test]
+    fn failed_oracle_is_joined_and_not_memoized_as_a_negative() {
+        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
+        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
+        *rules.oracle.borrow_mut() = Some(Oracle::start(rules.directory.path()).unwrap());
+        rules.oracle.borrow_mut().as_mut().unwrap().child.kill().unwrap();
+        assert!(rules.is_ignored_directory(Path::new("unknown")).is_err());
+        assert!(rules.answers.borrow().is_empty());
+        assert!(rules.oracle.borrow().is_none());
+        assert!(!rules.is_ignored_directory(Path::new("unknown")).unwrap());
+    }
 }
