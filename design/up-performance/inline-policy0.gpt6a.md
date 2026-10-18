@@ -40,6 +40,11 @@ The detailed design and alternatives live in
 [diff-dirs: inline inspection policy](file:///home/rektide/src/diff-dirs/design/fit/policy0.gpt6a.md).
 This companion identifies the jw-specific changes. Both documents are proposals.
 
+The [delivered library review](diffdirs-review0.gpt6a.md) records the concrete
+checked API and integration obligations after Sol's implementation. Its source
+review is complete; interleaved performance reassessment and jw integration are
+subsequent work.
+
 ## The split
 
 ### Keep before target mutation
