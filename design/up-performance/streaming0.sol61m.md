@@ -78,6 +78,33 @@ fixture to the actual repository and created
 no cleanup or repeat of that routing test was attempted. Earlier unit failures
 with `/tmp` were unsupported reflinks, resolved by setting TMPDIR as above.
 
+After upstream approval, parent diagnosed that routing failure as the malformed
+test environment: a Git-only sibling under this checkout inherits the enclosing
+real `.jj`. The verified artifact's physical file list matched its historical
+tracked tree at operation `a85936a20b65`, and `jj --at-op a85936a20b65 status`
+reported no changes. `jw remove unregistered` deliberately removed that exact
+registration/directory; subsequent workspace listing and existence checks confirm
+removal. No bookmarks were requested for deletion and no other workspace was swept.
+
+The remaining eight integration binaries were then run with a correctly built
+runtime binary and a genuinely external temp root:
+
+```sh
+PATH=/usr/local/bin:$PATH TMPDIR=/tmp/opencode \
+  CARGO_BIN_EXE_jw=$PWD/target/debug/jw cargo nextest run -p jj-waltz \
+  --test cli --test colocate --test context --test context_routing \
+  --test external_owner --test links_stress --test shell_ui --test ui_cli \
+  --no-fail-fast
+```
+
+158/159 passed without skips; only the previously recorded missing-workspace
+cleanup test remains failing. Git-only discovery passes. Do **not** globally
+place those discovery fixtures inside a JJ checkout merely to enable reflinks.
+The focused required-CoW suite above and external-discovery suite need separate
+temporary roots. The updated real bind-mount regression passed with required
+mount namespaces; package-wide all-target/all-feature Clippy and changed-file
+format checks also passed after the review corrections.
+
 ## Limits and next evidence
 
 Parent review resumed this integration only after explicit approval of library
@@ -88,6 +115,9 @@ just the deepest lexical prefix: an overmounted ancestor may hide that prefix.
 Applicable autofs roots/ancestors also refuse before recursive traversal, since
 traversal itself can invalidate fixed topology. Four focused topology tests pass,
 including the discriminating hidden-child alias fixture. Checks remain upfront.
+The retained-region validator now precomputes selected absolute boundaries once
+into a small set, rather than joining every candidate root at every entry. Its
+focused pruning/prefix-neighbor regression passes; no payload inventory is built.
 
 Deep policy/reflink failures can follow tracked changes or completed peers. The
 offender is untouched; earlier accepted work can remain. Existing JJ/bookmark
