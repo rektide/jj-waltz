@@ -1,8 +1,8 @@
 //! Shared ignored-payload policy and selection, independent of workspace command.
 //!
-//! One compiled pattern set carries all active prefixes through one selection
-//! traversal. Selected outer roots prune that traversal, not subsequent frozen
-//! ignore-rule, filesystem, payload-digest, or real-CoW validation/copy passes.
+//! One compiled pattern set carries all active prefixes through a directory
+//! iteration. Callers may drive selection from their existing validation walk;
+//! selected outer roots prune discovery, not subsequent payload copying.
 use crate::config::Config;
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
@@ -99,6 +99,28 @@ pub(crate) struct Patterns {
 pub(crate) struct Selection {
     pub roots: Vec<PathBuf>,
     pub skipped: Vec<String>,
+}
+
+/// Active pattern prefixes at one directory, carried by the caller's iteration.
+#[derive(Default)]
+pub(crate) struct Prefix(Vec<State>);
+
+impl Prefix {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Selection state without a filesystem traversal of its own. The caller visits
+/// real directories in depth-first order and prunes a directory when selected.
+pub(crate) struct Selector<'a, 'p, F> {
+    patterns: &'p Patterns,
+    tracked: BTreeSet<&'a Path>,
+    is_ignored: F,
+    selected: Selection,
+    observed: Vec<bool>,
+    /// Matches below a selected ancestor are covered without entering its payload.
+    covered: Vec<bool>,
 }
 
 /// Revalidate an already frozen root set without rediscovering additional roots
@@ -200,6 +222,17 @@ impl Patterns {
         Ok(Self { patterns: compiled })
     }
 
+    pub fn selector<'a, F: FnMut(&Path) -> Result<bool>>(&self, tracked: impl IntoIterator<Item = &'a Path>, is_ignored: F) -> Selector<'a, '_, F> {
+        Selector {
+            patterns: self,
+            tracked: tracked.into_iter().collect(),
+            is_ignored,
+            selected: Selection::default(),
+            observed: vec![false; self.patterns.len()],
+            covered: vec![false; self.patterns.len()],
+        }
+    }
+
     /// `is_ignored` must query the caller's frozen desired source rules. Native
     /// query failures are errors, not nonignored skips. Frozen tracked paths are
     /// checked separately so --no-index ignore probes cannot admit forced-tracked
@@ -227,28 +260,15 @@ impl Patterns {
         if !fs::symlink_metadata(source)?.is_dir() {
             bail!("ignored-copy source is not a real directory: {}", source.display());
         }
-        let states = self.close(self.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 }));
+        let selector = self.selector(tracked, is_ignored);
+        let prefix = selector.root();
         let mut walk = Walk {
             source,
-            patterns: self,
-            tracked: tracked.into_iter().collect(),
-            is_ignored,
-            selected: Selection::default(),
-            observed: vec![false; self.patterns.len()],
-            covered: vec![false; self.patterns.len()],
+            selector,
             topology_checked,
         };
-        walk.visit(Path::new(""), &states)?;
-        for (index, pattern) in self.patterns.iter().enumerate() {
-            if !walk.observed[index] && !walk.covered[index] {
-                walk.selected
-                    .skipped
-                    .push(format!("ignored selection {:?} matched no source directories", pattern.display));
-            }
-        }
-        walk.selected.roots.sort();
-        walk.selected.skipped.sort();
-        Ok(walk.selected)
+        walk.visit(Path::new(""), &prefix)?;
+        Ok(walk.selector.finish())
     }
 
     /// Epsilon transitions let ** consume zero components, without another walk.
@@ -279,26 +299,78 @@ impl Patterns {
         }))
     }
 
-    fn can_descend(&self, states: &[State]) -> bool {
-        states.iter().any(|state| state.offset < self.patterns[state.pattern].segments.len())
+    fn can_descend(&self, prefix: &Prefix) -> bool {
+        prefix.0.iter().any(|state| state.offset < self.patterns[state.pattern].segments.len())
+    }
+}
+
+impl<F: FnMut(&Path) -> Result<bool>> Selector<'_, '_, F> {
+    pub fn root(&self) -> Prefix {
+        Prefix(
+            self.patterns
+                .close(self.patterns.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 })),
+        )
+    }
+
+    pub fn advance(&self, prefix: &Prefix, name: &std::ffi::OsStr) -> Result<Prefix> {
+        if !self.patterns.can_descend(prefix) {
+            return Ok(Prefix(Vec::new()));
+        }
+        Ok(Prefix(
+            self.patterns.advance(&prefix.0, name.to_str().context("directory selection entry not UTF-8")?),
+        ))
+    }
+
+    /// Authorize a candidate before the caller prunes its interior. A nonignored
+    /// match is reported but does not suppress viable descendant patterns.
+    pub fn select(&mut self, path: &Path, prefix: &Prefix) -> Result<bool> {
+        let mut matched = false;
+        for state in &prefix.0 {
+            if state.offset == self.patterns.patterns[state.pattern].segments.len() {
+                self.observed[state.pattern] = true;
+                matched = true;
+            }
+        }
+        if matched {
+            if (self.is_ignored)(path)? {
+                require_untracked(path, &self.tracked)?;
+                self.selected.roots.push(path.to_owned());
+                for state in &prefix.0 {
+                    if state.offset < self.patterns.patterns[state.pattern].segments.len() {
+                        self.covered[state.pattern] = true;
+                    }
+                }
+                return Ok(true);
+            }
+            self.selected.skipped.push(format!(
+                "ignored selection skipped source directory {path:?}: not ignored under frozen source rules"
+            ));
+        }
+        Ok(false)
+    }
+
+    pub fn finish(mut self) -> Selection {
+        for (index, pattern) in self.patterns.patterns.iter().enumerate() {
+            if !self.observed[index] && !self.covered[index] {
+                self.selected
+                    .skipped
+                    .push(format!("ignored selection {:?} matched no source directories", pattern.display));
+            }
+        }
+        self.selected.roots.sort();
+        self.selected.skipped.sort();
+        self.selected
     }
 }
 
 struct Walk<'a, 'p, F> {
     source: &'a Path,
-    patterns: &'p Patterns,
-    tracked: BTreeSet<&'a Path>,
-    is_ignored: F,
-    selected: Selection,
-    observed: Vec<bool>,
-    /// Potential matches under an already selected ancestor need not be visited
-    /// or spuriously reported as missing: that ancestor's payload includes them.
-    covered: Vec<bool>,
+    selector: Selector<'a, 'p, F>,
     topology_checked: bool,
 }
 
 impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
-    fn visit(&mut self, relative: &Path, states: &[State]) -> Result<()> {
+    fn visit(&mut self, relative: &Path, prefix: &Prefix) -> Result<()> {
         let directory = self.source.join(relative);
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
@@ -306,7 +378,7 @@ impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
             if name == ".jj" || name == ".git" || !entry.file_type()?.is_dir() {
                 continue; // Never follow directory symlinks or enter metadata.
             }
-            let next = self.patterns.advance(states, name.to_str().context("directory selection entry not UTF-8")?);
+            let next = self.selector.advance(prefix, &name)?;
             if next.is_empty() {
                 continue;
             }
@@ -314,29 +386,10 @@ impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
                 super::validate_same_mount(&directory, &entry.path())?;
             }
             let path = relative.join(name);
-            let mut matched = false;
-            for state in &next {
-                if state.offset == self.patterns.patterns[state.pattern].segments.len() {
-                    self.observed[state.pattern] = true;
-                    matched = true;
-                }
+            if self.selector.select(&path, &next)? {
+                continue; // Outermost eligible root already includes descendants.
             }
-            if matched {
-                if (self.is_ignored)(&path)? {
-                    require_untracked(&path, &self.tracked)?;
-                    self.selected.roots.push(path);
-                    for state in &next {
-                        if state.offset < self.patterns.patterns[state.pattern].segments.len() {
-                            self.covered[state.pattern] = true;
-                        }
-                    }
-                    continue; // Outermost eligible root already includes descendants.
-                }
-                self.selected.skipped.push(format!(
-                    "ignored selection skipped source directory {path:?}: not ignored under frozen source rules"
-                ));
-            }
-            if self.patterns.can_descend(&next) {
+            if self.selector.patterns.can_descend(&next) {
                 self.visit(&path, &next)?;
             }
         }

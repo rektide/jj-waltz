@@ -6,8 +6,10 @@ resource: /docs/architecture.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-17
+  at: 2026-10-18
 sources:
+  - resource: "opencode://ses_eaf06f6d6fferHu84gVUM2C0Xj"
+    title: Folded reseed ignored-root discovery into the existing donor validation iteration while retaining frozen-root authorization and streaming payload checks
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
     title: Documented streaming checked payload synchronization, command-frozen ignore oracle reuse and upfront Linux mount topology assessment
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -366,13 +368,17 @@ reseed, and prepare payload verification.
 
 `Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
 unsupported syntax, deduplicates equivalent selectors, and compiles components.
-`Patterns::select(source, tracked_paths, is_ignored)` carries all active pattern
-prefixes through **one directory-selection traversal**. Recursive `**` has
-zero/one-component transitions; it does not launch another subtree walk. Prefixes
-that cannot match are pruned. Selected ignored outer roots prune the selection
-walk and include nested matches once, so covered descendants are not separately
-enumerated or spuriously reported missing. Administrative directories, directory
-symlinks, and mounted-child boundaries are not traversed.
+Its traversal-independent `Selector` carries active pattern prefixes through the
+caller's directory iteration. Reseed's `payload::select_outside` discovers roots
+inline during the existing donor validation walk, instead of running
+`Patterns::select` and then walking those same prefixes again in `payload::outside`.
+Creation and prepare retain `Patterns::select` as a standalone driver over the
+same matcher. Recursive `**` has zero/one-component transitions; it does not launch
+another subtree walk. Inactive prefixes stop matching work while donor validation
+still checks unselected regions. Selected ignored outer roots prune discovery and
+include nested matches once, so covered descendants are not separately enumerated
+or spuriously reported missing. Administrative directories, directory symlinks,
+and mounted-child boundaries are not traversed.
 
 Creation and reseed supply `is_ignored` from the shared isolated native Git probe over
 frozen desired `.gitignore` content and excludes. A nonignored source match is

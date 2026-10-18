@@ -275,7 +275,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     checked_context(&source_client)?;
     let source_rev = request.source_at.as_ref().or(config.source_at.as_ref()).map(String::as_str);
     let ignored_policy = Policy::load(request.copy_ignored.as_deref(), config.copy_ignored.as_deref(), request.no_copy_ignored)?;
-    Patterns::compile(&ignored_policy.patterns)?;
+    let ignored_patterns = Patterns::compile(&ignored_policy.patterns)?;
     if ignored_policy.origin != Origin::None {
         diagnostic(&ignored_policy.describe());
     }
@@ -412,8 +412,10 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     };
     let mut frozen_rules = FrozenRules::default();
     let source_rules = frozen_rules.get(&source_client, &source_operation, &source_commit, &source_entries)?;
-    let (ignored, skipped) = select_ignored(&source, &ignored_policy.patterns, &source_rules, &source_entries)?;
-    payload::outside(&source, true, &ignored)?;
+    let selected = payload::select_outside(&source, &ignored_patterns, source_entries.iter().map(|entry| entry.path.as_path()), |path| {
+        source_rules.is_ignored_directory(path)
+    })?;
+    let (ignored, skipped) = (selected.roots, selected.skipped);
     let payload_guard = payload::Guard::default();
     if request.dry_run {
         // Shared donor failure propagates as NOT ASSESSED, never READY.
