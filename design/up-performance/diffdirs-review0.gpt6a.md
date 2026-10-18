@@ -1,13 +1,13 @@
 ---
 type: ImplementationReview
 title: "Checked diff-dirs integration review"
-description: Parent source review of Sol's static checker, recursive application, audit, and root-transition seams before jj-waltz integration; performance assessment awaits interleaved tooling.
+description: Parent source review and exact upstream approval after the independent Rust-runner clean reassessment; mutable and full reseed performance remain separate evidence.
 resource: /design/up-performance/diffdirs-review0.gpt6a.md
-status: reviewed-for-integration
+status: approved-for-integration
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-18 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Reviewed the delivered library against the user's streaming and static-specialization direction and identified caller integration obligations
+    title: Reviewed the streaming/static-checker seam, identified caller obligations and approved an exact production revision after independent Rust-runner reassessment
   - resource: "opencode://ses_eb24f98a3ffewdVqa9lao6tXQu"
     title: Sol xhigh implementation and verification handoff, with performance judgment deferred under unstable host I/O
   - resource: "file:///home/rektide/src/diff-dirs/src/check.rs"
@@ -26,14 +26,33 @@ sources:
     title: Builder verification, precise contracts, immutable controls and benchmark limitations
   - resource: /design/up-performance/inline-policy0.gpt6a.md
     title: Intended jj-waltz scope partition and topology/ignore front guards
+  - resource: "file:///home/rektide/src/diff-dirs/design/performance/reassessment0.sol61x.md"
+    title: Independent 64-sample real-shaped warm-clean reassessment with frozen controls, paired ratios and verification costs
 ---
 
 # Checked diff-dirs integration review
 
 Reviewed delivery through `8811c056`; runtime changes end at `243be8e2`.
-**The library seam is suitable for the intended integration.** Performance
-selection remains pending the user's requested interleaved tooling and Sol's
-independent reassessment. This review is source inspection, not a new test run.
+**Approved upstream production revision:
+`8811c0561e90c84b29e22faa8b26c9a5cc6f76a1`.** The independent Rust-runner
+reassessment is complete and the downstream review gate is closed. Parent
+verified that current `src/`, `sync/src/`, and `sync/Cargo.toml` have no diff
+against that revision. Later tooling/evidence commits do not change this approval's
+production source. This is source review plus accepted reported checks, not a
+redundant new test run.
+
+The real-shaped clean reassessment passed 64/64 samples with zero operations and
+unchanged bytes/metadata/inodes. Native guarded median API time was 726.10 ms serial
+and 239.57 ms P4/J4/K256. Paired guard/default spreads cross both signs; there is
+no exact attributed checker tax or reason to remove checks. Evidence supports
+including a caller-owned P4 comparison variant in JW, with serial retained; final
+JW default selection needs mutable and full-command measurements. No production
+prewalk should be added to reproduce the benchmark's deliberate warmup.
+
+JW integration can resume against the approved revision, first addressing the
+paused downstream source review and test-isolation findings. Completion still
+requires integrated verification; this approval does not assert that JW is done
+or that library timings are end-to-end reseed results.
 
 ## Fit to the selected direction
 
