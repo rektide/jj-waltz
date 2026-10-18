@@ -1,0 +1,37 @@
+{
+  "description": "Existing native JW binaries; replace candidate identity after integration. Source/setup/reset/verification excluded from each native reseed timer.",
+  "cache_condition": "private reflink reset and JJ setup warm metadata; no cold-cache claim",
+  "variants": {
+    "baseline": {
+      "source": {"revision": "7253ff6ddee639a98087e1729af58e0cbc546b6f", "worktree": "/home/rektide/src/jj-waltz", "provenance": "/home/rektide/src/jj-waltz/.test-agent/inline-policy/baseline.json"},
+      "compiler": ["rustc", "--version", "--verbose"],
+      "profile": "original release profile; preserved pre-integration executable; compiler from baseline.json",
+      "artifact": "/home/rektide/src/jj-waltz/.test-agent/inline-policy/jw-before",
+      "expected_sha256": "03e0ada406426d9496c602e22c9dd0de452f788e424dab9b7069c07f812e715c",
+      "inputs": ["/home/rektide/src/jj-waltz/.test-agent/inline-policy/baseline.json"]
+    },
+    "candidate": {
+      "source": {"revision": "REPLACE_WITH_EXACT_CANDIDATE_REVISION", "worktree": "/home/rektide/src/jj-waltz", "identity_command": ["jj", "--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "commit_id"], "state_command": ["git", "status", "--porcelain", "--untracked-files=no"]},
+      "compiler": ["rustc", "--version", "--verbose"],
+      "profile": "original release profile, unchanged",
+      "build": ["cargo", "build", "--locked", "--release", "--target-dir", "target/experiment-candidate"],
+      "artifact": "target/experiment-candidate/release/jw"
+    }
+  },
+  "jobs": [
+    {
+      "id": "unchanged-n1",
+      "fixture": "/home/rektide/src/jj-waltz/.test-agent/matched-reseed/fixture",
+      "scenario": "unchanged",
+      "destinations": 1,
+      "timing": "csv",
+      "scope": "single native JW subprocess, startup included; JJ fixture setup/reset and correctness outside timing",
+      "inputs": ["/home/rektide/src/jj-waltz/tools/performance/jw_sample.py", "/home/rektide/src/jj-waltz/tools/performance/measure.py"],
+      "setup": [["python3", "/home/rektide/src/jj-waltz/tools/performance/jw_sample.py", "setup", "{state}", "--jw", "{binary}", "--destinations", "{destinations}"]],
+      "command": ["python3", "/home/rektide/src/jj-waltz/tools/performance/jw_sample.py", "run", "{state}"],
+      "csv": {"field": "seconds", "scale": 1, "dimensions": ["phase"]},
+      "verify": [["python3", "/home/rektide/src/jj-waltz/tools/performance/jw_sample.py", "verify", "{state}", "--engine", "{engine}"]],
+      "timeout": 180
+    }
+  ]
+}
