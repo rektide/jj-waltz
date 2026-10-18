@@ -1,13 +1,14 @@
 ---
 type: ImplementationBrief
 title: "Supersede ignored-copy selection with scoped transfer"
-description: Selected implementation direction and dependency order following the human's request to surge toward implementation against the changed checkout.
+description: Recorded parent-selected implementation direction, now held for JJ protocol review; library capabilities landed, but JW transfer defaults were not approved.
 resource: /design/sync-scope/implementation0.gpt6a.md
-status: implementing
+status: paused-for-jj-protocol-review
 generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-18 }
+updated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-19 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Human authorized implementation superseding copy_ignored; parent inspected underfoot changes and selected a sequential library-first landing
+    title: Human authorized implementation; parent selected a policy too early, then recorded the human's challenge and the unresolved JJ-state protocol before further JW integration
   - resource: /design/sync-scope/design0.gpt6a.md
     title: Authority-based transfer model, generic scope/absence interfaces and listed-leaf installation
   - resource: /design/sync-scope/jj-state-review0.gpt6a.md
@@ -21,6 +22,32 @@ sources:
 ---
 
 # Implementation direction
+
+## Correction: the JW policy and state transition are not settled
+
+The human authorized movement toward implementation, then asked to see the
+design for sign-off. They subsequently questioned why mirroring required named
+regions, and clarified that this was a tentative understanding, not a settled
+instruction to make whole-root mirroring the default.
+
+The parent made two unsupported leaps: choosing broad update plus mirror regions
+as the JW product model, then treating the human's challenge as confirmation of
+the opposite default. Neither is established by the JJ-state research.
+
+The generic diffdirs capabilities are implemented. JW still uses its existing
+ignored-root integration; the policy below has not been switched on there.
+Library tests establish those capabilities, not a new JJ reseed protocol.
+
+The earlier scope below explicitly deferred metadata/state adoption and moves.
+That was a parent choice, not a conclusion that the research was irrelevant.
+The next design step must use the corrected upstream/state research to specify
+one complete existing-workspace transition: target-owned identity/binding,
+actual copied contents, reusable file-state cache, desired tracked tree, and
+what happens while any preserved directories are absent. The copying default
+must be evaluated in that concrete sequence before JW integration proceeds.
+
+The remainder records the previous proposed landing, not approved JW behavior.
+No new code, experiments, or agent work is authorized by this correction.
 
 The human requested implementation after the research, explicitly superseding
 the way `copy_ignored` operated. This is a new implementation commission; the
