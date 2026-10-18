@@ -42,12 +42,13 @@ impl Guard {
 /// Validate retained/tracked regions, stopping exactly at selected payload roots.
 /// Their interiors belong to streaming execution (or explicit dry-run audit).
 pub(super) fn outside(root: &Path, allow_git: bool, selected: &[PathBuf]) -> Result<()> {
-    fn visit(root: &Path, path: &Path, allow_git: bool, selected: &[PathBuf]) -> Result<()> {
+    let boundaries: BTreeSet<_> = selected.iter().map(|path| root.join(path)).collect();
+    fn visit(root: &Path, path: &Path, allow_git: bool, boundaries: &BTreeSet<PathBuf>) -> Result<()> {
         for child in fs::read_dir(path).with_context(|| format!("cannot read {}", path.display()))? {
             let child = child?;
             let path = child.path();
             let name = child.file_name();
-            if child.path().parent() == Some(root) && (name == ".jj" || (allow_git && name == ".git")) {
+            if path.parent() == Some(root) && (name == ".jj" || (allow_git && name == ".git")) {
                 continue;
             }
             if name == ".jj" || name == ".git" {
@@ -56,18 +57,18 @@ pub(super) fn outside(root: &Path, allow_git: bool, selected: &[PathBuf]) -> Res
             let metadata = fs::symlink_metadata(&path)?;
             #[cfg(not(target_os = "linux"))]
             crate::cow::validate_same_mount(path.parent().unwrap(), &path)?;
-            if selected.iter().any(|p| root.join(p) == path) {
+            if boundaries.contains(&path) {
                 continue;
             }
             if metadata.is_dir() {
-                visit(root, &path, allow_git, selected)?;
+                visit(root, &path, allow_git, boundaries)?;
             } else if !metadata.is_file() && !metadata.is_symlink() {
                 bail!("special entry is unsupported: {}", path.display());
             }
         }
         Ok(())
     }
-    visit(root, root, allow_git, selected)
+    visit(root, root, allow_git, &boundaries)
 }
 
 pub(super) fn audit_target(root: &Path, selected: &[PathBuf], guard: &Guard) -> Result<()> {
@@ -82,4 +83,19 @@ pub(super) fn audit_target(root: &Path, selected: &[PathBuf], guard: &Guard) -> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outside_prunes_only_exact_precomputed_payload_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("pkg/cache/.jj")).unwrap();
+        fs::create_dir_all(temp.path().join("pkg/cache-other")).unwrap();
+        outside(temp.path(), false, &["pkg/cache".into()]).unwrap();
+        fs::create_dir_all(temp.path().join("pkg/cache-other/.git")).unwrap();
+        assert!(outside(temp.path(), false, &["pkg/cache".into()]).is_err());
+    }
 }
