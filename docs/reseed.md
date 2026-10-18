@@ -313,8 +313,9 @@ mutation is unsupported. Resolve stale state explicitly with JJ.
 Linux reads `/proc/self/mountinfo` once per worker batch before recursive
 selection/traversal, rejecting nested mounts including same-device directory/file
 bind mounts and selected-root mounts. A mount at the workspace root is allowed;
-obvious overlapping filesystem-relative bind aliases and covered/stacked roots
-are refused. Only root `.jj` and permitted donor `.git` regions, which are never
+obvious overlapping filesystem-relative bind aliases, covered/stacked ancestors,
+and applicable autofs roots/ancestors are refused. Autofs traversal can change
+topology without another writer, so it cannot use this fixed snapshot. Only root `.jj` and permitted donor `.git` regions, which are never
 copied/deleted, are excluded. The guard conservatively covers retained regions
 too, and fails closed when procfs topology is unavailable. Other platforms keep
 their existing native boundary checks. Paths and mount topology must stay stable;

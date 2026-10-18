@@ -8,6 +8,7 @@ struct Mount {
     device: Vec<u8>,
     root: PathBuf,
     point: PathBuf,
+    filesystem: Vec<u8>,
 }
 
 #[cfg(target_os = "linux")]
@@ -51,6 +52,7 @@ fn parse(bytes: &[u8]) -> Result<Vec<Mount>> {
                 device: fields[2].to_vec(),
                 root,
                 point,
+                filesystem: fields[separator + 1].to_vec(),
             })
         })
         .collect()
@@ -68,6 +70,8 @@ impl Topology {
         })
     }
     pub(super) fn workspace(&self, root: &Path, allow_git: bool) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        self.location(root)?;
         #[cfg(target_os = "linux")]
         for mount in &self.mounts {
             if mount.point != root && mount.point.starts_with(root) {
@@ -87,12 +91,23 @@ impl Topology {
     fn location(&self, path: &Path) -> Result<(&[u8], PathBuf)> {
         let mut covering: Vec<_> = self.mounts.iter().filter(|m| path.starts_with(&m.point)).collect();
         covering.sort_by_key(|m| m.point.components().count());
-        let mount = covering.pop().context("workspace is not covered by mountinfo")?;
-        ensure!(mount.root.is_absolute(), "workspace mount lacks a filesystem-relative root");
+        // A covered ancestor can hide a lexically deeper mount. Longest prefix
+        // alone would then map the workspace through that hidden child and miss
+        // aliases of the actual visible storage. Refuse the entire ambiguous
+        // chain, not just duplicate points at the deepest prefix.
         ensure!(
-            !covering.iter().any(|m| m.point == mount.point),
+            !covering.windows(2).any(|pair| pair[0].point == pair[1].point),
             "covered/stacked workspace mounts cannot be verified safely"
         );
+        // Traversing autofs can create new mounts and invalidate this upfront
+        // snapshot even without an independent writer. Conservatively include
+        // covered ancestors; do not trigger automounts during recursive work.
+        ensure!(
+            !covering.iter().any(|mount| mount.filesystem == b"autofs"),
+            "workspace traversal through autofs cannot use a stable topology snapshot"
+        );
+        let mount = covering.pop().context("workspace is not covered by mountinfo")?;
+        ensure!(mount.root.is_absolute(), "workspace mount lacks a filesystem-relative root");
         Ok((&mount.device, mount.root.join(path.strip_prefix(&mount.point)?)))
     }
     pub(super) fn separate(&self, roots: &[PathBuf]) -> Result<()> {
@@ -132,5 +147,30 @@ mod tests {
         };
         topology.workspace(Path::new("/target"), false).unwrap();
         assert!(topology.separate(&["/home/source".into(), "/target".into()]).is_err());
+    }
+
+    #[test]
+    fn overmounted_ancestor_must_not_map_through_hidden_lexical_child() {
+        let topology = Topology {
+            mounts: parse(b"1 0 0:4 / / rw - btrfs disk rw\n2 1 0:4 /A /a rw - btrfs disk rw\n3 2 0:4 /X /a/b rw - btrfs disk rw\n4 1 0:4 /Y /a rw - btrfs disk rw\n5 1 0:4 /Y/b/repo /target rw - btrfs disk rw\n").unwrap(),
+        };
+        // Longest lexical prefix would wrongly return /X/repo, not /Y/b/repo,
+        // accepting /target as separate storage. Ambiguity must refuse first.
+        let error = topology.location(Path::new("/a/b/repo")).unwrap_err();
+        assert!(error.to_string().contains("covered/stacked"));
+        assert!(topology.workspace(Path::new("/a/b/repo"), false).is_err());
+        assert!(topology.separate(&["/a/b/repo".into(), "/target".into()]).is_err());
+    }
+
+    #[test]
+    fn autofs_root_and_ancestor_refuse_but_unrelated_and_excluded_admin_do_not() {
+        let topology = Topology {
+            mounts: parse(b"1 0 0:4 / / rw - btrfs disk rw\n2 1 0:5 / /auto rw - autofs systemd-1 rw\n3 2 0:4 /actual /auto/loaded rw - btrfs disk rw\n4 1 0:6 / /safe/.jj/auto rw - autofs systemd-1 rw\n").unwrap(),
+        };
+        for path in ["/auto", "/auto/repo", "/auto/loaded/repo"] {
+            assert!(topology.workspace(Path::new(path), false).unwrap_err().to_string().contains("autofs"));
+        }
+        topology.workspace(Path::new("/safe"), false).unwrap();
+        assert!(topology.workspace(Path::new("/"), false).is_err());
     }
 }

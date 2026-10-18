@@ -80,6 +80,15 @@ with `/tmp` were unsupported reflinks, resolved by setting TMPDIR as above.
 
 ## Limits and next evidence
 
+Parent review resumed this integration only after explicit approval of library
+`8811c0561e90c84b29e22faa8b26c9a5cc6f76a1` (runtime `243be8e2`), recorded in
+[the library review](diffdirs-review0.gpt6a.md). The first review correction refuses
+duplicate mountpoints anywhere in a workspace's covering ancestor chain, not
+just the deepest lexical prefix: an overmounted ancestor may hide that prefix.
+Applicable autofs roots/ancestors also refuse before recursive traversal, since
+traversal itself can invalidate fixed topology. Four focused topology tests pass,
+including the discriminating hidden-child alias fixture. Checks remain upfront.
+
 Deep policy/reflink failures can follow tracked changes or completed peers. The
 offender is untouched; earlier accepted work can remain. Existing JJ/bookmark
 recovery applies; no journal, receipt, automatic repair or resume was added.
