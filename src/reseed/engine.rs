@@ -3,7 +3,7 @@ use super::{ReseedOutcome, ReseedReport, ReseedRequest, ReseedStatus};
 use crate::cow::ignored::{Origin, Patterns, Policy};
 #[cfg(test)]
 use crate::cow::payload::checked_git;
-use crate::cow::payload::{Entry, IgnoreRules, confined_parents, directory_identity, entries, relative};
+use crate::cow::payload::{Entry, FrozenRules, IgnoreRules, confined_parents, directory_identity, entries, relative};
 use crate::freshen::source::SourceSelection;
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
@@ -410,7 +410,8 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         Some(rev) => client.resolve_one_at(&operation, rev)?.commit_id,
         None => source_wc.clone(),
     };
-    let source_rules = Rc::new(IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries)?);
+    let mut frozen_rules = FrozenRules::default();
+    let source_rules = frozen_rules.get(&source_client, &source_operation, &source_commit, &source_entries)?;
     let (ignored, skipped) = select_ignored(&source, &ignored_policy.patterns, &source_rules, &source_entries)?;
     payload::outside(&source, true, &ignored)?;
     let payload_guard = payload::Guard::default();
@@ -458,7 +459,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             let tree_commit = &base;
             require_unconflicted(&client, &operation, tree_commit)?;
             let target_entries = entries(&client, &operation, tree_commit)?;
-            let target_rules = Rc::new(IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries)?);
+            let target_rules = frozen_rules.get(&JjClient::new(&root), &operation, tree_commit, &target_entries)?;
             for path in &ignored {
                 target_rules.require_ignored(path)?;
                 if target_entries.iter().any(|e| overlap(path, &e.path)) {
@@ -1306,7 +1307,7 @@ fn describe(plan: &Plan, planned: bool) -> String {
         plan.clones.len(),
         if planned { "JJ would materialize" } else { "JJ materialized" },
         plan.entries.len().saturating_sub(plan.clones.len()),
-        if planned { "would replace" } else { "replaced" },
+        if planned { "would reconcile" } else { "reconciled" },
         plan.ignored.iter().map(|p| format!("{:?}", p)).collect::<Vec<_>>().join(", "),
         if plan.replace_content {
             "replace all non-administrative content"
@@ -2142,7 +2143,7 @@ mod tests {
     }
 
     #[test]
-    fn live_source_validation_rechecks_backend_ignored_rules() {
+    fn live_source_validation_reuses_command_frozen_backend_ignored_rules() {
         let Some((_temporary, _store, mut plan)) = fixture() else {
             return;
         };
@@ -2159,12 +2160,36 @@ mod tests {
         let (operation, commit) = current_commit(&source).unwrap();
         let source_entries = entries(&source, &operation, &commit).unwrap();
         verify_disk(&source, &operation, &commit, &plan.source, &source_entries).unwrap();
+        plan.source_rules = Rc::new(IgnoreRules::new(&source, &operation, &commit, &source_entries).unwrap());
+        plan.source_entries = Rc::new(source_entries);
         plan.source_operation = operation;
         plan.source_commit = commit.clone();
         plan.source_wc_commit = commit.clone();
         plan.ignored = vec![selected];
         validate_source(&plan).unwrap();
         fs::write(exclude, "").unwrap();
-        assert!(validate_source(&plan).is_err());
+        validate_source(&plan).unwrap();
+        let next_rules = IgnoreRules::new(&source, &plan.source_operation, &commit, &plan.source_entries).unwrap();
+        assert!(next_rules.require_ignored(&plan.ignored[0]).is_err());
+    }
+
+    #[test]
+    fn frozen_rule_cache_keys_effective_excludes_and_reuses_native_context() {
+        let (_temporary, client) = verification_fixture();
+        let (operation, commit) = current_commit(&client).unwrap();
+        let entries = entries(&client, &operation, &commit).unwrap();
+        let mut cache = FrozenRules::default();
+        let first = cache.get(&client, &operation, &commit, &entries).unwrap();
+        let repeated = cache.get(&client, &operation, &commit, &entries).unwrap();
+        assert!(Rc::ptr_eq(&first, &repeated));
+        let private = PathBuf::from(format!("jw-frozen-rule-cache-{}", std::process::id()));
+        assert!(!first.is_ignored_directory(&private).unwrap());
+        let backend = PathBuf::from(client.run(["--ignore-working-copy", "git", "root"]).unwrap().trimmed_stdout().unwrap());
+        fs::create_dir_all(backend.join("info")).unwrap();
+        fs::write(backend.join("info/exclude"), format!("{}/\n", private.display())).unwrap();
+        let changed = cache.get(&client, &operation, &commit, &entries).unwrap();
+        assert!(!Rc::ptr_eq(&first, &changed));
+        assert!(changed.is_ignored_directory(&private).unwrap());
+        assert!(!first.is_ignored_directory(&private).unwrap());
     }
 }

@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:zai-coding-plan/glm-5.3#max
-  at: 2026-10-17
+  by: model:openai/gpt-6.1-sol#medium
+  at: 2026-10-18
 sources:
+  - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
+    title: Integrated static checked streaming payload reconciliation, batch Linux topology guards and frozen persistent native ignore queries; revised refusal timing and convergence guarantees
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
     title: Added navigation to the proposed inline-payload-guard design and its explicit preflight-timing tradeoff
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
@@ -84,8 +86,8 @@ jw reseed worker-a worker-b --from /path/to/prepared-source --dry-run
 
 Remove `--dry-run` when the plan is right. Reseed snapshots real work and syncs
 the workspace onto the donor's current working-copy commit: equal paths are
-reflinked from the donor and JJ materializes the tree. Repeating it renews
-sharing even when bytes are unchanged.
+reflinked from the donor and JJ materializes the tracked tree. Selected ignored
+payload is reconciled incrementally; unchanged payload is not recopied.
 
 Donor precedence is CLI `--from` → primary-local `source` → verified primary
 checkout of the same JJ repository. CLI relative paths start at the caller;
@@ -119,15 +121,23 @@ Quote patterns. Components support `*`, `?`, recursive `**`, and trailing `/`.
 Missing matches succeed and are reported; matching nonignored source directories
 are skipped while eligible descendants remain searchable. Selected outer roots
 include nested matches once. Selection never follows directory symlinks or enters
-administrative directories. A selected root must be ignored on both sides, have
-no tracked overlap, and pass confinement, topology, and actual CoW checks.
-Forced-tracked files inside ignored directories are a hard error.
+administrative directories. A selected root must be ignored under frozen donor
+and desired rules and pass confinement/topology checks. Donor/desired tracked
+overlap is an error; old target tracked files becoming payload are supported.
 
-Selected roots are **replaced** with private reflinks, not hard links or shared
-directory symlinks. Other contents are not pruned. Symlinks are copied as links;
+Selected roots are **mirrored incrementally** with private reflinks, not hard
+links or shared directory symlinks. Target-only entries inside those roots are
+deleted; unrelated contents outside them are not pruned. Symlinks are copied as links;
 source-bound absolute links are reported, not rewritten. Dependencies reflect
 the installed donor state. If feature manifests differ, run the project's frozen
 install in the feature workspace.
+
+Comparison uses file type, size and exact mtime, or literal symlink text, not
+content hashes. Clean payload preserves inode/mtime and requires no writes.
+Mode-only changes and byte edits retaining size/mtime are **not repaired**;
+this is not an archive-metadata/ownership/ACL/xattr sweep. Newly copied files
+preserve permissions and mtime. Absent roots and selected target file/link roots
+are supported; final target symlinks are replaced, never followed.
 
 `--replace-content` explicitly permits deleting all non-administrative target
 contents, including `.env`, except `.jj`, before refill. It does not copy arbitrary
@@ -149,9 +159,10 @@ policy for you. There are no global build commands.
 
 The same selector and policy apply to new `add`/`s` workspaces, reseed, and prepare.
 Creation inherits only the local copy list, not donor or preparation settings.
-Existing switches never refill payloads. Neither path hashes or stat-stamps the
-payload: rules come from the pinned tree's tracked `.gitignore` files, and
-copying validates each entry inline during its single reflink traversal. See
+Existing switches never refill payloads. Neither path hashes or persists a
+payload inventory. Rules come from pinned tracked `.gitignore` files plus frozen
+effective backend/global excludes. Reseed reuses those inputs and a persistent,
+memoized native Git ignore oracle; copying/comparison validates entries inline. See
 [creation's private dependencies](../README.md#private-dependencies-on-creation).
 
 ## Prepare the source
@@ -299,14 +310,35 @@ are rejected. Colocated donors are allowed; linked Git/app-owned donors cannot b
 prepared. Real reflinks are required; there is no ordinary-copy fallback. Watchman
 mutation is unsupported. Resolve stale state explicitly with JJ.
 
+Linux reads `/proc/self/mountinfo` once per worker batch before recursive
+selection/traversal, rejecting nested mounts including same-device directory/file
+bind mounts and selected-root mounts. A mount at the workspace root is allowed;
+obvious overlapping filesystem-relative bind aliases and covered/stacked roots
+are refused. Only root `.jj` and permitted donor `.git` regions, which are never
+copied/deleted, are excluded. The guard conservatively covers retained regions
+too, and fails closed when procfs topology is unavailable. Other platforms keep
+their existing native boundary checks. Paths and mount topology must stay stable;
+this is not protection against hostile concurrent path/mount replacement.
+
 ### Check readiness before refilling
 
 `--dry-run` uses the real preflight and reports each selected target READY or
 BLOCKED, exiting nonzero for any blocker. Target-local failures do not hide peers.
 A failed shared donor proof marks unchecked targets **not assessed**, never READY.
-The real command rechecks and never refills only the valid subset of a blocked
-batch. Checks include ownership, registration, sparse/stale state, conflicts,
-bookmarks, CoW, ignored rules, obstructions, and links.
+The real command rechecks structural guards and never refills just the valid
+subset of a structurally blocked batch. Checks include ownership, registration,
+sparse/stale state, conflicts, bookmarks, ignored rules, obstructions, and links.
+Preview additionally audits each donor payload root once and every selected
+target payload, including opaque one-sided interiors. It does not probe reflink
+capability or prove later writes will succeed.
+
+Normal execution does **not** audit payload interiors first. The checked streaming
+comparison/copier/remover rejects administrative names and special entries even
+when equal, but deep refusal or actual required-reflink failure can follow tracked
+changes, earlier payload progress, or completed peers. The offending entry is not
+acted on; there is no rollback. `--replace-content` retains broader eager content
+validation because its deletion scope is larger. Resolve the violation and use
+the recovery instructions below before retrying.
 
 Preview does not fetch/build/refill/reset/delete, but normal JJ snapshots can
 record real work and auto-track under JJ's policy. Sparse/mid-refill targets are
@@ -351,7 +383,7 @@ are tracked; automatic stale-tree updates are disabled.
 
 Execution is one forward pass: validate, check bookmarked work, clear sparse
 selection, `jj new` at the pinned base, prefill equal paths with
-reflinks, reset sparse selection, copy selected ignored roots, apply links, and
+reflinks, reset sparse selection, reconcile selected ignored roots, apply links, and
 verify. Commit-ID checks between JJ calls remain in memory. There is no durable
 intermediate state and **jw never repairs a partial workspace**.
 
@@ -382,9 +414,9 @@ Each new prepare/reseed resolves its own policy and source selection.
 - [Architecture](architecture.md#in-place-reseeding): ownership and live safety boundaries.
 - [Performance assessment](../tools/performance/README.md): retained fixtures and process-count gates.
 - [Command-split decision](../design/up-performance/prepare0.gpt6a.md): why preparation and worker copying are separate.
-- [Inline payload-guard proposal](../design/up-performance/inline-policy0.gpt6a.md):
-  proposed frozen-rule reuse and diff-dirs integration, with streaming versus
-  strict preflight alternatives. The safety contract above remains current.
+- [Inline payload-guard design](../design/up-performance/inline-policy0.gpt6a.md):
+  rationale and alternatives; the streaming integration now follows the
+  [reviewed library seam](../design/up-performance/diffdirs-review0.gpt6a.md).
 - [Incident handoff](../design/up-performance/handoff0.glm53m.md): preserved measurement evidence.
 - [Earlier reseed design](../design/workspace-reseed/reseed0.gpt6a.md) and [source design](../design/workspace-reseed/source-freshen0.gpt61sol.md): historical rationale, not the current recovery contract.
 - [Wildcard-group design](../design/workspace-reseed/groups0.gpt61sol.md): selection rationale.

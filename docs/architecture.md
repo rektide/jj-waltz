@@ -8,6 +8,8 @@ updated:
   by: model:openai/gpt-6.1-sol#xhigh
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
+    title: Documented streaming checked payload synchronization, command-frozen ignore oracle reuse and upfront Linux mount topology assessment
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Deleted durable reseed and preparation recovery state, retained direct live proofs and in-memory commit pinning, and removed legacy-only preservation planning
   - resource: "opencode://ses_eb867bfdaffefMVLpyaPUadbSp"
@@ -311,7 +313,8 @@ prepare again, potentially repeating every command and selecting/fetching anew.
 
 Execution clears sparsity, optionally creates a fresh child at a frozen base,
 prefills tree-identical paths, expands sparsity, and verifies the target against
-its desired revision. Configured ignored roots are copied only after tracked
+its desired revision. Selected payload survives this phase except for actual
+old tracked leaves being cleared. Configured ignored roots are reconciled only after tracked
 verification. Links and final tracked-tree verification complete the forward
 pass. Target and donor commit IDs are pinned between JJ calls in memory.
 Bookmark coverage is captured after snapshots, checked for the whole batch, and
@@ -381,12 +384,31 @@ confinement, obstruction, and actual private-CoW checks. Unselected target data
 is not automatically pruned; `--replace-content` remains its explicit destructive
 exception. See [operator policy examples](reseed.md#ignored-copy-policy-layers).
 
-This optimizes matching, not every filesystem operation. Frozen ignore assembly,
-recursive validation, capability probes and copying retain live correctness
-passes. Preparation compiles syntax before fetch and selects against the exact
-goal before commands and after completion. Live reseed revalidation checks the
-selected root set, not a new expansion. Creation additionally retains its
-stamp/digest copy proofs below. No missing match requires a builder.
+Reseed's command-owned `FrozenRules` shares rule extraction/sandboxes for equal
+pinned coordinates and effective excludes. A persistent framed native
+`check-ignore --no-index --stdin -z --verbose --non-matching` oracle supplies
+negative/negated answers during adaptive discovery, memoized by path/kind.
+It is never called from a payload checker. Revalidation consumes the frozen
+selection and rules, not rebuilt sandboxes or a new expansion. Preparation still
+checks the exact goal before commands and after completion.
+
+On Linux, `reseed::topology` captures mountinfo before recursive traversal and
+rejects nested directory/file mounts and obvious overlapping bind aliases. This
+removes per-entry mount syscalls from selection, payload synchronization and
+replace-content deletion. Other platforms retain native checks. Stable topology
+and path bindings remain a caller obligation; source preparation does not reuse
+this batch context across its external build commands.
+
+`reseed::payload::Guard` is a concrete static `diff_dirs::Check` over native name,
+existing metadata and optional literal link. Normal execution uses
+`Applier::new_replacing_checked(..., ReflinkRequired, guard).mirror()` without
+pre-audit or synthetic reflink probe. Comparison covers equal entries; recursive
+copy/removal covers one-sided interiors. Only rare absolute source links lock the
+deduplicated diagnostic collector. Dry-run uses one donor audit per root, then
+each target, never reporting READY after a failed shared donor audit. Deep refusal
+can follow tracked/payload progress; existing out-of-band JJ recovery is unchanged.
+Clean payload has no writes; convergence is type/size/mtime or literal-link based,
+not hashing or mode-only repair. See [operator guarantees](reseed.md#ignored-data).
 
 ### Creation ignored payload
 

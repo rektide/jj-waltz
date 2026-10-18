@@ -9,6 +9,47 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::rc::Rc;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Excludes {
+    global: Vec<u8>,
+    info: Vec<u8>,
+}
+
+/// Command-owned cache. Equal pinned coordinates reuse extracted rule bytes;
+/// equal coordinates AND effective excludes share the sandbox and native oracle.
+#[derive(Default)]
+pub(crate) struct FrozenRules {
+    files: BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>,
+    rules: BTreeMap<(String, Excludes), Rc<IgnoreRules>>,
+}
+impl FrozenRules {
+    pub(crate) fn get(&mut self, client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Rc<IgnoreRules>> {
+        let excludes = Excludes::capture(client, operation)?;
+        let key = (commit.to_owned(), excludes);
+        if let Some(rules) = self.rules.get(&key) {
+            return Ok(Rc::clone(rules));
+        }
+        if !self.files.contains_key(commit) {
+            self.files.insert(commit.to_owned(), ignore_files(client, operation, commit, entries)?);
+        }
+        let rules = Rc::new(IgnoreRules::build(&self.files[commit], &key.1)?);
+        self.rules.insert(key, Rc::clone(&rules));
+        Ok(rules)
+    }
+}
+
+fn ignore_files(client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+    let mut ignores = BTreeMap::new();
+    for entry in entries.iter().filter(|e| e.path.file_name().is_some_and(|n| n == ".gitignore")) {
+        if entry.kind != "file" {
+            bail!("symlinked ignore files cannot be verified safely");
+        }
+        ignores.insert(entry.path.clone(), file_bytes(client, operation, commit, &entry.path)?);
+    }
+    Ok(ignores)
+}
 
 /// Git's native ignore parser, over an isolated tree of frozen desired .gitignore
 /// files and copies of JJ's backend/global excludes. No target revision is changed.
@@ -27,6 +68,16 @@ struct Oracle {
     stderr: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
 }
 impl Oracle {
+    fn stop(&mut self) -> Vec<u8> {
+        drop(self.input.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.stderr
+            .take()
+            .and_then(|reader| reader.join().ok())
+            .and_then(Result::ok)
+            .unwrap_or_default()
+    }
     fn start(root: &Path) -> Result<Self> {
         let mut child = isolated_git(root)
             .env("GIT_FLUSH", "1")
@@ -78,12 +129,7 @@ impl Oracle {
 }
 impl Drop for Oracle {
     fn drop(&mut self) {
-        drop(self.input.take());
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        if let Some(stderr) = self.stderr.take() {
-            let _ = stderr.join();
-        }
+        self.stop();
     }
 }
 
@@ -105,27 +151,45 @@ mod oracle_tests {
         assert_eq!(rules.answers.borrow().len(), 4);
         assert_eq!(rules.oracle.borrow().as_ref().unwrap().child.id(), pid);
     }
+
+    #[test]
+    fn failed_oracle_is_joined_and_not_memoized_as_a_negative() {
+        let rules = IgnoreRules::from_directory(tempfile::tempdir().unwrap());
+        checked_git(rules.directory.path(), ["init", "--quiet", "--template="]).unwrap();
+        *rules.oracle.borrow_mut() = Some(Oracle::start(rules.directory.path()).unwrap());
+        rules.oracle.borrow_mut().as_mut().unwrap().child.kill().unwrap();
+        assert!(rules.is_ignored_directory(Path::new("unknown")).is_err());
+        assert!(rules.answers.borrow().is_empty());
+        assert!(rules.oracle.borrow().is_none());
+        assert!(!rules.is_ignored_directory(Path::new("unknown")).unwrap());
+    }
 }
 impl IgnoreRules {
     pub(crate) fn new(client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Self> {
+        Self::build(&ignore_files(client, operation, commit, entries)?, &Excludes::capture(client, operation)?)
+    }
+    fn build(ignores: &BTreeMap<PathBuf, Vec<u8>>, excludes: &Excludes) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         checked_git(directory.path(), ["init", "--quiet", "--template="])?;
         fs::create_dir_all(directory.path().join(".git/info"))?;
-        let mut ignores = BTreeMap::new();
         // Ignore classification uses the frozen tracked .gitignore files of the
         // pinned tree plus backend/global excludes; the checkout's untracked
         // .gitignore files are deliberately not hunted with a tree walk.
-        for entry in entries.iter().filter(|e| e.path.file_name().is_some_and(|n| n == ".gitignore")) {
-            if entry.kind != "file" {
-                bail!("symlinked ignore files cannot be verified safely");
-            }
-            ignores.insert(entry.path.clone(), file_bytes(client, operation, commit, &entry.path)?);
-        }
         for (path, bytes) in ignores {
             let path = directory.path().join(path);
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(path, bytes)?;
         }
+        let global = directory.path().join(".git/jw-global-exclude");
+        fs::write(&global, &excludes.global)?;
+        let global = global.to_str().context("ignore probe path not UTF-8")?;
+        checked_git(directory.path(), ["config", "core.excludesFile", global])?;
+        fs::write(directory.path().join(".git/info/exclude"), &excludes.info)?;
+        Ok(Self::from_directory(directory))
+    }
+}
+impl Excludes {
+    fn capture(client: &JjClient, operation: &str) -> Result<Self> {
         let backend = client.run_at_unchecked(operation, ["git", "root"])?;
         let backend = if backend.success() {
             Some(PathBuf::from(backend.trimmed_stdout()?).canonicalize()?)
@@ -149,14 +213,14 @@ impl IgnoreRules {
         } else {
             bail!("cannot read Git excludes configuration: {}", String::from_utf8_lossy(&output.stderr));
         };
-        let global = directory.path().join(".git/jw-global-exclude");
-        fs::write(&global, read_optional(exclude.as_deref())?)?;
-        let global = global.to_str().context("ignore probe path not UTF-8")?;
-        checked_git(directory.path(), ["config", "core.excludesFile", global])?;
         let info = backend.as_ref().map(|p| p.join("info/exclude"));
-        fs::write(directory.path().join(".git/info/exclude"), read_optional(info.as_deref())?)?;
-        Ok(Self::from_directory(directory))
+        Ok(Self {
+            global: read_optional(exclude.as_deref())?,
+            info: read_optional(info.as_deref())?,
+        })
     }
+}
+impl IgnoreRules {
     pub(crate) fn from_directory(directory: tempfile::TempDir) -> Self {
         Self {
             directory,
@@ -194,11 +258,13 @@ impl IgnoreRules {
         if oracle.is_none() {
             *oracle = Some(Oracle::start(self.directory.path())?);
         }
-        let answer = oracle
-            .as_mut()
-            .unwrap()
-            .query(&input)
-            .with_context(|| format!("ignore-rule probe failed for {}", path.display()))?;
+        let answer = match oracle.as_mut().unwrap().query(&input) {
+            Ok(answer) => answer,
+            Err(error) => {
+                let stderr = oracle.take().unwrap().stop();
+                return Err(error).with_context(|| format!("ignore-rule probe failed for {}: {}", path.display(), String::from_utf8_lossy(&stderr)));
+            }
+        };
         self.answers.borrow_mut().insert(key, answer);
         Ok(answer)
     }

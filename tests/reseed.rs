@@ -1399,11 +1399,16 @@ fn copied_payload_rejects_nested_metadata_and_symlink_parent_escape() {
     let target = repo.workspace("feature");
     let before = repo.id(&target, "@");
     fs::create_dir_all(source.join("cache/nested/.jj")).unwrap();
-    repo.unchanged_failure(
-        &target,
-        repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--replace-content"]),
-        &before,
-    );
+    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--dry-run"]), &before);
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("administrative entry"), "{:?}", output);
+    // Deep refusal is streaming: tracked refill already advanced JJ, but the
+    // offending source remains untouched. Accepted ancestor creation can remain.
+    assert_ne!(repo.id(&target, "@"), before);
+    assert!(source.join("cache/nested/.jj").is_dir());
+    assert!(!target.join("cache/nested/.jj").exists());
+    assert_eq!(repo.jj_at(&target, &["sparse", "list"]), ".");
     fs::remove_dir_all(source.join("cache")).unwrap();
     fs::create_dir_all(source.join("packages/pkg/cache")).unwrap();
     fs::write(source.join("packages/pkg/cache/file"), "source").unwrap();
@@ -1655,6 +1660,12 @@ fn local_groups_deduplicate_and_cli_can_disable_configured_ignored_copy() {
     fs::write(source.join("cache/file"), "source").unwrap();
     fs::create_dir(target.join("cache")).unwrap();
     fs::write(target.join("cache/file"), "target").unwrap();
+    // Incremental comparison promises stat-key convergence, not hashing. Make
+    // this deliberately different instead of depending on write-clock resolution.
+    fs::File::open(target.join("cache/file"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap();
     let config = format!(
         "source = {:?}\nsource_at = {:?}\ncopy_ignored = [\"cache\"]\n[groups]\nworkers = [\"feature\", \"feature\"]\n",
         source.to_str().unwrap(),
@@ -1689,6 +1700,178 @@ fn dry_run_preserves_content_identity_and_revision() {
     assert_eq!(repo.id(&target, "@"), before);
     assert_eq!([identity(&target), identity(&target.join(".jj")), identity(&target.join("shared"))], identities);
     assert_eq!(fs::read_to_string(target.join(".env")).unwrap(), "keep");
+}
+
+#[test]
+fn incremental_payload_preserves_clean_inodes_and_reconciles_sparse_changes() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    fs::create_dir_all(source.join("cache/nested")).unwrap();
+    fs::write(source.join("cache/clean"), vec![b'c'; 128 * 1024]).unwrap();
+    fs::write(source.join("cache/nested/change"), "initial").unwrap();
+    symlink("clean", source.join("cache/link")).unwrap();
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
+    let paths = ["cache", "cache/clean", "cache/nested", "cache/nested/change", "cache/link"];
+    let observations = || {
+        paths
+            .iter()
+            .map(|p| {
+                let m = fs::symlink_metadata(target.join(p)).unwrap();
+                (m.ino(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec())
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = observations();
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
+    assert_eq!(observations(), before, "clean payload must not be replaced or chmodded");
+    fs::write(source.join("cache/nested/change"), "new and longer").unwrap();
+    fs::write(source.join("cache/new"), "added").unwrap();
+    fs::create_dir_all(target.join("cache/stale/deep")).unwrap();
+    fs::write(target.join("cache/stale/deep/file"), "remove").unwrap();
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
+    assert_eq!(identity(&target.join("cache/clean")).1, before[1].0);
+    assert_eq!(fs::read_to_string(target.join("cache/nested/change")).unwrap(), "new and longer");
+    assert_eq!(fs::read_to_string(target.join("cache/new")).unwrap(), "added");
+    assert!(!target.join("cache/stale").exists());
+    assert_shared_extents(&source.join("cache/clean"), &target.join("cache/clean"));
+}
+
+#[test]
+fn streaming_guard_covers_equal_and_one_sided_payload_interiors() {
+    for kind in ["source-only", "target-only", "equal", "fifo"] {
+        let Some(repo) = Repo::new() else { return };
+        let source = repo.workspace("source");
+        let target = repo.workspace("feature");
+        if !repo.cow(&source, &target) {
+            return;
+        }
+        fs::create_dir_all(source.join("cache")).unwrap();
+        fs::create_dir_all(target.join("cache")).unwrap();
+        let mut offenders = Vec::new();
+        if kind == "source-only" || kind == "equal" {
+            offenders.push(source.join("cache/opaque/.git"));
+        }
+        if kind == "target-only" || kind == "equal" {
+            offenders.push(target.join("cache/opaque/.git"));
+        }
+        for path in &offenders {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "administration must remain untouched").unwrap();
+        }
+        if kind == "fifo" {
+            success(Command::new("mkfifo").arg(target.join("cache/fifo")).output().unwrap());
+        }
+        let before = repo.id(&target, "@");
+        let preview = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--dry-run"]);
+        assert!(!preview.status.success(), "{kind}");
+        assert!(!String::from_utf8_lossy(&preview.stdout).contains("READY;"), "{kind}");
+        assert_eq!(repo.id(&target, "@"), before);
+        let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
+        assert!(!output.status.success(), "{kind}");
+        for path in &offenders {
+            assert_eq!(fs::read_to_string(path).unwrap(), "administration must remain untouched");
+        }
+        if kind == "fifo" {
+            use std::os::unix::fs::FileTypeExt;
+            assert!(fs::symlink_metadata(target.join("cache/fifo")).unwrap().file_type().is_fifo());
+        }
+    }
+}
+
+#[test]
+fn incremental_payload_replaces_selected_leaf_roots_without_following_links() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    if !repo.cow(&source, &repo.root) {
+        return;
+    }
+    fs::create_dir(source.join("cache")).unwrap();
+    fs::write(source.join("cache/data"), "payload").unwrap();
+    let outside = repo.temp.path().join("outside-leaf");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("sentinel"), "untouched").unwrap();
+    for kind in ["absent", "file", "link"] {
+        let target = repo.workspace(kind);
+        if kind == "file" {
+            fs::write(target.join("cache"), "old root").unwrap();
+        }
+        if kind == "link" {
+            symlink(&outside, target.join("cache")).unwrap();
+        }
+        // cache/ only ignores directories; use an explicit all-kind rule to
+        // keep existing selected file/link roots outside target snapshots.
+        repo.jj_at(&target, &["config", "set", "--repo", "snapshot.auto-track", "none()"]);
+        success(repo.reseed(&[kind], &source, &["--copy-ignored", "cache"]));
+        assert!(fs::symlink_metadata(target.join("cache")).unwrap().is_dir());
+        assert_eq!(fs::read_to_string(target.join("cache/data")).unwrap(), "payload");
+        assert_eq!(fs::read_to_string(outside.join("sentinel")).unwrap(), "untouched");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reseed_front_guard_rejects_real_directory_and_file_bind_mounts() {
+    const CHILD: &str = "JW_MOUNT_GUARD_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let probe = Command::new("unshare").args(["--user", "--map-root-user", "--mount", "true"]).output().unwrap();
+        if !probe.status.success() {
+            assert!(std::env::var_os("JW_TEST_REQUIRE_MOUNTS").is_none(), "mount namespace required: {:?}", probe);
+            eprintln!("skipping mount namespace unavailable");
+            return;
+        }
+        let output = Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount", "--propagation", "private"])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", "reseed_front_guard_rejects_real_directory_and_file_bind_mounts", "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        success(output);
+        return;
+    }
+    for (side, directory, replace) in [
+        ("source", true, false),
+        ("target", true, false),
+        ("target", false, false),
+        ("target", false, true),
+    ] {
+        let Some(repo) = Repo::new() else { return };
+        let source = repo.workspace("source");
+        let target = repo.workspace("feature");
+        let donor = repo.temp.path().join("mount-donor");
+        let operated = if side == "source" { &source } else { &target };
+        fs::create_dir(source.join("cache")).unwrap();
+        if directory {
+            fs::create_dir(&donor).unwrap();
+            fs::write(donor.join("sentinel"), "untouched").unwrap();
+            fs::create_dir_all(operated.join("cache")).unwrap();
+        } else {
+            fs::write(&donor, "untouched").unwrap();
+            fs::create_dir_all(operated.join("cache")).unwrap();
+            fs::write(operated.join("cache/mounted-file"), "covered").unwrap();
+        }
+        let mountpoint = operated.join(if directory { "cache" } else { "cache/mounted-file" });
+        success(Command::new("mount").arg("--bind").arg(&donor).arg(&mountpoint).output().unwrap());
+        let before = repo.id(&target, "@");
+        let extra = if replace {
+            vec!["--copy-ignored", "cache", "--replace-content"]
+        } else {
+            vec!["--copy-ignored", "cache"]
+        };
+        let output = repo.reseed(&["feature"], &source, &extra);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("mounted filesystem boundary"), "{:?}", output);
+        assert_eq!(repo.id(&target, "@"), before);
+        assert_eq!(
+            fs::read_to_string(if directory { donor.join("sentinel") } else { donor.clone() }).unwrap(),
+            "untouched"
+        );
+        success(Command::new("umount").arg(&mountpoint).output().unwrap());
+    }
 }
 
 #[test]
