@@ -73,7 +73,7 @@ pub fn build(
     let library_revision = pin(&library, library_revision, jj, &output.join("library-commit"))?;
     let source_inputs = inputs(&repository, &revision, false, &output.join("source-before"))?;
     let library_inputs = inputs(&library, &library_revision, true, &output.join("library-before"))?;
-    let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(||"rustc".into()));
+    let mut rustc = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
     rustc.current_dir(&repository).args(["--version", "--verbose"]);
     let compiler = command(rustc, &output.join("compiler"))?;
     let features = match variant {
@@ -101,8 +101,8 @@ pub fn build(
     let environment: std::collections::BTreeMap<_, _> = std::env::vars()
         .filter(|(name, _)| {
             [
-                    "RUSTC",
-                    "RUSTFLAGS",
+                "RUSTC",
+                "RUSTFLAGS",
                 "CARGO_ENCODED_RUSTFLAGS",
                 "RUSTUP_TOOLCHAIN",
                 "RUSTC_BOOTSTRAP",

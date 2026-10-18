@@ -120,6 +120,8 @@ struct RunArgs {
     /// Only explicitly named incremental candidates must have zero clean payload rewrites.
     #[arg(long)]
     require_clean_label: Option<String>,
+    #[arg(long, alias = "timeout", default_value_t = 180)]
+    timeout_seconds: u64,
 }
 
 fn import(label: &str, binary: PathBuf, provenance: PathBuf) -> Result<Control> {
@@ -227,6 +229,7 @@ fn main() -> Result<()> {
                 blocks,
                 seed,
                 require_clean_label,
+                timeout_seconds,
             } = *args;
             let before = import("baseline", baseline, baseline_provenance)?;
             let after = if let (Some(binary), Some(provenance)) = (candidate, candidate_provenance) {
@@ -248,6 +251,7 @@ fn main() -> Result<()> {
                 payload_files,
                 payload_bytes,
                 require_clean_label,
+                timeout_seconds,
             };
             let mut work = workload::Reseed::new(&output, config, instrumentation::native(&jj)?, instrumentation::native(&git)?)?;
             if !execution::balanced(&output, &[before, after], blocks, seed, &mut work)? {

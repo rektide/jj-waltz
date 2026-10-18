@@ -6,6 +6,8 @@ resource: /tools/performance/experiments/handoff0.sol61h.md
 status: incomplete-stopped-by-user
 generated: { by: "model:openai/gpt-6.1-sol#high", at: 2026-10-18 }
 sources:
+  - resource: opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu
+    title: Marked retired commands historical and linked the supported Rust successor
   - resource: opencode://ses_eb224880fffeZxuFkeb0yDaCeN
     title: Built independent JW adapter, retained all smoke evidence and stopped expansion at human direction before repairing feature/N2 semantics
   - resource: /tools/performance/README.md
@@ -17,6 +19,11 @@ sources:
 ---
 
 # Stopped JW tooling prototype
+
+Historical stopped prototype. Its active Python files and JSON recipe are retired;
+use the [Rust guide](../README.md). Exact predecessor source is preserved at
+`a35da35d7635e14be70fb4aab37ea6edbd933ef8` (`git show COMMIT:PATH`). Commands below
+are historical transcripts/research recipes, not supported launchers.
 
 The human stopped expansion for independent assessment. **Do not treat this as an
 accepted base or validated feature-variant benchmark.** Production source/tests,
@@ -68,7 +75,7 @@ python3 tools/performance/experiment.py run .test-agent/matched-reseed-smoke/mat
 Shared-engine final checks: 12 unittest tests passed; see the linked engine
 account. No new dependency, real large campaign or speedup claim.
 
-## G's before/after recipe — after assessment, not executed here
+## Historical retired before/after recipe — not executed here
 
 Copy `experiments/reseed.json` into a NEW owned scratch directory. Replace the
 candidate revision, worktree and artifact path with the actual integrated build;

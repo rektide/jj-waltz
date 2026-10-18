@@ -4,8 +4,10 @@ title: Contributing to jj-waltz
 description: Development checks, repeatable performance assessment, compatibility, and contribution boundaries.
 resource: /CONTRIBUTING.md
 status: maintained
-updated: { by: "model:openai/gpt-6-astra", at: 2026-10-17 }
+updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
 sources:
+  - resource: opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu
+    title: Replaced current performance contribution commands with checked-in Rust tooling and native count controls
   - resource: opencode://ses_eb8947cfaffeQ1jxia03URCymY
     title: Added the checked-in performance harness and its contribution entry point
   - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
@@ -54,15 +56,19 @@ already allocate their own project-local CoW scratch directories.
 Use the maintained [performance harness](tools/performance/README.md) for
 prepare/reseed changes. Build a release binary, provide a real JJ executable,
 and compare retained, verified fixtures on the same CoW-capable filesystem.
-The harness records JJ/Git command counts and instrumented phase timings;
+The Rust harness separates native process timings from instrumented JJ/Git counts;
 small/large fixture comparisons and process-count budgets detect per-file
 subprocess regressions without flaky wall-time gates.
 
 ```sh
-python3 -m unittest discover -s tools/performance -p 'test_*.py' -v
-python3 tools/performance/measure.py run \
-  --jw target/release/jw --jj /absolute/path/to/real/jj --files 100
+cargo build --locked --release -p jj-waltz-perf
+cargo nextest run --locked -p jj-waltz-perf
+cargo clippy --locked -p jj-waltz-perf --all-targets -- -D warnings
 ```
+
+The guide supplies verified artifact/build/import and N2 campaign commands. Native
+fixtures are isolated explicitly; live donors are read-only. Retired Python
+methods are historical evidence, not supported commands or runtime dependencies.
 
 ## Scope
 

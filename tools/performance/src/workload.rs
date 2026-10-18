@@ -44,6 +44,7 @@ pub struct Config {
     pub payload_files: usize,
     pub payload_bytes: usize,
     pub require_clean_label: Option<String>,
+    pub timeout_seconds: u64,
 }
 
 pub struct Reseed {
@@ -61,7 +62,8 @@ pub struct Reseed {
 
 impl Reseed {
     pub fn new(output: &Path, config: Config, jj: PathBuf, git: PathBuf) -> Result<Self> {
-        if config.destinations == 0
+        if config.timeout_seconds == 0
+            || config.destinations == 0
             || config.files == 0
             || config.payload_files == 0
             || config.payload_bytes == 0
@@ -99,6 +101,9 @@ impl Workload for Reseed {
             let fixture: Fixture = serde_json::from_slice(&fs::read(root.join("fixture.json"))?)?;
             fixture::verify(&root, &fixture, true)?;
             let snapshot: Snapshot = serde_json::from_slice(&fs::read(root.join("snapshot.json"))?)?;
+            if !snapshot.tracked.contains(&PathBuf::from(".gitignore")) {
+                return Err("opencode adapter requires a tracked root .gitignore; refusing to add a fixture-only tracked file".into());
+            }
             if snapshot.payload_roots.is_empty() {
                 return Err("import has no selected payload roots".into());
             }
@@ -160,6 +165,7 @@ impl Workload for Reseed {
             self.starting = Some(case.starting_equivalence.clone());
         }
         let mut ctx = Context::new(&case.root, &self.jj, &self.git, &self.own)?;
+        ctx.timeout_seconds = config.timeout_seconds;
         let source = case.root.join("repo");
         fixture::clone_tree(&case.source(), &source)?;
         if self.imported.is_none() {
@@ -202,10 +208,7 @@ impl Workload for Reseed {
         )?;
         if let Some(imported) = &self.imported {
             let list = case.root.join("tracked-paths.nul");
-            let mut paths = imported.tracked.clone();
-            if !paths.contains(&PathBuf::from(".gitignore")) {
-                paths.push(".gitignore".into());
-            }
+            let paths = imported.tracked.clone();
             let mut bytes = Vec::new();
             for path in paths {
                 bytes.extend_from_slice(path.to_str().ok_or("non-UTF8 inventory")?.as_bytes());
@@ -636,6 +639,7 @@ mod tests {
             payload_files: 2,
             payload_bytes: 16,
             require_clean_label: None,
+            timeout_seconds: 180,
         };
         assert!(Reseed::new(Path::new("unused"), config, "/native/jj".into(), "/native/git".into()).is_err());
     }

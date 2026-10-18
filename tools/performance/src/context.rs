@@ -15,6 +15,7 @@ pub struct Context {
     pub own: PathBuf,
     pub env: BTreeMap<String, String>,
     sequence: usize,
+    pub timeout_seconds: u64,
 }
 
 impl Context {
@@ -64,6 +65,7 @@ impl Context {
             own: own.into(),
             env,
             sequence: 0,
+            timeout_seconds: 180,
         })
     }
     pub fn run(&mut self, binary: &Path, args: &[String], cwd: &Path, trace: Option<&Path>) -> Result<(String, process::Outcome)> {
@@ -80,7 +82,7 @@ impl Context {
                 .env("JW_PERF_TRACE", trace)
                 .env("PATH", format!("{}:/usr/bin:/bin", self.root.join("count-bin").display()));
         }
-        let result = process::run(&mut command, &stem, Duration::from_secs(180))?;
+        let result = process::run(&mut command, &stem, Duration::from_secs(self.timeout_seconds))?;
         if result.code != Some(0) || result.timed_out {
             return Err(format!("native command failed; see {}.stderr", stem.display()).into());
         }

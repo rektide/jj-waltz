@@ -3,7 +3,7 @@ type: ToolGuide
 title: Rust-owned preparation and reseed performance controls
 description: Checked-in native fixtures, balanced variants, single-reseed samples, Rust JJ/Git process counting and retained correctness evidence.
 resource: /tools/performance/README.md
-status: native-implemented-retirement-in-progress
+status: maintained-rust-only
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
 updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
 sources:
@@ -57,9 +57,58 @@ Scenarios: `init`, `clean`, `sparse`, `subtree`. All use equivalent NEW private
 payload resets, source guards and N independent destination workspaces.
 `--files`, `--symlinks`, `--feature-files`, `--payload-files`, `--payload-bytes`
 control dimensions; excessive feature requests fail rather than being truncated.
-The native fixture is synthetic, not an imported live source or an opencode
-performance claim. It exercises the actual nested ignored policy, relative
-symlinks and distinct named feature histories.
+Without `--fixture`, the generated native fixture is synthetic. Use the imported
+fixture below for the actual donor's tracked shape and ALL selected payload roots.
+Neither tiny synthetic nor imported plumbing smokes establish a performance win.
+
+## Actual opencode import and N2 campaign
+
+From this checkout, with the sibling diff-dirs checkout present:
+
+```sh
+cargo build --locked --release -p jj-waltz-perf
+target/release/jw-perf snapshot "$HOME/a/a/opencode" .test-agent/opencode-import
+target/release/jw-perf build . .test-agent/opencode-serial --variant serial
+target/release/jw-perf build . .test-agent/opencode-p4 --variant payload-parallel
+target/release/jw-perf run .test-agent/opencode-clean-serial \
+  --fixture .test-agent/opencode-import/fixture \
+  --baseline .test-agent/inline-policy/jw-before \
+  --baseline-provenance .test-agent/inline-policy/baseline.json \
+  --candidate .test-agent/opencode-serial/jw \
+  --candidate-provenance .test-agent/opencode-serial/provenance.json \
+  --scenario clean --destinations 2 --feature-files 2 --blocks 8 --seed 1701 \
+  --require-clean-label candidate --timeout-seconds 1800
+```
+
+All outputs must be NEW. For the parallel campaign change the output name and
+candidate paths to `.test-agent/opencode-p4/{jw,provenance.json}`. For first-fill
+and sparse use `--scenario init` / `sparse` with NEW outputs and omit the
+clean-only invariant flag. Each campaign interleaves preserved BEFORE and that
+one candidate. Build everything before timing; never run campaigns concurrently.
+
+`snapshot` reads native JJ root/operation/commit/file inventory with
+`--ignore-working-copy`; it NEVER invokes live status, prepare, reseed, dry-run,
+fetch, install or builds. The pinned JJ coordinate defines tracked MEMBERSHIP;
+copied bytes are those observed on disk, not an atomic commit export. An isolated
+Git index built from copied tracked files (including forced-tracked ignored files)
+checks the copied `.gitignore` rules. Only outermost eligible `node_modules` and
+`**/dist` directories are selected; ** consumes zero components too. Source/target
+roots are disjoint, `.jj`/`.git` are excluded, unrelated ignored caches/secrets
+are not copied, and every copy requires private reflinks. The resulting owned
+fixture is fingerprinted and verified before a campaign. Root lists, tracked
+inventory, provenance and source/target signatures are retained in its JSON.
+
+Source tracked files, directories and literal links retain their real shape.
+Owned Git/JJ fixture setup force-adds the recorded inventory and appends only
+fixture-private ignore entries; donor freshen actions are replaced, never run.
+The same root list is reset, overlaid and independently verified for EVERY
+destination, not silently reduced to a single node_modules tree. The retained
+integration smoke proves four roots, a native link, forced-tracked binary content,
+N2 feature histories and unchanged donor JJ operation. Missing files/submodules,
+root symlinks, administrative entries inside selected payloads, unsafe paths and
+tracked/payload overlap are explicit refusals, not silently omitted work.
+The opencode adapter requires the donor's tracked root `.gitignore`; it will not
+invent an extra tracked file to isolate its private configuration.
 
 `--phase prepare|preview|reseed` selects one native phase. `--phase all --scenario
 init` measures preparation, preview, and first-fill reseed separately and retains
@@ -81,20 +130,23 @@ to disk and counted without a full-tree runtime map.
 
 ### Integrated build variants
 
-The Cargo owner has wired non-default `payload-parallel` to optional `rayon`,
+The Cargo owner wired non-default `payload-parallel` to optional `rayon`,
 `diff-dirs/parallel` and `diff-dirs-sync/parallel`. The default remains serial.
 Application pool code is owned separately; enabling the feature is not itself
-evidence that P4 ran. After that implementation is checkpointed:
+evidence of a speedup. Equivalent direct Cargo builds are:
 
 ```sh
 cargo build --locked --release -p jj-waltz --target-dir target/perf-serial
 cargo build --locked --release -p jj-waltz --features payload-parallel --target-dir target/perf-p4
 ```
 
-Preserve both executables with their exact source/feature/compiler/profile/hash
-provenance before timing. Supply each separately as `--candidate` with its own
-`--candidate-provenance`, using NEW runs of the same scenario/dimensions/seed.
-No rebuild belongs inside a measured campaign.
+Prefer `jw-perf build` above: it pins the current committed application and
+library coordinates, rejects mismatching production source/manifests, records
+actual compiler/profile/features/environment/input hashes, builds into a unique
+target directory and preserves a mode-0555 `jw` plus `provenance.json`. Optional
+`--revision` / `--library-revision` accept exact full IDs for repeat experiments
+from matching prepared checkouts; the tool never switches or resets a checkout.
+No fake revision/path placeholder is silently accepted as a ready artifact.
 
 ```sh
 target/release/jw-perf run .test-agent/native-counts-NEW \
@@ -123,7 +175,8 @@ remain under the owned output. Mirrored seeded blocks balance chronology;
 external I/O load is not eliminated. API timing is never substituted for JW
 native-process timing. Setup/reset/hash/verification costs are retained and
 excluded. Native command records include CPU, Linux peak RSS and timeout status;
-180s command timeouts kill ordinary descendant process groups. No global cache
+Command timeouts (180s default, `--timeout-seconds` to change) kill ordinary
+descendant process groups. No global cache
 drops, automatic cleanup, significance test or causal load correction exists.
 
 Raw copy control (owned source from a retained sample, never a live workspace):
@@ -157,13 +210,17 @@ cargo clippy -p jj-waltz-perf --all-targets -- -D warnings
 cargo fmt -p jj-waltz-perf -- --check
 ```
 
-Five tests cover literal Rust exec-wrapper argv, command classification, native
+Seven default tests cover literal Rust exec-wrapper argv, command classification, native
 count requirements, exact feature dimension refusal and streaming inode order.
+The explicit retained integration test runs with:
+`cargo nextest run --locked -p jj-waltz-perf --test import --run-ignored ignored-only --no-capture`.
+It requires the preserved BEFORE artifact, so is opt-in on fresh checkouts.
 Shared Rust primitives and actual library scenario instruments have their own
 tests in diff-dirs. Integrated candidate/large-workload timing is separate work.
 
-Python tooling is being deliberately retired after native parity; it is not a
-dependency or supported alternative. Historical methods/results remain in exact
+The six active Python files and old JSON experiment recipe have been retired
+after native parity; there is no Python dependency or supported launcher.
+Historical methods/results remain in exact
 committed history, raw fixtures and frozen evidence. Recover the earlier guide
 with `git show a35da35d7635e14be70fb4aab37ea6edbd933ef8:tools/performance/README.md`;
 the same revision preserves its old `measure.py`, fixtures and test sources.

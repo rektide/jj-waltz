@@ -6,6 +6,8 @@ resource: /design/up-performance/measurement1.gpt6a.md
 status: verified
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-17 }
 sources:
+  - resource: opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu
+    title: Marked historical tooling commands and linked the Rust successor; measurements unchanged
   - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
     title: Integrated the delivered fixes, reviewed their boundaries, and recorded the resulting native timings
   - resource: opencode://ses_eb8801331ffeirQrF4GMFCxJHf
@@ -23,6 +25,11 @@ sources:
 ---
 
 # Fast prepare and reseed after removing repeated work
+
+Historical measurement/commands, not current Python tooling. The exact predecessor
+is preserved at `a35da35d7635e14be70fb4aab37ea6edbd933ef8` (recover with
+`git show COMMIT:tools/performance/measure.py`). Current [Rust controls](../../tools/performance/README.md)
+are the supported workflow; instrumentation scopes are not interchangeable.
 
 **Native end-to-end timings: prepare 3.17 s, preview 1.97 s, reseed two workers
 6.64 s.** These are a synthetic fixture's measured times, not a promise for every

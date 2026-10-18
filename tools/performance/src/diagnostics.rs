@@ -3,6 +3,10 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path, process::Command, time::Duration};
 
 fn successful(root: &Path) -> Result<(Value, Vec<Value>)> {
+    let checked = diff_dirs_perf_runner::report::retained(root)?;
+    if checked["campaign_passed"] != true {
+        return Err("refuse failed/incomplete raw chronology".into());
+    }
     let summary: Value = serde_json::from_slice(&fs::read(root.join("summary.json"))?)?;
     let campaign: Value = serde_json::from_slice(&fs::read(root.join("campaign.json"))?)?;
     if summary["passed"] != true {

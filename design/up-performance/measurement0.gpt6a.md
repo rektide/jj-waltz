@@ -6,9 +6,11 @@ resource: /design/up-performance/measurement0.gpt6a.md
 status: investigated
 generated: { by: "model:openai/gpt-6-astra", at: 2026-10-17 }
 sources:
+  - resource: opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu
+    title: Bound historical Python method to its revision and distinguished current Rust instrumentation; measurements unchanged
   - resource: opencode://ses_eb8a7487affeE2smndZ914OQMS
     title: Ran the maintained harness at 100 and 8555 regular files, compared process growth, and commissioned investigation of the remaining latency
-  - resource: /tools/performance/README.md
+  - resource: https://github.com/ezracerpac/jj-waltz/blob/a35da35d7635e14be70fb4aab37ea6edbd933ef8/tools/performance/README.md
     title: Measurement method, instrumentation costs, fixture dimensions, and compatibility checks
   - resource: /design/up-performance/prepare0.gpt6a.md
     title: Source-only preparation and shared-engine performance direction
@@ -21,6 +23,11 @@ sources:
 ---
 
 # Bounded subprocess verification still leaves tree-size latency
+
+Historical measurement: command transcripts below use retired Python machinery.
+Exact sources live at `a35da35d7635e14be70fb4aab37ea6edbd933ef8` (local:
+`git show COMMIT:tools/performance/measure.py`). Current [Rust controls](../../tools/performance/README.md)
+have different instrumentation overhead; do not silently pool their timings.
 
 The first optimization removes subprocess growth with regular tracked-file count.
 It does **not** yet establish a fast large-tree refill. The maintained harness
