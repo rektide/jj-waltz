@@ -7,6 +7,7 @@ use crate::cow::payload::{Entry, IgnoreRules, confined_parents, directory_identi
 use crate::freshen::source::SourceSelection;
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
+use diff_dirs::Check;
 use fs2::FileExt;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,11 +17,14 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::rc::Rc;
 
 #[path = "bookmarks.rs"]
 mod bookmarks;
+mod payload;
 #[path = "prepare.rs"]
 mod prepare;
+mod topology;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,6 +80,9 @@ struct Plan {
     entries: Vec<Entry>,
     old_paths: Vec<PathBuf>,
     ignored: Vec<PathBuf>,
+    source_rules: Rc<IgnoreRules>,
+    source_entries: Rc<Vec<Entry>>,
+    target_rules: Rc<IgnoreRules>,
     skipped: Vec<String>,
     replace_content: bool,
     config_root: PathBuf,
@@ -274,11 +281,15 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     }
     ensure_quiescence(&source_client)?;
     require_full(&source_client)?;
-    // INSERT MORE CHECKS HERE: future batch/root front guards, before traversal or mutation.
-    // See design/up-performance/inline-policy0.gpt6a.md: assess mount topology for
-    // source and selected targets once, instead of per-entry mount checks. Existing
-    // checks remain until that guard lands; actual reflink errors belong in apply.
-    validate_contents(&source, true)?;
+    // INSERT MORE CHECKS HERE: batch/root front guards, before traversal or mutation.
+    // Stable mount topology and path bindings are required until this batch ends.
+    // Linux captures once, including file bind mounts; no payload-entry mount tax
+    // or synthetic reflink probe. Actual required clones can fail after progress.
+    let topology = topology::Topology::capture()?;
+    topology.workspace(&source, true)?;
+    if source_only {
+        validate_contents(&source, true)?;
+    }
     let mut roots = BTreeSet::new();
     for name in &names {
         if readiness.failures.contains_key(name) {
@@ -292,7 +303,11 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             validate_target(&client, &metadata, &default, &source, name, &root)?;
             ensure_quiescence(&JjClient::new(&root))?;
             require_full(&JjClient::new(&root))?;
-            validate_contents(&root, false)?;
+            topology.workspace(&root, false)?;
+            let mut all_roots = vec![source.clone()];
+            all_roots.extend(roots.iter().cloned());
+            all_roots.push(root.clone());
+            topology.separate(&all_roots)?;
             roots.insert(root);
             Ok(())
         })();
@@ -395,14 +410,21 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         Some(rev) => client.resolve_one_at(&operation, rev)?.commit_id,
         None => source_wc.clone(),
     };
-    let source_rules = IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries)?;
+    let source_rules = Rc::new(IgnoreRules::new(&source_client, &source_operation, &source_commit, &source_entries)?);
     let (ignored, skipped) = select_ignored(&source, &ignored_policy.patterns, &source_rules, &source_entries)?;
-    // One traversal per selected ignored root: tree validation plus the
-    // source-bound absolute-symlink warnings, shared by every target.
-    let mut payload_warnings = Vec::new();
-    for path in &ignored {
-        cow::validate_payload_root(&source, path, &mut payload_warnings)?;
+    payload::outside(&source, true, &ignored)?;
+    let payload_guard = payload::Guard::default();
+    if request.dry_run {
+        // Shared donor failure propagates as NOT ASSESSED, never READY.
+        for path in &ignored {
+            diff_dirs::audit(source.join(path), diff_dirs::Side::Original, &payload_guard)?;
+        }
     }
+    #[cfg(not(target_os = "linux"))]
+    for path in &ignored {
+        cow::validate_payload_root(&source, path, &mut Vec::new())?;
+    }
+    let source_entries = Rc::new(source_entries);
     if current_commit(&source_client)?.1 != source_wc {
         bail!("source changed during initial verified capture; pause writers before retrying");
     }
@@ -436,7 +458,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             let tree_commit = &base;
             require_unconflicted(&client, &operation, tree_commit)?;
             let target_entries = entries(&client, &operation, tree_commit)?;
-            let target_rules = IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries)?;
+            let target_rules = Rc::new(IgnoreRules::new(&JjClient::new(&root), &operation, tree_commit, &target_entries)?);
             for path in &ignored {
                 target_rules.require_ignored(path)?;
                 if target_entries.iter().any(|e| overlap(path, &e.path)) {
@@ -444,6 +466,12 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
                 }
                 confined_parents(&root, path)?;
             }
+            payload::outside(&root, false, if request.replace_content { &[] } else { &ignored })?;
+            if request.dry_run {
+                payload::audit_target(&root, &ignored, &payload_guard)?;
+            }
+            #[cfg(not(target_os = "linux"))]
+            validate_contents(&root, false)?;
             let changed = changed_paths(&client, &operation, &source_commit, tree_commit)?;
             let target_paths = target_entries.iter().map(|e| &e.path).collect::<BTreeSet<_>>();
             let clones = source_entries
@@ -480,9 +508,8 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
                     commit: tree_commit,
                 },
             )?;
-            cow::probe_between(&source, &root)?;
             let mut warnings = skipped.clone();
-            warnings.extend(payload_warnings.iter().cloned());
+            warnings.extend(payload_guard.warnings());
             if request.dry_run {
                 readiness.details.insert(
                     name.clone(),
@@ -521,6 +548,9 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
                 entries: target_entries,
                 old_paths: old_entries.into_iter().map(|e| e.path).collect(),
                 ignored: ignored.clone(),
+                source_rules: Rc::clone(&source_rules),
+                source_entries: Rc::clone(&source_entries),
+                target_rules,
                 skipped: warnings,
                 replace_content: request.replace_content,
                 config_root: default.clone(),
@@ -1301,16 +1331,23 @@ fn describe(plan: &Plan, planned: bool) -> String {
 }
 
 fn select_ignored(source: &Path, patterns: &[String], rules: &IgnoreRules, entries: &[Entry]) -> Result<(Vec<PathBuf>, Vec<String>)> {
-    let selected = Patterns::compile(patterns)?.select(source, entries.iter().map(|entry| entry.path.as_path()), |path| {
-        rules.is_ignored_directory(path)
-    })?;
+    let selected = Patterns::compile(patterns)?.select_with_topology(
+        source,
+        entries.iter().map(|entry| entry.path.as_path()),
+        |path| rules.is_ignored_directory(path),
+        cfg!(target_os = "linux"),
+    )?;
     Ok((selected.roots, selected.skipped))
 }
 
 fn validate_selected_ignored(source: &Path, roots: &[PathBuf], rules: &IgnoreRules, entries: &[Entry]) -> Result<()> {
-    cow::ignored::validate_selected(source, roots, entries.iter().map(|entry| entry.path.as_path()), |path| {
-        rules.is_ignored_directory(path)
-    })
+    cow::ignored::validate_selected_with_topology(
+        source,
+        roots,
+        entries.iter().map(|entry| entry.path.as_path()),
+        |path| rules.is_ignored_directory(path),
+        cfg!(target_os = "linux"),
+    )
 }
 
 fn validate_identities(plan: &Plan) -> Result<()> {
@@ -1356,9 +1393,7 @@ fn validate_source(plan: &Plan) -> Result<()> {
     }
     verify_disk(&source, &plan.source_operation, &plan.source_commit, &plan.source, &[])?;
     if !plan.ignored.is_empty() {
-        let entries = entries(&source, &plan.source_operation, &plan.source_commit)?;
-        let rules = IgnoreRules::new(&source, &plan.source_operation, &plan.source_commit, &entries)?;
-        validate_selected_ignored(&plan.source, &plan.ignored, &rules, &entries)?;
+        validate_selected_ignored(&plan.source, &plan.ignored, &plan.source_rules, &plan.source_entries)?;
     }
     if current_commit(&source)?.1 != plan.source_wc_commit {
         bail!("donor changed during tracked-tree verification; pause writers before retrying");
@@ -1388,7 +1423,7 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
     validate_source(plan)?;
     let client = JjClient::new(&plan.root);
     ensure_quiescence(&client)?;
-    validate_contents(&plan.root, false)?;
+    payload::outside(&plan.root, false, if plan.replace_content { &[] } else { &plan.ignored })?;
     for warning in plan.skipped.iter().filter(|warning| warning.starts_with("absolute dependency symlink ")) {
         diagnostics(format!("Warning: {warning}"));
     }
@@ -1441,17 +1476,12 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
         }
         // Remaining contents are retained unless replacement was explicitly selected.
         if plan.replace_content {
-            validate_contents(&plan.root, false)?;
+            payload::outside(&plan.root, false, &[])?;
             for child in fs::read_dir(&plan.root)? {
                 let child = child?;
                 if child.file_name() != ".jj" {
-                    cow::remove_path(&child.path())?;
+                    cow::remove_path_after_topology(&child.path())?;
                 }
-            }
-        } else {
-            for path in &plan.ignored {
-                confined_parents(&plan.root, path)?;
-                cow::remove_path(&plan.root.join(path))?;
             }
         }
         validate_source(plan)?;
@@ -1477,20 +1507,32 @@ fn execute(default: &Path, plan: &mut Plan) -> Result<()> {
         if current_commit(&client)?.1 != plan.desired_commit {
             bail!("materialization verification changed the desired WC commit");
         }
-        let rules = IgnoreRules::new(&client, &plan.target_operation, &plan.desired_commit, &plan.entries)?;
         for path in &plan.ignored {
-            rules.require_ignored(path)?;
+            plan.target_rules.require_ignored(path)?;
         }
         // Link existence is checked against the actual filesystem only after ignored
         // payload restoration. Early future-state preflight already proved required
         // targets; testing live existence here would reject freshly cleared caches.
         validate_source(plan)?;
+        let guard = payload::Guard::default();
         for path in &plan.ignored {
             confined_parents(&plan.root, path)?;
-            cow::remove_path(&plan.root.join(path))?;
             fs::create_dir_all(plan.root.join(path).parent().context("ignored root has no parent")?)?;
             confined_parents(&plan.root, path)?;
-            cow::clone_tree(&plan.source.join(path), &plan.root.join(path))?;
+            let applier = diff_dirs_sync::Applier::new_replacing_checked(
+                plan.source.join(path),
+                plan.root.join(path),
+                diff_dirs_sync::CopyPolicy::ReflinkRequired,
+                guard.borrowed(),
+            )?;
+            let result = applier.mirror();
+            for warning in guard.warnings() {
+                if !plan.execution_diagnostics.contains(&warning) {
+                    diagnostics(format!("Warning: {warning}"));
+                    plan.execution_diagnostics.push(warning);
+                }
+            }
+            result?;
         }
         validate_source(plan)?;
         let link_report = links::apply_workspace_links(default, &plan.root)?;
@@ -1905,6 +1947,9 @@ mod tests {
             desired_commit: old.clone(),
             base_commit: source_commit.clone(),
             clones,
+            source_rules: Rc::new(IgnoreRules::new(&client, &operation, &source_commit, &source_entries).unwrap()),
+            target_rules: Rc::new(IgnoreRules::new(&target_client, &operation, &source_commit, &target_entries).unwrap()),
+            source_entries: Rc::new(source_entries),
             entries: target_entries,
             old_paths: entries(&target_client, &operation, &old).unwrap().into_iter().map(|e| e.path).collect(),
             ignored: vec!["cache".into()],

@@ -109,6 +109,16 @@ pub(crate) fn validate_selected<'a>(
     tracked: impl IntoIterator<Item = &'a Path>,
     mut is_ignored: impl FnMut(&Path) -> Result<bool>,
 ) -> Result<()> {
+    validate_selected_with_topology(source, roots, tracked, &mut is_ignored, false)
+}
+
+pub(crate) fn validate_selected_with_topology<'a>(
+    source: &Path,
+    roots: &[PathBuf],
+    tracked: impl IntoIterator<Item = &'a Path>,
+    mut is_ignored: impl FnMut(&Path) -> Result<bool>,
+    topology_checked: bool,
+) -> Result<()> {
     if roots.is_empty() {
         return Ok(());
     }
@@ -130,7 +140,9 @@ pub(crate) fn validate_selected<'a>(
             if !fs::symlink_metadata(&child)?.is_dir() {
                 bail!("recorded ignored root/parent is not a real directory: {}", child.display());
             }
-            super::validate_same_mount(&parent, &child)?;
+            if !topology_checked {
+                super::validate_same_mount(&parent, &child)?;
+            }
             parent = child;
         }
         if !is_ignored(root)? {
@@ -198,6 +210,17 @@ impl Patterns {
         tracked: impl IntoIterator<Item = &'a Path>,
         is_ignored: impl FnMut(&Path) -> Result<bool>,
     ) -> Result<Selection> {
+        self.select_with_topology(source, tracked, is_ignored, false)
+    }
+
+    /// Linux reseed has already rejected nested mounts for the whole batch.
+    pub fn select_with_topology<'a>(
+        &self,
+        source: &'a Path,
+        tracked: impl IntoIterator<Item = &'a Path>,
+        is_ignored: impl FnMut(&Path) -> Result<bool>,
+        topology_checked: bool,
+    ) -> Result<Selection> {
         if self.patterns.is_empty() {
             return Ok(Selection::default());
         }
@@ -213,6 +236,7 @@ impl Patterns {
             selected: Selection::default(),
             observed: vec![false; self.patterns.len()],
             covered: vec![false; self.patterns.len()],
+            topology_checked,
         };
         walk.visit(Path::new(""), &states)?;
         for (index, pattern) in self.patterns.iter().enumerate() {
@@ -270,6 +294,7 @@ struct Walk<'a, 'p, F> {
     /// Potential matches under an already selected ancestor need not be visited
     /// or spuriously reported as missing: that ancestor's payload includes them.
     covered: Vec<bool>,
+    topology_checked: bool,
 }
 
 impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
@@ -285,7 +310,9 @@ impl<F: FnMut(&Path) -> Result<bool>> Walk<'_, '_, F> {
             if next.is_empty() {
                 continue;
             }
-            super::validate_same_mount(&directory, &entry.path())?;
+            if !self.topology_checked {
+                super::validate_same_mount(&directory, &entry.path())?;
+            }
             let path = relative.join(name);
             let mut matched = false;
             for state in &next {

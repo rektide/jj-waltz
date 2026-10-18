@@ -417,6 +417,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff-dirs"
+version = "0.1.0"
+
+[[package]]
+name = "diff-dirs-sync"
+version = "0.1.0"
+dependencies = [
+ "diff-dirs",
+ "reflink-copy",
+ "rustix",
+ "tempfile",
+]
+
+[[package]]
 name = "difflib"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -734,6 +748,8 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_complete",
+ "diff-dirs",
+ "diff-dirs-sync",
  "fs2",
  "libc",
  "predicates",

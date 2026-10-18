@@ -69,6 +69,7 @@ pub(crate) fn validate_tree(root: &Path) -> Result<()> {
 /// One preflight traversal of a selected ignored payload root: the full
 /// [`validate_tree`] checks plus a warning for every source-bound absolute
 /// symlink found along the way, instead of a second dedicated walk.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn validate_payload_root(source: &Path, root: &Path, warnings: &mut Vec<String>) -> Result<()> {
     imp::validate_payload_root(source, root, warnings)
 }
@@ -117,6 +118,12 @@ pub(crate) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
 /// is not re-checked.
 pub(crate) fn remove_path(path: &Path) -> Result<()> {
     imp::remove_path(path)
+}
+
+/// Reseed-only removal after the Linux batch topology guard (including leaf mounts).
+#[cfg(unix)]
+pub(crate) fn remove_path_after_topology(path: &Path) -> Result<()> {
+    imp::remove_path_with_topology(path, cfg!(target_os = "linux"))
 }
 
 #[cfg(unix)]
@@ -240,18 +247,19 @@ mod imp {
         let metadata = fs::symlink_metadata(root).with_context(|| format!("failed to inspect {}", root.display()))?;
         ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", root.display());
         ensure!(metadata.is_dir(), "refusing {}: it is not a directory", root.display());
-        validate_directory(root, None)
+        validate_directory(root, None, false)
     }
 
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub(super) fn validate_payload_root(source: &Path, root: &Path, warnings: &mut Vec<String>) -> Result<()> {
         let path = source.join(root);
         let metadata = fs::symlink_metadata(&path).with_context(|| format!("failed to inspect {}", path.display()))?;
         ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", path.display());
         ensure!(metadata.is_dir(), "refusing {}: it is not a directory", path.display());
-        validate_directory(&path, Some((source, warnings)))
+        validate_directory(&path, Some((source, warnings)), false)
     }
 
-    fn validate_directory(directory: &Path, mut links: Option<(&Path, &mut Vec<String>)>) -> Result<()> {
+    fn validate_directory(directory: &Path, mut links: Option<(&Path, &mut Vec<String>)>, topology_checked: bool) -> Result<()> {
         for entry in fs::read_dir(directory).with_context(|| format!("failed to read {}", directory.display()))? {
             let entry = entry.with_context(|| format!("failed to read {}", directory.display()))?;
             let path = entry.path();
@@ -273,9 +281,11 @@ mod imp {
                 }
                 continue;
             }
-            validate_same_mount(directory, &path)?;
+            if !topology_checked {
+                validate_same_mount(directory, &path)?;
+            }
             if file_type.is_dir() {
-                validate_directory(&path, links.as_mut().map(|(base, warnings)| (*base, &mut **warnings)))?;
+                validate_directory(&path, links.as_mut().map(|(base, warnings)| (*base, &mut **warnings)), topology_checked)?;
             } else {
                 ensure!(file_type.is_file(), "refusing {}: it is an unsupported special file", path.display());
             }
@@ -379,6 +389,10 @@ mod imp {
     }
 
     pub(super) fn remove_path(path: &Path) -> Result<()> {
+        remove_path_with_topology(path, false)
+    }
+
+    pub(super) fn remove_path_with_topology(path: &Path, topology_checked: bool) -> Result<()> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -405,9 +419,15 @@ mod imp {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .with_context(|| format!("cannot determine the parent of {}", path.display()))?;
-        validate_same_mount(parent, path)?;
+        if !topology_checked {
+            validate_same_mount(parent, path)?;
+        }
         // validate_tree's messages already name the path and the reason.
-        validate_tree(path)?;
+        if topology_checked {
+            validate_directory(path, None, true)?;
+        } else {
+            validate_tree(path)?;
+        }
         ensure_removable(path)?;
         fs::remove_dir_all(path).with_context(|| format!("failed to remove {}", path.display()))
     }
