@@ -5,9 +5,11 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
+  by: model:openai/gpt-6-astra#xhigh
   at: 2026-10-19
 sources:
+  - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
+    title: Linked dedicated execution and context/donor-state reports separating the reusable library from JW's actual compatibility integration
   - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
     title: Replaced per-root mirrors and private recursive copying with root-bound early/late visitor integration and shared listed-leaf/clear kernels, preserving bounded legacy authority and native identity
   - resource: "opencode://ses_eaf06f6d6fferHu84gVUM2C0Xj"
@@ -52,6 +54,13 @@ link validation, or shell switching policy.
 
 This document separates milestone-zero behavior from later publication and forge
 work. The current command surface remains authoritative in `jw --help`.
+
+For the current filesystem pipeline, read the dedicated
+[execution walkthrough](file:///home/rektide/src/diff-dirs/design/execution/flow0.gpt6a.md)
+and [context/donor-state report](file:///home/rektide/src/diff-dirs/design/execution/state0.gpt6a.md).
+Each has separate JW sections; the first follows actual reseed calls, and the
+second distinguishes visitor payloads, frozen command facts, live donor data and
+native JJ identity/cache state.
 
 ## Product boundary
 
