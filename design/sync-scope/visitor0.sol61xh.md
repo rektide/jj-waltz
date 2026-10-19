@@ -62,6 +62,10 @@ empty and disabled selections retain their old precedence and zero-copy meanings
 No preserve/mirror lists or broad donor-copy default are invented. Creation uses
 the same visitor in create-only mode; existing switches do not refill. Prepare
 remains source-only and keeps its existing validation/selection contract.
+The compatibility slice does not exempt nonignored locals from JJ's initial
+auto-tracking: if that snapshot records them, they become saved tracked work.
+The native preservation probe deliberately disables new-file tracking first;
+it does not prove preservation under every snapshot configuration.
 
 The command pool remains shared: experimental P≤4, J=P, K=256; default execution
 is serial. Linux topology is shared with creation; other devices are checked from
@@ -106,6 +110,37 @@ mirror follows from library capabilities or the successful S→D experiment. The
 compatibility slice is useful infrastructure, **not completion of that product
 choice**. Production cache adoption and eliminating the sparse clear/recopy/hash
 cycle require a reviewed next protocol, not another default guessed by an agent.
+
+## Verification and return boundary
+
+- Default/serial: **12 passed** — seven visitor/kernel tests, existing-workspace
+  S→D protocol, real readiness refusal, ordinary ignored refresh/replacement,
+  creation payload mode independence, and visible nested tracked-clone fallback.
+- `payload-parallel`/all-features: **72 passed** — all 52 reseed integration cases,
+  all 12 creation-payload cases, and eight visitor/kernel tests including pool
+  limits. Native fixtures ran one case at a time with `JW_TEST_REQUIRE_COW=1`,
+  `/usr/local/bin` first on PATH and runtime `CARGO_BIN_EXE_jw` set. No competing
+  build replaced the CLI executable during this final run.
+- Four additional native tracked-creation CLI tests passed with required real
+  reflinks: S≠base convergence, sparse patterns, rejected-state fallback and
+  Watchman fallback. Only these four explicitly initialized-JJ tests used a
+  project-filesystem TMPDIR. No whole-suite/discovery-test TMPDIR override.
+- Workspace/all-target/all-feature Clippy with `-D warnings`, private-item Rustdoc
+  with warnings denied, and workspace formatting check passed. Cargo still emits
+  the pre-existing redundant-homepage manifest warning.
+
+Earlier readiness-test runs used nonexistent CLI output flags; the correction
+requires a genuine nonempty `BLOCKED feature` report. One repeat was interrupted
+by the shell timeout, not counted as passing. The completed final sets above
+supersede those runs. Filtered tests are not a claim of a full legacy-suite run.
+No benchmarks, imports, installation, live reseeds, large fixtures, diffdirs edits
+or cleanup of the unrelated old workspace/human handoff were performed.
+
+Coherent implementation checkpoints are `0dfefe25` (visitor/kernel integration)
+and `0e56ce06` (readiness-test correction, nested-fallback coverage and Rustdoc).
+This return stops before product-policy selection or production cache adoption.
+The remaining selector/outside-region validation is compatibility work, not a
+claim that the old interface has already been retired.
 
 ## Connections
 

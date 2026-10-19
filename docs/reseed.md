@@ -142,6 +142,9 @@ and descent. The existing `copy_ignored` inputs are a **bounded compatibility
 adapter**, not permission to copy the whole donor. Empty lists and disabling
 flags still copy no auxiliary data. No broader mirror/update default or new
 preserve/mirror configuration is selected by this implementation.
+These transfer exclusions do not change JJ's initial snapshot/auto-tracking
+policy: a nonignored local file that JJ records becomes tracked work saved in
+history, not an implicitly preserved untracked exception.
 
 Comparison uses file type, size and exact mtime, or literal symlink text, not
 content hashes. Clean payload preserves inode/mtime and requires no writes.
