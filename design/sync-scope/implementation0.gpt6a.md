@@ -1,14 +1,17 @@
 ---
 type: ImplementationBrief
 title: "Supersede ignored-copy selection with scoped transfer"
-description: Recorded parent-selected implementation direction, now held for JJ protocol review; library capabilities landed, but JW transfer defaults were not approved.
+description: Visitor-backed library and bounded JW compatibility integration, with transfer defaults and production JJ cache adoption still requiring selection.
 resource: /design/sync-scope/implementation0.gpt6a.md
-status: paused-for-jj-protocol-review
+status: visitor-integrated-policy-pending
 generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-18 }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-19 }
 sources:
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
-    title: Human authorized implementation; parent selected a policy too early, then recorded the human's challenge and the unresolved JJ-state protocol before further JW integration
+    title: Recorded the premature policy selection, then reviewed the human-requested early/late visitor integration and its bounded native JJ-state evidence
+  - resource: /design/sync-scope/visitor0.sol61xh.md
+    revision: f17b1ef2
+    title: Fresh Sol xhigh's visitor integration, actual native S-to-D convergence test, verification and explicit compatibility boundary
   - resource: /design/sync-scope/design0.gpt6a.md
     title: Authority-based transfer model, generic scope/absence interfaces and listed-leaf installation
   - resource: /design/sync-scope/jj-state-review0.gpt6a.md
@@ -23,6 +26,38 @@ sources:
 
 # Implementation direction
 
+## Current checkpoint: visitor integration, not a new transfer default
+
+The subsequent human commission selected the early/late mutable-batch visitor
+model, followed by a fresh Sol xhigh for JW integration. The library is delivered
+through `0ce979c2`; JW's compatibility slice is delivered through `f17b1ef2`.
+Parent source review accepts this bounded integration:
+
+- `cow::transfer::Auxiliary` drives one workspace-root transfer. Early excludes
+  unselected/native names before metadata; late steers routing containers and
+  refuses routing collisions. Existing selected-region behavior is retained.
+- JW uses the shared listed-leaf installer and visitor-backed clearing kernel;
+  the former recursive copier is removed. Preview is joint, not a side-local
+  audit pretending to predict cross-tree collisions.
+- The native existing-workspace test actually clones all S-tracked leaves,
+  copies only `tree_state`, validates through JJ, and restores a different D.
+  It asserts unchanged target checkout bytes at adoption, final D tree/parent,
+  target root/metadata identity, saved old work and retained local data.
+  Auto-tracking was disabled before the local names were created: this is not
+  proof that arbitrary nonignored locals survive normal production snapshots.
+- Production continues using its existing sparse-prefill protocol. The test is
+  executable evidence for further protocol work, not production adoption or a
+  measurement proving zero hashes.
+
+Reported focused serial/parallel/native checks, Clippy, Rustdoc and formatting
+are recorded in the [implementation account](visitor0.sol61xh.md). No benchmark
+was run. The author returned at a coherent 226k-context checkpoint; further
+policy/protocol work should have a separate, explicitly scoped commission.
+
+`copy_ignored` retirement, ordinary-content transfer authority and production
+state-adoption failure/locking behavior remain unresolved. This checkpoint must
+not be described as completing those changes.
+
 ## Correction: the JW policy and state transition are not settled
 
 The human authorized movement toward implementation, then asked to see the
@@ -34,9 +69,10 @@ The parent made two unsupported leaps: choosing broad update plus mirror regions
 as the JW product model, then treating the human's challenge as confirmation of
 the opposite default. Neither is established by the JJ-state research.
 
-The generic diffdirs capabilities are implemented. JW still uses its existing
-ignored-root integration; the policy below has not been switched on there.
-Library tests establish those capabilities, not a new JJ reseed protocol.
+The generic diffdirs capabilities are implemented. JW now projects its existing
+selected-region contract through a root-bound visitor; the broader policy below
+has not been switched on there. Library tests establish those capabilities, not
+a new production JJ reseed protocol.
 
 The earlier scope below explicitly deferred metadata/state adoption and moves.
 That was a parent choice, not a conclusion that the research was irrelevant.
