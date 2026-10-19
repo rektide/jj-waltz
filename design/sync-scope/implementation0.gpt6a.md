@@ -5,8 +5,10 @@ description: Visitor-backed library and bounded JW compatibility integration, wi
 resource: /design/sync-scope/implementation0.gpt6a.md
 status: visitor-integrated-policy-pending
 generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-18 }
-updated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-19 }
+updated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-20 }
 sources:
+  - resource: "opencode://ses_ea82cf969ffeAXqmUxHChTJar2"
+    title: Linked the human-directed continuation-cursor demo and action/shortcut exploration while retaining this production checkpoint
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
     title: Recorded the premature policy selection, then reviewed the human-requested early/late visitor integration and its bounded native JJ-state evidence
   - resource: /design/sync-scope/visitor0.sol61xh.md
@@ -25,6 +27,11 @@ sources:
 ---
 
 # Implementation direction
+
+Subsequent inquiry: [continuation cursors and extensible actions](cursor-actions0.gpt6a.md)
+records the human's forward-iteration failure model, commissioned serialization
+demo, inherited traversal modes and generated-entry proposals. It extends the
+questions here; this document's production checkpoint remains below.
 
 ## Current checkpoint: visitor integration, not a new transfer default
 
