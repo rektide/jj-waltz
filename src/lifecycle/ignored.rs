@@ -64,6 +64,7 @@ mod unix {
     use super::*;
     use crate::cow::ignored::{require_untracked, validate_selected};
     use crate::cow::payload::{self, Entry, IgnoreRules};
+    use crate::cow::{topology::Topology, transfer};
     use crate::{cow, jj::JjClient, links};
     use anyhow::{Context, bail};
     use std::collections::BTreeSet;
@@ -83,6 +84,8 @@ mod unix {
         target_rules: IgnoreRules,
         pub(super) roots: Vec<PathBuf>,
         base: String,
+        topology: Topology,
+        execution: transfer::Execution,
     }
 
     pub(super) fn prepare(
@@ -143,6 +146,8 @@ mod unix {
                 .require_ignored(path)
                 .context("ignored payload is not ignored in the desired target tree")?;
         }
+        let topology = Topology::capture()?;
+        topology.workspace(source, true)?;
         plan.proof = Some(Proof {
             source: source.to_owned(),
             source_identity,
@@ -154,6 +159,8 @@ mod unix {
             target_rules,
             roots: selected.roots,
             base: base.commit_id.clone(),
+            topology,
+            execution: transfer::Execution::new(true)?,
         });
         Ok(plan)
     }
@@ -224,14 +231,17 @@ mod unix {
             // Independent of the tracked checkout mode: no bytes/hardlinks/shared
             // directory fallback, even when creation used --no-cow or --colocate.
             cow::probe_between(&self.source, target)?;
-            for path in &self.roots {
-                let destination = target.join(path);
-                fs::create_dir_all(destination.parent().context("ignored root has no parent")?)?;
-                payload::confined_parents(target, path)?;
-                // clone_tree validates every entry inline as it clones; a failed
-                // or partial copy surfaces as an error for lifecycle rollback.
-                cow::clone_tree(&self.source.join(path), &destination)?;
-            }
+            self.topology.workspace(target, true)?;
+            self.topology.separate(&[self.source.clone(), target.to_owned()])?;
+            let visitor = transfer::Auxiliary::legacy(
+                &self.roots,
+                self.source_entries.iter().map(|entry| entry.path.as_path()),
+                (self.source_identity.0, payload::directory_identity(target)?.0),
+            )?
+            .new_targets_only();
+            // A single root-bound visitor owns child admission and writes;
+            // unrelated tracked/native/link names are preserved before stat.
+            self.execution.run(&transfer::applier(&self.source, target, &visitor)?)?;
             Ok(())
         }
     }

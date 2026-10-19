@@ -58,18 +58,19 @@ fn parse(bytes: &[u8]) -> Result<Vec<Mount>> {
         .collect()
 }
 
-pub(super) struct Topology {
+#[derive(Debug)]
+pub(crate) struct Topology {
     #[cfg(target_os = "linux")]
     mounts: Vec<Mount>,
 }
 impl Topology {
-    pub(super) fn capture() -> Result<Self> {
+    pub(crate) fn capture() -> Result<Self> {
         Ok(Self {
             #[cfg(target_os = "linux")]
             mounts: parse(&std::fs::read("/proc/self/mountinfo").context("cannot verify Linux mount topology")?)?,
         })
     }
-    pub(super) fn workspace(&self, root: &Path, allow_git: bool) -> Result<()> {
+    pub(crate) fn workspace(&self, root: &Path, allow_git: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
         self.location(root)?;
         #[cfg(target_os = "linux")]
@@ -110,7 +111,7 @@ impl Topology {
         ensure!(mount.root.is_absolute(), "workspace mount lacks a filesystem-relative root");
         Ok((&mount.device, mount.root.join(path.strip_prefix(&mount.point)?)))
     }
-    pub(super) fn separate(&self, roots: &[PathBuf]) -> Result<()> {
+    pub(crate) fn separate(&self, roots: &[PathBuf]) -> Result<()> {
         #[cfg(target_os = "linux")]
         for (index, root) in roots.iter().enumerate() {
             let (device, path) = self.location(root)?;

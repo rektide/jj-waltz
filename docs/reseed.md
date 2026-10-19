@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#high
-  at: 2026-10-18
+  by: model:openai/gpt-6.1-sol#xhigh
+  at: 2026-10-19
 sources:
+  - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
+    title: Integrated root-bound early/late visitors, shared seed/clear kernels and collision-aware preview without selecting a broader transfer default; tested existing-workspace donor-state convergence separately
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
     title: Integrated static checked streaming payload reconciliation, batch Linux topology guards and frozen persistent native ignore queries; revised refusal timing and convergence guarantees
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
@@ -131,6 +133,15 @@ deleted; unrelated contents outside them are not pruned. Symlinks are copied as 
 source-bound absolute links are reported, not rewritten. Dependencies reflect
 the installed donor state. If feature manifests differ, run the project's frozen
 install in the feature workspace.
+
+Creation and reseed now share a root-bound early/late visitor: names outside the
+selected regions (including native metadata and unrelated local data) are skipped
+before child metadata/readlink; late decisions retain routing directories and
+refuse routing file/link obstructions. The same finalized actions control writes
+and descent. The existing `copy_ignored` inputs are a **bounded compatibility
+adapter**, not permission to copy the whole donor. Empty lists and disabling
+flags still copy no auxiliary data. No broader mirror/update default or new
+preserve/mirror configuration is selected by this implementation.
 
 Comparison uses file type, size and exact mtime, or literal symlink text, not
 content hashes. Clean payload preserves inode/mtime and requires no writes.
@@ -335,9 +346,10 @@ A failed shared donor proof marks unchecked targets **not assessed**, never READ
 The real command rechecks structural guards and never refills just the valid
 subset of a structurally blocked batch. Checks include ownership, registration,
 sparse/stale state, conflicts, bookmarks, ignored rules, obstructions, and links.
-Preview additionally audits each donor payload root once and every selected
-target payload, including opaque one-sided interiors. It does not probe reflink
-capability or prove later writes will succeed.
+Preview additionally runs joint, read-only planning with the execution visitor,
+including one-sided interiors, routing collisions and coupled replacement
+removability. Independent source/target audits cannot substitute for that joint
+plan. It does not probe reflink capability or prove later writes will succeed.
 
 Normal execution does **not** audit payload interiors first. The checked streaming
 comparison/copier/remover rejects administrative names and special entries even
@@ -394,6 +406,13 @@ reflinks, reset sparse selection, reconcile selected ignored roots, apply links,
 verify. Commit-ID checks between JJ calls remain in memory. There is no durable
 intermediate state and **jw never repairs a partial workspace**.
 
+Tracked prefills use the generic create-only listed-leaf installer; explicit
+`--replace-content` uses the generic visitor-driven clear, retaining `.jj` in
+place. `jj new` creates an empty **change with the base's file tree**, not an empty
+tree. Sparse expansion can leave placeholder stats for prefills, and native
+verification may read/hash those already-recorded paths even with auto-track
+disabled. Production reseed does not transplant donor working-copy metadata.
+
 On failure after mutation starts, the error names the covered work tip, covering
 bookmark, affected root, and this out-of-band remedy:
 
@@ -417,6 +436,8 @@ Each new prepare/reseed resolves its own policy and source selection.
 
 ## Related material
 
+- [Visitor/JJ protocol checkpoint](../design/sync-scope/visitor0.sol61xh.md):
+  implemented compatibility boundary and tested-but-unselected cache-adoption transition.
 - [CoW creation](../README.md#copy-on-write-workspaces): new workspaces, rather than refilling existing ones.
 - [Architecture](architecture.md#in-place-reseeding): ownership and live safety boundaries.
 - [Performance assessment](../tools/performance/README.md): retained fixtures and process-count gates.

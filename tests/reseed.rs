@@ -1181,6 +1181,104 @@ fn reset_batch_across_two_sources_keeps_roots_bookmarks_and_lifecycle() {
 }
 
 #[test]
+fn existing_workspace_can_validate_donor_tree_state_then_restore_a_different_desired_tree() {
+    // Protocol evidence only: production reseed still uses sparse expansion.
+    // Adoption describes copied S, not desired D; checkout/name is never copied.
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    if !repo.cow(&source, &target) {
+        return;
+    }
+    repo.jj_at(&repo.root, &["new", &repo.baseline]);
+    fs::write(repo.root.join("new-desired"), "desired only\n").unwrap();
+    let desired = repo.id(&repo.root, "@");
+    fs::write(source.join("modified"), "donor version\n").unwrap();
+    fs::remove_file(source.join("deleted")).unwrap();
+    fs::remove_file(source.join("directory-transition")).unwrap();
+    fs::create_dir(source.join("directory-transition")).unwrap();
+    fs::write(source.join("directory-transition/child"), "donor directory\n").unwrap();
+    fs::set_permissions(source.join("mode"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(source.join("donor-only"), "remove on convergence\n").unwrap();
+    let donor = repo.id(&source, "@");
+    assert_ne!(donor, desired);
+    let leaves = repo
+        .jj_at(&source, &["--ignore-working-copy", "file", "list", "-T", r#"json(path) ++ "\n""#])
+        .lines()
+        .map(|line| PathBuf::from(serde_json::from_str::<String>(line).unwrap()))
+        .collect::<Vec<_>>();
+    fs::write(target.join("old-target-only"), "tracked target work\n").unwrap();
+    let old = repo.id(&target, "@");
+    repo.jj_at(&target, &["bookmark", "create", "saved-before-adoption", "-r", &old]);
+    repo.jj_at(&target, &["config", "set", "--repo", "snapshot.auto-track", "none()"]);
+    fs::write(target.join(".env"), "ignored local\n").unwrap();
+    fs::write(target.join("unignored-local"), "unignored local\n").unwrap();
+    fs::write(target.join(".jj/user-marker"), "target native metadata\n").unwrap();
+    let root_identity = identity(&target);
+    let jj_identity = identity(&target.join(".jj"));
+    let repo_pointer = fs::read(target.join(".jj/repo")).unwrap();
+
+    repo.jj_at(&target, &["--config=snapshot.auto-update-stale=false", "sparse", "set", "--clear"]);
+    repo.jj_at(&target, &["--config=snapshot.auto-update-stale=false", "new", &desired]);
+    let checkout = fs::read(target.join(".jj/working_copy/checkout")).unwrap();
+    diff_dirs_sync::seed_leaves(&source, &target, &leaves, diff_dirs_sync::CopyPolicy::ReflinkRequired, diff_dirs::NoCheck).unwrap();
+    let cloned_inode = identity(&target.join("shared"));
+    jj_waltz::jj::copy_tree_state(&source, &target).unwrap();
+    assert_eq!(fs::read(target.join(".jj/working_copy/checkout")).unwrap(), checkout);
+    repo.jj_at(
+        &target,
+        &["--config=fsmonitor.backend=none", "--config=snapshot.auto-update-stale=false", "status"],
+    );
+    assert_eq!(repo.jj_at(&target, &["diff", "--from", &donor, "--to", "@", "--summary"]), "");
+    // The native convergence diff is S -> D, not an empty-tree -> D refill.
+    repo.jj_at(&target, &["--config=snapshot.auto-update-stale=false", "restore", "--from", &desired]);
+    assert_eq!(repo.jj_at(&target, &["diff", "--from", &desired, "--to", "@", "--summary"]), "");
+    assert_eq!(repo.id(&target, "@-"), desired);
+    assert_eq!(repo.id(&target, "@"), repo.id(&repo.root, "feature@"));
+    assert_eq!(repo.jj_at(&target, &["sparse", "list"]), ".");
+    assert_eq!(fs::read(target.join("modified")).unwrap(), b"baseline\n");
+    assert_eq!(fs::read(target.join("deleted")).unwrap(), b"delete me\n");
+    assert_eq!(fs::read(target.join("directory-transition")).unwrap(), b"regular\n");
+    assert_eq!(fs::read(target.join("new-desired")).unwrap(), b"desired only\n");
+    assert_eq!(fs::metadata(target.join("mode")).unwrap().permissions().mode() & 0o111, 0);
+    for absent in ["donor-only", "old-target-only"] {
+        assert!(!target.join(absent).exists(), "{absent}");
+    }
+    assert_eq!(fs::read(target.join(".env")).unwrap(), b"ignored local\n");
+    assert_eq!(fs::read(target.join("unignored-local")).unwrap(), b"unignored local\n");
+    assert_eq!(fs::read(target.join(".jj/user-marker")).unwrap(), b"target native metadata\n");
+    assert_eq!(fs::read(target.join(".jj/repo")).unwrap(), repo_pointer);
+    assert_eq!(identity(&target), root_identity);
+    assert_eq!(identity(&target.join(".jj")), jj_identity);
+    assert_eq!(identity(&target.join("shared")), cloned_inode);
+    assert_eq!(repo.id(&target, "saved-before-adoption"), old);
+}
+
+#[test]
+fn visitor_preview_blocks_an_unrelated_routing_leaf_without_claiming_ready() {
+    let Some(repo) = Repo::new() else { return };
+    let source = repo.workspace("source");
+    let target = repo.workspace("feature");
+    repo.jj_at(&target, &["config", "set", "--repo", "snapshot.auto-track", "none()"]);
+    fs::create_dir_all(source.join("packages/a/cache")).unwrap();
+    fs::write(source.join("packages/a/cache/file"), "source\n").unwrap();
+    fs::write(target.join("packages"), "target-owned leaf\n").unwrap();
+    let before = repo.id(&target, "@");
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/a/cache", "--dry-run", "--format=json"]);
+    assert!(!output.status.success());
+    assert!(!output.stdout.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains("READY"), "{text}");
+    assert!(
+        text.contains("real directory") || text.contains("non-directory") || text.contains("symlink"),
+        "{text}"
+    );
+    assert_eq!(repo.id(&target, "@"), before);
+    assert_eq!(fs::read(target.join("packages")).unwrap(), b"target-owned leaf\n");
+    assert_eq!(repo.jj_at(&target, &["sparse", "list"]), ".");
+}
+
+#[test]
 fn ignored_refresh_is_private_retains_unselected_content_and_replace_is_explicit() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");

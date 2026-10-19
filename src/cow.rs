@@ -7,7 +7,7 @@
 //! it, and lets JJ reconcile them against the creation base.
 //!
 //! The reseed helpers (`probe_between`, `validate_tree`, `validate_same_mount`,
-//! `clone_tree`, and `remove_path`) are the filesystem adapter for in-place
+//! and `remove_path`) support lifecycle validation and deliberate cleanup.
 //! reseeding. They prove cross-filesystem cloning up front, fail closed on
 //! administrative or special content and on mounted-filesystem boundaries, and
 //! never fall back to ordinary copying. On Linux, boundaries are detected
@@ -19,6 +19,10 @@ use std::path::{Path, PathBuf};
 pub(crate) mod ignored;
 #[cfg(unix)]
 pub(crate) mod payload;
+#[cfg(unix)]
+pub(crate) mod topology;
+#[cfg(unix)]
+pub(crate) mod transfer;
 
 /// Explain why files under `source` cannot be cloned into directories created in
 /// `destination_parent`, or return `None` when cloning is available.
@@ -86,21 +90,6 @@ pub(crate) fn validate_same_mount(parent: &Path, child: &Path) -> Result<()> {
     imp::validate_same_mount(parent, child)
 }
 
-/// Strictly clone the tree at `source` to the not-yet-existing `destination`.
-///
-/// Every entry is validated inline during the single clone traversal and the
-/// clone fails closed on nested repositories, special entries, mounted
-/// children, and a symlinked source root. Regular files are reflinked with
-/// their permission bits and modification times restored, symlinks are
-/// recreated as links and never traversed, and directories are created fresh:
-/// an existing destination is an error, so callers clear the selected path
-/// first. Directory modes are applied only after their contents are copied, so
-/// restrictive source directories clone cleanly. A failed reflink is an error;
-/// there is no ordinary-copy fallback.
-pub(crate) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
-    imp::clone_tree(source, destination)
-}
-
 /// Remove exactly the selected `path` and nothing else.
 ///
 /// A missing path succeeds so callers can clear idempotently. A selected
@@ -120,22 +109,15 @@ pub(crate) fn remove_path(path: &Path) -> Result<()> {
     imp::remove_path(path)
 }
 
-/// Reseed-only removal after the Linux batch topology guard (including leaf mounts).
-#[cfg(unix)]
-pub(crate) fn remove_path_after_topology(path: &Path) -> Result<()> {
-    imp::remove_path_with_topology(path, cfg!(target_os = "linux"))
-}
-
 #[cfg(unix)]
 mod imp {
     use anyhow::{Context, Result, bail, ensure};
-    use std::collections::HashSet;
     #[cfg(target_os = "linux")]
     use std::ffi::CString;
     use std::ffi::OsStr;
-    use std::fs::{self, Metadata};
+    use std::fs;
     use std::io::ErrorKind;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
 
     pub(super) fn unsupported_reason(source: &Path, destination_parent: &Path) -> Option<String> {
@@ -171,10 +153,14 @@ mod imp {
     }
 
     pub(super) fn clone_files(source: &Path, files: &[PathBuf], destination: &Path) -> Result<()> {
-        let mut created_directories = HashSet::new();
+        // Preserve the creation adapter's missing/non-leaf skip contract, but
+        // delegate all installation, collision handling and metadata restoration
+        // to the same create-only kernel used by other callers. No directories
+        // are enumerated and no unlisted file can be installed.
+        let mut leaves = Vec::with_capacity(files.len());
         for relative in files {
+            super::payload::relative(relative)?;
             let from = source.join(relative);
-            let to = destination.join(relative);
             let metadata = match fs::symlink_metadata(&from) {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == ErrorKind::NotFound => continue,
@@ -182,24 +168,11 @@ mod imp {
                     return Err(error).with_context(|| format!("failed to inspect {}", from.display()));
                 }
             };
-            let file_type = metadata.file_type();
-            if !file_type.is_file() && !file_type.is_symlink() {
-                continue;
-            }
-            if let Some(parent) = to.parent()
-                && created_directories.insert(parent.to_path_buf())
-            {
-                fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-            }
-            if file_type.is_symlink() {
-                let link = fs::read_link(&from).with_context(|| format!("failed to read {}", from.display()))?;
-                symlink(&link, &to).with_context(|| format!("failed to create {}", to.display()))?;
-            } else {
-                reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
-                preserve_mode(&to, &metadata)?;
-                preserve_modified_time(&to, &metadata)?;
+            if metadata.is_file() || metadata.is_symlink() {
+                leaves.push(relative);
             }
         }
+        diff_dirs_sync::seed_leaves(source, destination, leaves, diff_dirs_sync::CopyPolicy::ReflinkRequired, diff_dirs::NoCheck)?;
         Ok(())
     }
 
@@ -338,56 +311,6 @@ mod imp {
         Ok(buffer.stx_mnt_id)
     }
 
-    pub(super) fn clone_tree(source: &Path, destination: &Path) -> Result<()> {
-        let metadata = fs::symlink_metadata(source).with_context(|| format!("failed to inspect {}", source.display()))?;
-        ensure!(!metadata.file_type().is_symlink(), "refusing {}: it is a symbolic link", source.display());
-        ensure!(metadata.is_dir(), "refusing {}: it is not a directory", source.display());
-        let preexisting = fs::symlink_metadata(destination).is_ok();
-        // Validation happens inline during the single clone traversal. A failure
-        // removes a freshly created destination best-effort so a rejected tree
-        // leaves nothing behind, without a second validation walk; a destination
-        // that already existed is never touched by cleanup.
-        if let Err(error) = clone_directory(source, destination) {
-            if !preexisting {
-                let _ = super::remove_path(destination);
-            }
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    fn clone_directory(source_directory: &Path, destination_directory: &Path) -> Result<()> {
-        let metadata = fs::symlink_metadata(source_directory).with_context(|| format!("failed to inspect {}", source_directory.display()))?;
-        fs::create_dir(destination_directory).with_context(|| format!("failed to create {}", destination_directory.display()))?;
-        for entry in fs::read_dir(source_directory).with_context(|| format!("failed to read {}", source_directory.display()))? {
-            let entry = entry.with_context(|| format!("failed to read {}", source_directory.display()))?;
-            let name = entry.file_name();
-            ensure!(!is_admin_name(&name), "refusing {}: it is an administrative entry", entry.path().display());
-            let from = entry.path();
-            let to = destination_directory.join(&name);
-            let metadata = fs::symlink_metadata(&from).with_context(|| format!("failed to inspect {}", from.display()))?;
-            let file_type = metadata.file_type();
-            if file_type.is_symlink() {
-                let link = fs::read_link(&from).with_context(|| format!("failed to read {}", from.display()))?;
-                symlink(&link, &to).with_context(|| format!("failed to create {}", to.display()))?;
-            } else {
-                validate_same_mount(source_directory, &from)?;
-                if file_type.is_dir() {
-                    clone_directory(&from, &to)?;
-                } else if file_type.is_file() {
-                    reflink_copy::reflink(&from, &to).with_context(|| format!("failed to clone {} to {}", from.display(), to.display()))?;
-                    preserve_mode(&to, &metadata)?;
-                    preserve_modified_time(&to, &metadata)?;
-                } else {
-                    bail!("refusing {}: it is an unsupported special file", from.display());
-                }
-            }
-        }
-        // Restrictive source modes are applied only after the directory is
-        // fully populated, so cloning never needs to write through them.
-        preserve_mode(destination_directory, &metadata)
-    }
-
     pub(super) fn remove_path(path: &Path) -> Result<()> {
         remove_path_with_topology(path, false)
     }
@@ -458,29 +381,6 @@ mod imp {
     fn is_admin_name(name: &OsStr) -> bool {
         matches!(name.to_str(), Some(".jj") | Some(".git"))
     }
-
-    /// Restore the source permission bits explicitly so the clone cannot depend
-    /// on reflink internals or the process umask.
-    fn preserve_mode(target: &Path, metadata: &Metadata) -> Result<()> {
-        let mode = metadata.permissions().mode() & 0o7777;
-        fs::set_permissions(target, fs::Permissions::from_mode(mode)).with_context(|| format!("failed to set permissions on {}", target.display()))
-    }
-
-    /// `clonefile(2)` clones timestamps along with the data.
-    #[cfg(target_os = "macos")]
-    fn preserve_modified_time(_target: &Path, _metadata: &Metadata) -> Result<()> {
-        Ok(())
-    }
-
-    /// A reflink shares extents with a freshly created inode. Restore the source
-    /// modification time so JJ can trust the copied working-copy state.
-    #[cfg(not(target_os = "macos"))]
-    fn preserve_modified_time(target: &Path, metadata: &Metadata) -> Result<()> {
-        let modified = metadata.modified()?;
-        fs::File::open(target)
-            .and_then(|file| file.set_modified(modified))
-            .with_context(|| format!("failed to set modification time on {}", target.display()))
-    }
 }
 
 #[cfg(not(unix))]
@@ -512,10 +412,6 @@ mod imp {
         bail!("tree validation is supported on macOS and Linux only")
     }
 
-    pub(super) fn clone_tree(_source: &Path, _destination: &Path) -> Result<()> {
-        bail!("copy-on-write cloning is supported on macOS and Linux only")
-    }
-
     pub(super) fn remove_path(_path: &Path) -> Result<()> {
         bail!("safe removal is supported on macOS and Linux only")
     }
@@ -529,22 +425,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::os::unix::net::UnixListener;
-
-    /// Run the test only when real reflinks work between the two paths, honoring
-    /// `JW_TEST_REQUIRE_COW`.
-    fn require_reflink(source: &Path, destination: &Path) -> bool {
-        match probe_between(source, destination) {
-            Ok(()) => true,
-            Err(reason) => {
-                assert!(
-                    std::env::var_os("JW_TEST_REQUIRE_COW").is_none_or(|value| value.is_empty()),
-                    "real cloning required: {reason:#}"
-                );
-                eprintln!("skipping reflink test: {reason:#}");
-                false
-            }
-        }
-    }
 
     #[test]
     fn clones_listed_files_and_symlinks_only() {
@@ -644,133 +524,6 @@ mod tests {
         assert!(probe_between(&source, &temp.path().join("missing")).is_err());
         assert!(probe_between(&file, temp.path()).is_err());
         assert!(probe_between(&source, &file).is_err());
-    }
-
-    #[test]
-    fn clone_tree_clones_regular_files_symlinks_and_directories_strictly() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        let destination = temp.path().join("destination");
-        fs::create_dir_all(source.join("nested")).unwrap();
-        fs::write(source.join("nested/tool.sh"), "#!/bin/sh\n").unwrap();
-        fs::set_permissions(source.join("nested/tool.sh"), fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(source.join("nested/private.txt"), "quiet\n").unwrap();
-        fs::set_permissions(source.join("nested/private.txt"), fs::Permissions::from_mode(0o600)).unwrap();
-        fs::write(source.join("nested/inner.txt"), "inner\n").unwrap();
-        fs::write(source.join(".env"), "SECRET=1\n").unwrap();
-        symlink("tool.sh", source.join("nested/link")).unwrap();
-        // A restrictive directory mode must not prevent cloning its contents.
-        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o555)).unwrap();
-
-        if !require_reflink(&source, temp.path()) {
-            fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
-            return;
-        }
-
-        clone_tree(&source, &destination).expect("clone tree");
-
-        let nested = destination.join("nested");
-        assert_eq!(fs::metadata(&nested).unwrap().permissions().mode() & 0o7777, 0o555);
-        // Restore writable modes so the tempdir cleanup can descend.
-        fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
-
-        let tool = nested.join("tool.sh");
-        assert_eq!(fs::read_to_string(&tool).unwrap(), "#!/bin/sh\n");
-        assert_eq!(fs::metadata(&tool).unwrap().permissions().mode() & 0o7777, 0o755);
-        assert_eq!(fs::metadata(nested.join("private.txt")).unwrap().permissions().mode() & 0o7777, 0o600);
-        assert_eq!(fs::read_to_string(nested.join("inner.txt")).unwrap(), "inner\n");
-        assert_eq!(fs::read_to_string(destination.join(".env")).unwrap(), "SECRET=1\n");
-        assert_eq!(fs::read_link(nested.join("link")).unwrap(), Path::new("tool.sh"));
-        assert_eq!(
-            fs::metadata(&tool).unwrap().modified().unwrap(),
-            fs::metadata(source.join("nested/tool.sh")).unwrap().modified().unwrap()
-        );
-        // Sharing is copy-on-write: later edits never couple the trees.
-        fs::write(&tool, "destination edit\n").unwrap();
-        assert_eq!(fs::read_to_string(source.join("nested/tool.sh")).unwrap(), "#!/bin/sh\n");
-    }
-
-    #[test]
-    fn clone_tree_clones_readonly_directories_repeatably_through_remove_path() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        fs::create_dir_all(source.join("nested")).unwrap();
-        fs::write(source.join("nested/inner.txt"), "inner\n").unwrap();
-        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o555)).unwrap();
-
-        if !require_reflink(&source, temp.path()) {
-            fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
-            return;
-        }
-
-        let selected = temp.path().join("selected");
-        clone_tree(&source, &selected).expect("first clone");
-        let nested_mode = |path: &Path| fs::metadata(path.join("nested")).unwrap().permissions().mode() & 0o7777;
-        assert_eq!(nested_mode(&selected), 0o555);
-        assert_eq!(nested_mode(&source), 0o555);
-
-        // Replacement must succeed without the caller fixing any modes first.
-        remove_path(&selected).expect("remove readonly clone");
-        assert!(!selected.exists());
-        assert_eq!(nested_mode(&source), 0o555);
-
-        clone_tree(&source, &selected).expect("second clone");
-        assert_eq!(nested_mode(&selected), 0o555);
-        assert_eq!(nested_mode(&source), 0o555);
-        assert_eq!(fs::read_to_string(selected.join("nested/inner.txt")).unwrap(), "inner\n");
-
-        // Restore writable modes so the tempdir cleanup can descend.
-        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions(selected.join("nested"), fs::Permissions::from_mode(0o755)).unwrap();
-    }
-
-    #[test]
-    fn clone_tree_rejects_nested_repositories_before_creating_destination() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        fs::create_dir_all(source.join("vendor/pkg/.git")).unwrap();
-        fs::write(source.join("vendor/pkg/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        symlink("../..", source.join("vendor/pkg/.jj")).unwrap();
-        let destination = temp.path().join("destination");
-
-        let error = clone_tree(&source, &destination).unwrap_err();
-        assert!(error.to_string().contains("administrative"), "{error:#}");
-        assert!(!destination.exists());
-        assert_eq!(fs::read_to_string(source.join("vendor/pkg/.git/HEAD")).unwrap(), "ref: refs/heads/main\n");
-    }
-
-    #[test]
-    fn clone_tree_rejects_symlink_sources_and_existing_destinations() {
-        let temp = tempfile::tempdir().unwrap();
-        let real = temp.path().join("real");
-        fs::create_dir(&real).unwrap();
-        fs::write(real.join("file.txt"), "content\n").unwrap();
-        let link = temp.path().join("link");
-        symlink(&real, &link).unwrap();
-
-        let error = clone_tree(&link, &temp.path().join("destination")).unwrap_err();
-        assert!(error.to_string().contains("symbolic link"), "{error:#}");
-        assert!(!temp.path().join("destination").exists());
-
-        let destination = temp.path().join("destination");
-        fs::create_dir(&destination).unwrap();
-        fs::write(destination.join("preexisting.txt"), "untouched\n").unwrap();
-        let error = clone_tree(&real, &destination).unwrap_err();
-        assert!(error.to_string().contains("failed to create"), "{error:#}");
-        assert_eq!(fs::read_to_string(destination.join("preexisting.txt")).unwrap(), "untouched\n");
-    }
-
-    #[test]
-    fn clone_tree_rejects_special_entries() {
-        let temp = tempfile::tempdir().unwrap();
-        let source = temp.path().join("source");
-        fs::create_dir(&source).unwrap();
-        UnixListener::bind(source.join("socket")).unwrap();
-
-        let error = clone_tree(&source, &temp.path().join("destination")).unwrap_err();
-        assert!(error.to_string().contains("special"), "{error:#}");
-        assert!(!temp.path().join("destination").exists());
     }
 
     #[test]

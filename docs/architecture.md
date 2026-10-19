@@ -6,8 +6,10 @@ resource: /docs/architecture.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-18
+  at: 2026-10-19
 sources:
+  - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
+    title: Replaced per-root mirrors and private recursive copying with root-bound early/late visitor integration and shared listed-leaf/clear kernels, preserving bounded legacy authority and native identity
   - resource: "opencode://ses_eaf06f6d6fferHu84gVUM2C0Xj"
     title: Folded reseed ignored-root discovery into the existing donor validation iteration while retaining frozen-root authorization and streaming payload checks
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
@@ -398,23 +400,38 @@ It is never called from a payload checker. Revalidation consumes the frozen
 selection and rules, not rebuilt sandboxes or a new expansion. Preparation still
 checks the exact goal before commands and after completion.
 
-On Linux, `reseed::topology` captures mountinfo before recursive traversal and
+On Linux, shared `cow::topology` captures mountinfo before recursive traversal and
 rejects nested directory/file mounts and obvious overlapping bind aliases. This
 removes per-entry mount syscalls from selection, payload synchronization and
 replace-content deletion. Other platforms retain native checks. Stable topology
 and path bindings remain a caller obligation; source preparation does not reuse
 this batch context across its external build commands.
 
-`reseed::payload::Guard` is a concrete static `diff_dirs::Check` over native name,
-existing metadata and optional literal link. Normal execution uses
-`Applier::new_replacing_checked(..., ReflinkRequired, guard).mirror()` without
-pre-audit or synthetic reflink probe. Comparison covers equal entries; recursive
-copy/removal covers one-sided interiors. Only rare absolute source links lock the
-deduplicated diagnostic collector. Dry-run uses one donor audit per root, then
-each target, never reporting READY after a failed shared donor audit. Deep refusal
-can follow tracked/payload progress; existing out-of-band JJ recovery is unchanged.
+`cow::transfer::Auxiliary` is a compiled `diff_dirs::Visitor` bound once to the
+workspace roots. Early filters union names before child metadata/readlink; late
+retains routing containers without granting replacement of local routing leaves.
+Selected-region actions and descent use the same finalized library batch,
+including source-only/target-only recursion and private collision staging. Frozen
+source/desired JJ leaves gate boundary overlap in both prefix directions. No
+per-entry JJ, Git or mount queries occur in the visitor. `legacy()` preserves the
+existing selector's bounded authority; empty selection never becomes copy-all.
+
+Reseed retains `payload::Guard` only as an observed-fact compatibility check and
+absolute-link diagnostic collector. Normal execution calls
+`Applier::new_checked(..., ReflinkRequired, guard).visitor(...).run()` (or borrows
+the command's shared pool), without pre-audit or synthetic reflink probe. Dry-run
+uses the same binding's **joint preview**, not side-local audit. Deep refusal can
+follow tracked/payload progress; out-of-band JJ recovery is unchanged.
 Clean payload has no writes; convergence is type/size/mtime or literal-link based,
 not hashing or mode-only repair. See [operator guarantees](reseed.md#ignored-data).
+
+Tracked creation/reseed prefills share `diff_dirs_sync::seed_leaves`, retaining
+the creation adapter's missing/non-leaf skip behavior. The installer refuses an
+existing destination leaf; no separate recursive copier remains in JW. Nested
+tracked creation cannot use the kernel's disjoint-root binding, so it uses the
+existing visible ordinary-JJ recreation fallback. Explicit replacement clears
+through `clear_with_visitor`, preserving the target's own `.jj`. Lifecycle cleanup
+still has its distinct validate-before-removal contract; it is not reseed's clear.
 
 ### Creation ignored payload
 

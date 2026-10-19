@@ -621,6 +621,12 @@ fn add_workspace_by_name_with_inventory(name: &str, options: &AddOptions, invent
 /// recreate through JJ's ordinary checkout path. Restoring `@` then rewrites every
 /// file that differs from the creation base, so the result matches a full checkout.
 fn materialize_clone(source_root: &Path, path: &Path) -> Result<Option<&'static str>> {
+    // The shared clone kernel binds disjoint roots. Creation inside the donor
+    // remains supported through the existing ordinary-JJ recreation fallback,
+    // never through an unchecked overlapping-tree copy.
+    if path.starts_with(source_root) || source_root.starts_with(path) {
+        return Ok(Some("nested source/destination roots cannot use the shared clone kernel"));
+    }
     let client = JjClient::new(path);
     if client.uses_watchman()? {
         return Ok(Some("the target uses Watchman"));

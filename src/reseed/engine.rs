@@ -4,6 +4,7 @@ use crate::cow::ignored::{Origin, Patterns, Policy};
 #[cfg(test)]
 use crate::cow::payload::checked_git;
 use crate::cow::payload::{Entry, FrozenRules, IgnoreRules, confined_parents, directory_identity, entries, relative};
+use crate::cow::{topology, transfer};
 use crate::freshen::source::SourceSelection;
 use crate::{cow, jj::JjClient, links, metadata::WorkspaceMetadataStore};
 use anyhow::{Context, Result, bail};
@@ -24,7 +25,6 @@ mod bookmarks;
 mod payload;
 #[path = "prepare.rs"]
 mod prepare;
-mod topology;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -417,12 +417,6 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     })?;
     let (ignored, skipped) = (selected.roots, selected.skipped);
     let payload_guard = payload::Guard::default();
-    if request.dry_run {
-        // Shared donor failure propagates as NOT ASSESSED, never READY.
-        for path in &ignored {
-            diff_dirs::audit(source.join(path), diff_dirs::Side::Original, &payload_guard)?;
-        }
-    }
     #[cfg(not(target_os = "linux"))]
     for path in &ignored {
         cow::validate_payload_root(&source, path, &mut Vec::new())?;
@@ -475,7 +469,17 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
             }
             payload::outside(&root, false, if request.replace_content { &[] } else { &ignored })?;
             if request.dry_run {
-                payload::audit_target(&root, &ignored, &payload_guard)?;
+                // Joint read-only planning uses the exact execution visitor,
+                // including collision/removability checks; side-local audit is
+                // not a substitute. No retained operation map or clone probe.
+                let visitor = transfer::Auxiliary::legacy(
+                    &ignored,
+                    source_entries.iter().chain(&target_entries).map(|entry| entry.path.as_path()),
+                    (Identity::read(&source)?.device, Identity::read(&root)?.device),
+                )?;
+                diff_dirs_sync::Applier::new_checked(&source, &root, diff_dirs_sync::CopyPolicy::ReflinkRequired, payload_guard.borrowed())?
+                    .visitor(visitor)
+                    .preview()?;
             }
             #[cfg(not(target_os = "linux"))]
             validate_contents(&root, false)?;
@@ -598,7 +602,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         // target's own clearing boundary. Never refill an initially-invalid subset.
         bookmarks::verify_batch(&client, plans.iter().map(|plan| &plan.bookmark_guard))?;
     }
-    let payload_execution = payload::Execution::new(!request.dry_run && plans.iter().any(|plan| !plan.ignored.is_empty()))?;
+    let payload_execution = transfer::Execution::new(!request.dry_run && plans.iter().any(|plan| !plan.ignored.is_empty()))?;
     for mut plan in plans {
         if request.dry_run {
             let consequence = format!("SYNC to {}; tracked work saved in JJ history at {}", plan.base_commit, plan.old_commit);
@@ -1422,7 +1426,7 @@ fn exact_empty_child(client: &JjClient, operation: &str, commit: &str, base: &st
 
 /// A single forward pass. Nothing persists intermediate progress, and no path
 /// attempts to reconstruct a partially filled target.
-fn execute(default: &Path, plan: &mut Plan, payload_execution: &payload::Execution) -> Result<()> {
+fn execute(default: &Path, plan: &mut Plan, payload_execution: &transfer::Execution) -> Result<()> {
     if default != plan.config_root {
         bail!("default workspace changed since frozen plan");
     }
@@ -1484,12 +1488,7 @@ fn execute(default: &Path, plan: &mut Plan, payload_execution: &payload::Executi
         // Remaining contents are retained unless replacement was explicitly selected.
         if plan.replace_content {
             payload::outside(&plan.root, false, &[])?;
-            for child in fs::read_dir(&plan.root)? {
-                let child = child?;
-                if child.file_name() != ".jj" {
-                    cow::remove_path_after_topology(&child.path())?;
-                }
-            }
+            diff_dirs_sync::clear_with_visitor(&plan.root, transfer::WorkspaceClear)?;
         }
         validate_source(plan)?;
         for path in &plan.clones {
@@ -1522,17 +1521,15 @@ fn execute(default: &Path, plan: &mut Plan, payload_execution: &payload::Executi
         // targets; testing live existence here would reject freshly cleared caches.
         validate_source(plan)?;
         let guard = payload::Guard::default();
-        for path in &plan.ignored {
-            confined_parents(&plan.root, path)?;
-            fs::create_dir_all(plan.root.join(path).parent().context("ignored root has no parent")?)?;
-            confined_parents(&plan.root, path)?;
-            let applier = diff_dirs_sync::Applier::new_replacing_checked(
-                plan.source.join(path),
-                plan.root.join(path),
-                diff_dirs_sync::CopyPolicy::ReflinkRequired,
-                guard.borrowed(),
+        if !plan.ignored.is_empty() {
+            let visitor = transfer::Auxiliary::legacy(
+                &plan.ignored,
+                plan.source_entries.iter().chain(&plan.entries).map(|entry| entry.path.as_path()),
+                (plan.source_identity.device, plan.root_identity.device),
             )?;
-            let result = payload_execution.mirror(&applier);
+            let applier =
+                diff_dirs_sync::Applier::new_checked(&plan.source, &plan.root, diff_dirs_sync::CopyPolicy::ReflinkRequired, guard.borrowed())?.visitor(visitor);
+            let result = payload_execution.run(&applier);
             for warning in guard.warnings() {
                 if !plan.execution_diagnostics.contains(&warning) {
                     diagnostics(format!("Warning: {warning}"));
@@ -2064,7 +2061,7 @@ mod tests {
         };
         let default = plan.source.clone();
         fs::write(plan.root.join("shared"), "new user work\n").unwrap();
-        let error = execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap_err();
+        let error = execute(&default, &mut plan, &transfer::Execution::new(true).unwrap()).unwrap_err();
         assert!(format!("{error:#}").contains("tracked tree differs"));
         assert_eq!(fs::read(plan.root.join("shared")).unwrap(), b"new user work\n");
     }
@@ -2080,7 +2077,7 @@ mod tests {
         assert!(metadata.get("worker").unwrap().is_none());
         validate_target(&client, &metadata, &plan.source, &plan.source, "worker", &plan.root).unwrap();
         let default = plan.source.clone();
-        execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap();
+        execute(&default, &mut plan, &transfer::Execution::new(true).unwrap()).unwrap();
         assert!(metadata.get("worker").unwrap().is_none());
         assert!(metadata.list().unwrap().is_empty());
         assert!(metadata.root().join("manifest.json").is_file());
@@ -2123,7 +2120,7 @@ mod tests {
         plan.entries = desired_entries;
         plan.old_paths = old_entries.into_iter().map(|e| e.path).collect();
         let default = plan.source.clone();
-        execute(&default, &mut plan, &payload::Execution::new(true).unwrap()).unwrap();
+        execute(&default, &mut plan, &transfer::Execution::new(true).unwrap()).unwrap();
         assert_eq!(fs::read(plan.root.join("directory-to-file")).unwrap(), b"new file\n");
         assert_eq!(fs::read(plan.root.join("symlink-to-directory/child")).unwrap(), b"new child\n");
         assert_eq!(fs::read(plan.root.join(".env")).unwrap(), b"retained\n");
