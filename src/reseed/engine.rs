@@ -1426,6 +1426,13 @@ fn exact_empty_child(client: &JjClient, operation: &str, commit: &str, base: &st
 
 /// A single forward pass. Nothing persists intermediate progress, and no path
 /// attempts to reconstruct a partially filled target.
+///
+/// The root and target-owned `.jj` stay in place throughout. Empty sparse
+/// patterns suppress disk checkout, not the file tree inherited by `jj new`.
+/// Only create-only tracked prefills happen while sparse-empty; snapshot-capable
+/// verification waits for expansion. Placeholder stats can require reading those
+/// recorded files even with new-file auto-tracking disabled. This path does not
+/// adopt donor tree-state or checkout/name bindings.
 fn execute(default: &Path, plan: &mut Plan, payload_execution: &transfer::Execution) -> Result<()> {
     if default != plan.config_root {
         bail!("default workspace changed since frozen plan");

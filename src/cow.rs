@@ -6,12 +6,13 @@
 //! workspace with empty sparse patterns, clones the source's tracked files into
 //! it, and lets JJ reconcile them against the creation base.
 //!
-//! The reseed helpers (`probe_between`, `validate_tree`, `validate_same_mount`,
-//! and `remove_path`) support lifecycle validation and deliberate cleanup.
-//! reseeding. They prove cross-filesystem cloning up front, fail closed on
-//! administrative or special content and on mounted-filesystem boundaries, and
-//! never fall back to ordinary copying. On Linux, boundaries are detected
-//! through kernel mount IDs, so same-device bind mounts are rejected too.
+//! `transfer` owns the root-bound early/late visitor and shared command pool;
+//! listed tracked prefills use diffdirs' strict create-only installer. Reseed
+//! performs real required clones, without a preliminary clone probe or fallback.
+//! Lifecycle validation/cleanup additionally uses `probe_between`, `validate_tree`,
+//! `validate_same_mount` and `remove_path`. Linux traversal uses a command-local
+//! mountinfo front guard; standalone validation detects kernel mount IDs, so
+//! same-device bind mounts are rejected too.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};

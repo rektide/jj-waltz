@@ -1264,11 +1264,12 @@ fn visitor_preview_blocks_an_unrelated_routing_leaf_without_claiming_ready() {
     fs::write(source.join("packages/a/cache/file"), "source\n").unwrap();
     fs::write(target.join("packages"), "target-owned leaf\n").unwrap();
     let before = repo.id(&target, "@");
-    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/a/cache", "--dry-run", "--format=json"]);
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/a/cache", "--dry-run"]);
     assert!(!output.status.success());
     assert!(!output.stdout.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(!text.contains("READY"), "{text}");
+    assert!(text.contains("BLOCKED feature"), "{text}");
     assert!(
         text.contains("real directory") || text.contains("non-directory") || text.contains("symlink"),
         "{text}"

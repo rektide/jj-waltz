@@ -217,6 +217,28 @@ fn nested_creation_still_works_when_payload_copying_is_disabled_or_matches_nothi
 }
 
 #[test]
+fn nested_tracked_cow_creation_reports_shared_kernel_fallback_without_refilling_payload() {
+    let Some(repo) = Repo::new() else { return };
+    if !repo.cow() {
+        return;
+    }
+    let destination = repo.root.join("nested");
+    let output = repo.jw(
+        &repo.root,
+        &["add", "nested", "--path", destination.to_str().unwrap(), "--cow", "--no-copy-ignored"],
+    );
+    let diagnostics = String::from_utf8_lossy(&output.stderr).into_owned();
+    success(output);
+    assert!(diagnostics.contains("nested source/destination roots"), "{diagnostics}");
+    assert_eq!(fs::read(destination.join("tracked")).unwrap(), vec![b't'; 128 * 1024]);
+    assert!(!destination.join("cache").exists());
+    assert_eq!(
+        repo.jj_at(&destination, &["workspace", "root", "--name", "nested"]).trim(),
+        destination.display().to_string()
+    );
+}
+
+#[test]
 fn creation_source_assertion_accepts_equal_trees_without_selecting_the_target_parent() {
     for command in ["add", "s"] {
         let Some(repo) = Repo::new() else { return };

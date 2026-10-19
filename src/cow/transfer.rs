@@ -60,6 +60,11 @@ impl Execution {
 /// type collision rather than replacing unrelated local data. Within admitted
 /// roots the normal finalized mirror actions drive writes **and** descent,
 /// including one-sided preparation and coupled replacements.
+///
+/// For example, selecting `packages/a/cache` routes through `packages` and `a`,
+/// but early-preserves `packages/a/local` even if it exists on both sides. A
+/// target file at `packages` is not an interchangeable routing directory: late
+/// refuses it instead of implicitly replacing it to reach the selected cache.
 #[derive(Debug)]
 pub(crate) struct Auxiliary {
     roots: BTreeSet<PathBuf>,
