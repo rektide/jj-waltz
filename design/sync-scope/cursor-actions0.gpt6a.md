@@ -31,6 +31,10 @@ sources:
     title: Snapshot projection, checked decoding, explicit schema matching and owned Facet reconstruction
   - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/README.md"
     title: Reflected archive format and its cost and type-adapter boundaries
+  - resource: "file:///home/rektide/src/diff-dirs/design/performance/opportunities0.gpt6am.md"
+    title: Prior proposal to obtain comparison keys only where they affect classification; read A03 and the prepared-pipeline discussion
+  - resource: "file:///home/rektide/src/diff-dirs/design/performance/opportunities0.sol61x.md#c04"
+    title: Earlier distinction between expanded one-sided iteration and whole-subtree replacement; read C04 and M01
 ---
 
 # Continuation and action design
@@ -123,6 +127,20 @@ a file is not a constant-time directory clone. Treat an opaque whole-tree backen
 operation as a separate optional capability. An action counted as one item need
 not be bounded work: resumable handlers should expose inner traversal steps when
 N-per-invocation control is meant to reach inside a large directory.
+
+Assessment should request the facts its decision or selected handler actually
+needs. Source-only classification does not need a target mtime; copying with
+permission/mtime preservation still needs the source attributes. Enumeration
+hints can answer kind-only questions without a stat on supporting backends. Thus
+"less assessment" and "no metadata work" are different achievable savings.
+
+Earlier [M01](file:///home/rektide/src/diff-dirs/design/performance/opportunities0.sol61x.md#m01)
+and [C04](file:///home/rektide/src/diff-dirs/design/performance/opportunities0.sol61x.md#c04)
+already distinguish selective observation, expanded traversal and wholesale
+replacement. Their historical implementation descriptions predate the current
+visitor pipeline. Whole-subtree replacement of an existing paired tree is a
+different operation from skipping needless comparison in a genuinely new tree;
+it can change otherwise untouched leaves and is not selected automatically here.
 
 ## Generated entries and path mappings
 
