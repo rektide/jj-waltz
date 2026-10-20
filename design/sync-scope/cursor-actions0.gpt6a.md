@@ -24,6 +24,13 @@ sources:
     title: JW's current bounded auxiliary visitor and administrative-name treatment
   - resource: /design/sync-scope/visitor0.sol61xh.md
     title: Existing compatibility integration and native donor-state experiment
+  - resource: "file:///home/rektide/src/diff-dirs/design/cursor/cursor0.gpt6am.md"
+    revision: 00600ed9
+    title: Reviewed AM design selecting immediate inspection, explicit DFS DTOs and kopacetic-rkyv snapshots for the commissioned demo
+  - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/src/lib.rs"
+    title: Snapshot projection, checked decoding, explicit schema matching and owned Facet reconstruction
+  - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/README.md"
+    title: Reflected archive format and its cost and type-adapter boundaries
 ---
 
 # Continuation and action design
@@ -41,6 +48,27 @@ The immediate commission is an AM design assessing kopacetic-rkyv, followed by a
 Sol xhigh Rust CLI demo which assesses N units and exports a cursor for the next
 invocation. The broader action forms below are proposals, not new production JW
 defaults. Existing copying and removal contracts have not changed.
+
+## Reviewed demo direction
+
+[AM's design](file:///home/rektide/src/diff-dirs/design/cursor/cursor0.gpt6am.md)
+was reviewed and handed to Sol xhigh for implementation. The example belongs in
+diff-dirs `examples/cursor`, with a separate workspace and lockfile. Heavy Facet
+and kopacetic dependencies stay out of the comparison core.
+
+One unit is an attempted immediate-directory assessment, including failed attempts.
+The driver calls existing public `inspect_directory`, serializes explicit DFS
+frames and accumulators, and emits post-order completion records. It generates
+virtual summary-file bytes through a parameterized handler, without modifying the
+input trees. A blocked directory can be retried or its scheduled subtree skipped.
+
+Kopacetic fits: `Snapshot::from_value` archives a Facet cursor under explicit schema
+and identity; checked decoding followed by `reconstruct` restores an owned cursor.
+This is a generic logical-path-row archive, not native `Archived<Cursor>`. Its
+projection and reconstruction allocate, and application `PathBuf` needs an explicit
+native-path adapter. The demo uses Unix bytes and binary cursor files. Direct rkyv
+could reduce representation work, but no size/speed superiority has been measured.
+The cursor demonstration will establish integration, not a codec performance win.
 
 ## What exists now
 
@@ -139,6 +167,13 @@ owns the active frames, accumulators and cursor. Pure observation remains usable
 independently, including the old add/change/remove display. This boundary also
 allows the existing filesystem dispatcher to serve as one handler family.
 
+Do not gate this driver on a nonempty physical `DirDiff`: generated output or a
+transformation can require work when the physical pair compares equal. Today's
+paired walker discards clean plans after steering, which is consistent with its
+current constrained actions but is not a sufficient publication rule for new
+handlers. Likewise, `disposition` need not become another mandatory type: selected
+action plus child traversal mode already expresses the useful decision.
+
 ## Completion and continuation
 
 Post-order results are a useful option: enter entity, process children, finalize,
@@ -162,7 +197,9 @@ metadata-specific setup:
 
 - For an existing workspace, preserving the target's `.jj` and suppressing the
   donor's `.jj` keeps target identity in place. Early pair-wide preservation is
-  already a suitable mechanism.
+  already a suitable mechanism. This alone does not move its existing working
+  revision to the donor's revision; plain copying and revision advancement are
+  different requested outcomes.
 - For a new workspace, no target `.jj` exists to preserve. Native initialization
   or an explicit JJ adapter supplies the binding; generic copying does not know
   how to invent it.
