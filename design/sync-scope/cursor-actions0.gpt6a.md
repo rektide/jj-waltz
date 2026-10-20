@@ -3,7 +3,7 @@ type: DesignAssessment
 title: Continuation cursors, inherited traversal modes, and extensible actions
 description: Human-directed continuation semantics and a source-grounded assessment of work avoidance, generated entries, action dispatch, and the narrow JJ adapter boundary.
 resource: /design/sync-scope/cursor-actions0.gpt6a.md
-status: proposal-with-commissioned-cursor-demo
+status: proposal-with-delivered-cursor-demo
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-20 }
 sources:
   - resource: "opencode://ses_ea82cf969ffeAXqmUxHChTJar2"
@@ -27,6 +27,11 @@ sources:
   - resource: "file:///home/rektide/src/diff-dirs/design/cursor/cursor0.gpt6am.md"
     revision: 00600ed9
     title: Reviewed AM design selecting immediate inspection, explicit DFS DTOs and kopacetic-rkyv snapshots for the commissioned demo
+  - resource: "file:///home/rektide/src/diff-dirs/design/cursor/implementation0.gpt61sxh.md"
+    revision: 6c893ca1
+    title: Completed Sol xhigh demo, twelve passing focused tests and parent review of actual state-machine, codec and process-continuation code
+  - resource: "file:///home/rektide/src/diff-dirs/design/roadmap/waves0.gpt6a.md"
+    title: Broad six-domain epic map including Git metadata, borrowed dirent names and the next component-built walking demo
   - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/src/lib.rs"
     title: Snapshot projection, checked decoding, explicit schema matching and owned Facet reconstruction
   - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/README.md"
@@ -72,7 +77,14 @@ This is a generic logical-path-row archive, not native `Archived<Cursor>`. Its
 projection and reconstruction allocate, and application `PathBuf` needs an explicit
 native-path adapter. The demo uses Unix bytes and binary cursor files. Direct rkyv
 could reduce representation work, but no size/speed superiority has been measured.
-The cursor demonstration will establish integration, not a codec performance win.
+The cursor demonstration establishes integration, not a codec performance win.
+
+**Delivered:** [example](file:///home/rektide/src/diff-dirs/examples/cursor/README.md)
+through `6c893ca1`, with 12 passing focused tests, Clippy/format checks and unchanged
+default core dependencies. Parent reviewed the state machine, Snapshot codec and
+actual subprocess tests; no duplicate full-suite run was performed. The tiny paused
+fixture was 3,618 bytes. The next component-built walking specimen and broader
+research now live in the [six-domain epic map](file:///home/rektide/src/diff-dirs/design/roadmap/waves0.gpt6a.md).
 
 ## What exists now
 
