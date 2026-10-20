@@ -31,7 +31,7 @@ sources:
     revision: 6c893ca1
     title: Completed Sol xhigh demo, twelve passing focused tests and parent review of actual state-machine, codec and process-continuation code
   - resource: "file:///home/rektide/src/diff-dirs/design/roadmap/waves0.gpt6a.md"
-    title: Broad six-domain epic map including Git metadata, borrowed dirent names and the next component-built walking demo
+    title: Architecture-first epic map including Git metadata, borrowed dirent names and the next component-built walking demo
   - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/src/lib.rs"
     title: Snapshot projection, checked decoding, explicit schema matching and owned Facet reconstruction
   - resource: "file:///home/rektide/src/kopacetic/crates/kopacetic-rkyv/README.md"
@@ -84,7 +84,7 @@ through `6c893ca1`, with 12 passing focused tests, Clippy/format checks and unch
 default core dependencies. Parent reviewed the state machine, Snapshot codec and
 actual subprocess tests; no duplicate full-suite run was performed. The tiny paused
 fixture was 3,618 bytes. The next component-built walking specimen and broader
-research now live in the [six-domain epic map](file:///home/rektide/src/diff-dirs/design/roadmap/waves0.gpt6a.md).
+research now live in the [architecture-first epic map](file:///home/rektide/src/diff-dirs/design/roadmap/waves0.gpt6a.md).
 
 ## What exists now
 
