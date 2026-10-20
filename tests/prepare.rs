@@ -1,5 +1,6 @@
 //! Native local remotes and retry-tolerant argv installers exercise source-only preparation.
 #![cfg(unix)]
+use fs2::FileExt;
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -160,6 +161,10 @@ impl Fixture {
     }
     fn prepare(&self, extra: &[&str]) -> Output {
         self.jw().args(["prepare", "--copy-ignored", "node_modules"]).args(extra).output().unwrap()
+    }
+    fn lock_path(&self) -> PathBuf {
+        let config = PathBuf::from(self.jj(&self.source, &["--ignore-working-copy", "config", "path", "--repo"]));
+        config.parent().unwrap().join("jj-waltz/reseed/operation.lock")
     }
     fn cow_supported(&self) -> bool {
         let probe = self.target.join("probe");
@@ -467,6 +472,176 @@ fn configured_preparation_never_activates_offline_reseed() {
     fs::rename(&f.remote, f.temp.path().join("offline")).unwrap();
     ok(f.jw().args(["reseed", "worker"]).output().unwrap());
     assert!(!f.log.exists());
+}
+
+#[test]
+fn preparation_lock_blocks_prepare_but_not_plain_reseed() {
+    let Some(f) = Fixture::new() else { return };
+    ok(f.prepare(&["--dry-run"]));
+    let lock = fs::OpenOptions::new().read(true).write(true).open(f.lock_path()).unwrap();
+    lock.try_lock_exclusive().unwrap();
+    for args in [vec!["prepare"], vec!["reseed", "--prepare"]] {
+        fails(f.jw().args(args).output().unwrap(), "another jw preparation is running");
+    }
+    let preview = ok(f.jw().args(["reseed", "--dry-run"]).output().unwrap());
+    assert!(preview.contains("PLAN worker: READY"), "{preview}");
+    if f.cow_supported() {
+        ok(f.jw().args(["reseed"]).output().unwrap());
+    }
+    assert!(!f.log.exists(), "plain reseed and lock failures must not run installers");
+    drop(lock);
+    ok(f.prepare(&[]));
+}
+
+// Invoked in a separate process by the configured installer and native JJ proxy.
+// This checks the actual OS lock at both boundaries without timing assumptions.
+#[test]
+fn operation_lock_probe() {
+    let Some(path) = std::env::var_os("JW_TEST_LOCK_PATH") else { return };
+    let lock = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+    let result = lock.try_lock_exclusive();
+    if std::env::var("JW_TEST_EXPECT_LOCK").unwrap() == "held" {
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    } else {
+        result.unwrap();
+        fs::write(std::env::var_os("JW_TEST_REFILL_PROBE").unwrap(), "unlocked").unwrap();
+    }
+}
+
+#[test]
+fn reseed_prepares_once_and_releases_lock_before_refill() {
+    let Some(f) = Fixture::new() else { return };
+    if !f.cow_supported() {
+        return;
+    }
+    f.script(
+        "JW_TEST_EXPECT_LOCK=held \"$JW_TEST_EXE\" --exact operation_lock_probe --nocapture\nmkdir -p node_modules\nprintf installed > node_modules/package\n",
+    );
+    let proxy = f.temp.path().join("proxy");
+    fs::create_dir(&proxy).unwrap();
+    let real_jj = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|directory| directory.join("jj"))
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .find(|path| path.is_file() && path.file_name().is_none_or(|name| name != "mise"))
+        .expect("native jj executable on PATH");
+    fs::write(
+        proxy.join("jj"),
+        r#"#!/bin/sh
+set -eu
+case " $* " in
+  *' sparse set '*)
+    case " $* " in
+      *' --clear '*) JW_TEST_EXPECT_LOCK=free "$JW_TEST_EXE" --exact operation_lock_probe --nocapture >&2;;
+    esac;;
+esac
+exec "$JW_REAL_JJ" "$@"
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(proxy.join("jj"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![proxy];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+    let goal = f.advance();
+    let marker = f.temp.path().join("refill-probed");
+    let output = ok(f
+        .jw()
+        .args(["reseed", "--prepare", "--copy-ignored", "node_modules"])
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("JW_REAL_JJ", real_jj)
+        .env("JW_TEST_EXE", std::env::current_exe().unwrap())
+        .env("JW_TEST_LOCK_PATH", f.lock_path())
+        .env("JW_TEST_REFILL_PROBE", &marker)
+        .output()
+        .unwrap());
+    assert!(output.contains("OK worker:") && output.contains("trusted configured programs"), "{output}");
+    assert!(marker.exists(), "must probe the actual refill boundary");
+    assert_eq!(f.id(&f.source, "@-"), goal);
+    assert_eq!(f.id(&f.target, "@-"), f.id(&f.source, "@"));
+    assert_eq!(fs::read(f.target.join("version")).unwrap(), b"fresh\n");
+    assert_eq!(fs::read(f.target.join("node_modules/package")).unwrap(), b"installed");
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().count(), 3, "installer runs once");
+}
+
+#[test]
+fn reseed_prepare_failure_releases_lock_and_leaves_target_untouched() {
+    let Some(f) = Fixture::new() else { return };
+    f.advance();
+    f.script("exit 17\n");
+    let worker = f.id(&f.target, "@");
+    let before = disk_stamp(&f.target);
+    fails(f.jw().args(["reseed", "--prepare"]).output().unwrap(), "configured preparation command failed");
+    assert_eq!(f.id(&f.target, "@"), worker);
+    assert_eq!(disk_stamp(&f.target), before);
+    let lock = fs::OpenOptions::new().read(true).write(true).open(f.lock_path()).unwrap();
+    lock.try_lock_exclusive().unwrap();
+}
+
+#[test]
+fn reseed_prepare_preview_defers_future_tree_checks_and_preserves_disks() {
+    for imported in [false, true] {
+        let Some(f) = Fixture::new() else { return };
+        f.advance();
+        ok(f.command("git", &f.remote).args(["branch", "future"]).output().unwrap());
+        if imported {
+            f.jj(&f.source, &["git", "fetch"]);
+        }
+        fs::write(f.target.join("unsnapshotted"), "work").unwrap();
+        let donor = f.id(&f.source, "@");
+        let worker = f.id(&f.target, "@");
+        let before = [disk_stamp(&f.source), disk_stamp(&f.target)];
+        let output = ok(f
+            .jw()
+            .args(["reseed", "--prepare", "--source-at", "future@origin", "--dry-run"])
+            .output()
+            .unwrap());
+        assert!(output.contains("post-fetch exact commit unknown"), "{output}");
+        assert!(output.contains("PLAN worker: NOT ASSESSED") && !output.contains("READY"), "{output}");
+        assert_eq!(f.id(&f.source, "@"), donor);
+        assert_eq!(f.id(&f.target, "@"), worker);
+        assert_eq!([disk_stamp(&f.source), disk_stamp(&f.target)], before);
+        assert!(!f.log.exists());
+        if !imported {
+            assert_eq!(f.id(&f.source, "dev@origin"), f.baseline, "preview must not fetch");
+        }
+    }
+}
+
+#[test]
+fn reseed_prepare_honors_source_override_and_disabled_payload_from_subdirectory() {
+    let Some(f) = Fixture::new() else { return };
+    if !f.cow_supported() {
+        return;
+    }
+    let donor = f.temp.path().join("other donor");
+    f.jj(&f.source, &["workspace", "add", "--name", "donor", "-r", &f.baseline, donor.to_str().unwrap()]);
+    f.policy(true, "copy_ignored=['node_modules']");
+    let primary = f.id(&f.source, "@");
+    let goal = f.advance();
+    ok(f.command("git", &f.remote).args(["branch", "future"]).output().unwrap());
+    fs::create_dir(f.target.join("node_modules")).unwrap();
+    let output = ok(f
+        .jw()
+        .current_dir(f.target.join("node_modules"))
+        .args([
+            "reseed",
+            "--prepare",
+            "--from",
+            "../../other donor",
+            "--source-at",
+            "future@origin",
+            "--copy-ignored",
+            "node_modules",
+            "--no-copy-ignored",
+        ])
+        .output()
+        .unwrap());
+    assert!(output.contains("OK worker:"), "{output}");
+    assert_eq!(f.id(&donor, "@-"), goal);
+    assert_eq!(f.id(&f.source, "@"), primary);
+    assert_eq!(f.id(&f.target, "@-"), f.id(&donor, "@"));
+    assert!(donor.join("node_modules/package").exists());
+    assert!(!f.target.join("node_modules/package").exists());
+    assert_eq!(fs::read_to_string(&f.log).unwrap().lines().next(), donor.to_str());
 }
 
 #[test]

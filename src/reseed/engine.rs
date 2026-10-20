@@ -91,10 +91,10 @@ struct Plan {
     execution_diagnostics: Vec<String>,
 }
 
-struct Store {
+struct PreparationLock {
     _lock: File,
 }
-impl Store {
+impl PreparationLock {
     fn lock(client: &JjClient) -> Result<Self> {
         let config = client.repo_config_path()?;
         WorkspaceMetadataStore::from_repo_config_path(&config)?.ensure_initialized()?;
@@ -110,7 +110,7 @@ impl Store {
         }
         let lock = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock_path)?;
         lock.try_lock_exclusive()
-            .context("another jw reseed/prepare is running; pause other writers before retrying")?;
+            .context("another jw preparation is running; pause other writers before retrying")?;
         Ok(Self { _lock: lock })
     }
 }
@@ -256,7 +256,6 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         }
     }
     let names = selection.selections.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
-    let _lock = Store::lock(&client)?;
     let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path()?)?;
     let repository_path = repository(&client)?;
     let mut plans = Vec::new();
@@ -287,7 +286,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     // or synthetic reflink probe. Actual required clones can fail after progress.
     let topology = topology::Topology::capture()?;
     topology.workspace(&source, true)?;
-    if source_only {
+    if source_only || request.prepare {
         validate_contents(&source, true)?;
     }
     let mut roots = BTreeSet::new();
@@ -318,7 +317,12 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     if !request.dry_run {
         readiness.require_unblocked()?;
     }
-    if source_only {
+    let mut preparation_summary = None;
+    let mut prepared_goal = None;
+    if source_only || request.prepare {
+        // Serialize preparation only. Dropping this guard also releases the lock
+        // on every error/preview return, before any reseed planning or refill.
+        let _lock = PreparationLock::lock(&client)?;
         let ignored_patterns = ignored_policy.patterns.as_slice();
         prepare::preflight(&metadata, &inventory, &source, config.freshen.as_ref())?;
         snapshot(&source_client)?;
@@ -336,36 +340,59 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         }
         if request.dry_run {
             let mut summary = prepare::describe(&source, &selected, config.freshen.as_ref(), ignored_patterns)?;
-            summary.push_str("; source-only prepare, no targets or target refill");
+            summary.push_str(if source_only {
+                "; source-only prepare, no targets or target refill"
+            } else {
+                "; refill readiness deferred until preparation completes; no target snapshots or refill"
+            });
             diagnostic(&summary);
+            let mut targets = readiness.failures.values().cloned().collect::<Vec<_>>();
+            for name in &names {
+                if !readiness.failures.contains_key(name) {
+                    targets.push(ReseedOutcome {
+                        name: name.clone(),
+                        status: ReseedStatus::Planned,
+                        message: "NOT ASSESSED; refill readiness requires the prepared donor; run plain reseed --dry-run after prepare".into(),
+                    });
+                }
+            }
             return Ok(ReseedReport {
                 dry_run: true,
                 source,
                 source_commit_id: None,
                 preparation_summary: Some(summary),
-                targets: Vec::new(),
+                targets,
                 selections: selection.selections,
                 skipped: selection.skipped,
             });
         }
         let goal = prepare::execute(&source, config.freshen.as_ref(), ignored_patterns, selected, diagnostic)?;
-        return Ok(ReseedReport {
-            dry_run: false,
-            source,
-            source_commit_id: Some(goal),
-            preparation_summary: Some(prepare::completion_summary(config.freshen.as_ref())?),
-            targets: Vec::new(),
-            selections: Vec::new(),
-            skipped: Vec::new(),
-        });
+        preparation_summary = Some(prepare::completion_summary(config.freshen.as_ref())?);
+        if source_only {
+            return Ok(ReseedReport {
+                dry_run: false,
+                source,
+                source_commit_id: Some(goal),
+                preparation_summary,
+                targets: Vec::new(),
+                selections: Vec::new(),
+                skipped: Vec::new(),
+            });
+        }
+        prepared_goal = Some(goal);
     }
     // Assert the donor's prepared tree before snapshotting any target.
     snapshot(&source_client)?;
     let source_operation = client.operation_id()?;
     let source_wc = source_client.resolve_one_at(&source_operation, "@")?.commit_id;
-    let source_commit = match source_rev {
-        Some(rev) => source_client.resolve_one_at(&source_operation, rev)?.commit_id,
-        None => source_wc.clone(),
+    // A preparation goal can have been prospective before fetch. Keep the exact
+    // verified result rather than resolving a caller expression a second time.
+    let source_commit = match prepared_goal {
+        Some(goal) => goal,
+        None => match source_rev {
+            Some(rev) => source_client.resolve_one_at(&source_operation, rev)?.commit_id,
+            None => source_wc.clone(),
+        },
     };
     require_unconflicted(&source_client, &source_operation, &source_commit)?;
     if !changed_paths(&source_client, &source_operation, &source_wc, &source_commit)?.is_empty() {
@@ -590,7 +617,7 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
         dry_run: request.dry_run,
         source: report_source,
         source_commit_id: Some(report_commit),
-        preparation_summary: None,
+        preparation_summary,
         targets: Vec::new(),
         selections: selection.selections,
         skipped: selection.skipped,
@@ -1883,7 +1910,7 @@ mod tests {
         preflight_links(&default, &root, &entries, &ignored, false, &rules, &future).unwrap();
     }
 
-    fn fixture() -> Option<(tempfile::TempDir, Store, Plan)> {
+    fn fixture() -> Option<(tempfile::TempDir, PreparationLock, Plan)> {
         if Command::new("jj").arg("--version").output().is_err() {
             return None;
         }
@@ -1971,7 +1998,7 @@ mod tests {
             bookmark_guard: bookmarks::Guard::AllowUnbookmarked,
             execution_diagnostics: Vec::new(),
         };
-        let store = Store::lock(&client).unwrap();
+        let store = PreparationLock::lock(&client).unwrap();
         Some((temporary, store, pending))
     }
 
@@ -2145,10 +2172,10 @@ mod tests {
         let metadata = WorkspaceMetadataStore::from_repo_config_path(client.repo_config_path().unwrap()).unwrap();
         let manifest = metadata.root().join("manifest.json");
         fs::write(&manifest, b"not valid json\n").unwrap();
-        assert!(Store::lock(&client).is_err());
+        assert!(PreparationLock::lock(&client).is_err());
         assert_eq!(fs::read(&manifest).unwrap(), b"not valid json\n");
         fs::remove_file(&manifest).unwrap();
-        assert!(Store::lock(&client).is_err());
+        assert!(PreparationLock::lock(&client).is_err());
         assert!(!manifest.exists());
     }
 

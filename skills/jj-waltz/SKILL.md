@@ -9,6 +9,8 @@ updated:
   by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
+    title: Documented explicit reseed preparation, preparation-only locking, and deferred prospective readiness
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
     title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -62,8 +64,8 @@ supplying files. Verify identity rather than relying on a directory named `defau
 | Target history | Empty child of source `@`, or `--at` | Empty child of the donor's current commit, or `--at` override | — |
 | Bare in variant / primary | Name/path required | Current / explicit targets required | Source-only / source-only |
 | Donor | Current checkout or `--from` | `--from` → local `source` → primary | Same as reseed |
-| `--source-at` | Donor tree assertion | Donor tree assertion | Upstream goal |
-| Fetch / preparation | Never | Never | Pinned upstream / local argv |
+| `--source-at` | Donor tree assertion | Donor tree assertion; upstream goal with `--prepare` | Upstream goal |
+| Fetch / preparation | Never | Only with `--prepare` | Pinned upstream / local argv |
 | Preview | — | `--dry-run` | `--dry-run` |
 
 Updating follows three steps in order: `jw prepare` updates the seed (fetch +
@@ -166,14 +168,24 @@ See [all registered workers](../../docs/reseed.md#all-registered-workers).
 **Reseed:** CLI `--source-at` → local `source_at` supplies an optional tracked-tree
 assertion; the sync base is otherwise the donor's freshly snapshotted `@`. Plain
 reseed makes the workspace's content the donor's content — no feature logic, no
-branch restoration. Explicit `--at` overrides the target commit only. Reseed
-never fetches or prepares dependencies.
+branch restoration. Explicit `--at` overrides the target commit only. Plain reseed
+never fetches or prepares dependencies. Explicit `reseed --prepare` runs the same
+preparation as `jw prepare` once, then plans and refills from the verified donor.
+Source, upstream goal (`--source-at`), local commands, and ignored-copy settings
+apply to that preparation too.
+
+The repository operation lock covers preparation only and ends before reseed
+planning/refill; plain reseed acquires no operation lock. The caller must keep
+donor and target writers quiescent. `reseed --prepare --dry-run` explains the
+prospective preparation and reports refill readiness NOT ASSESSED, without target
+snapshots: future fetched trees and installed payload cannot yet be checked.
+Run plain `reseed --dry-run` after preparation for full READY/BLOCKED checks.
 
 Fresh reseeds require a present, unconflicted **local or remote bookmark** covering
 the snapshotted work tip (at the tip or a descendant). An old
 base bookmark cannot cover new work. Ordinary undescribed empty single-parent
 scratch uses its parent; described empty changes and merges count themselves.
-Dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
+Plain reseed dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
 move bookmarks to defeat a refusal. The operator can deliberately name the work
 or explicitly choose `--allow-unbookmarked`; that bypasses only this requirement,
 not ownership, content, sparse-state, or CoW checks.

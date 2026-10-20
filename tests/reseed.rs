@@ -185,8 +185,12 @@ impl Repo {
     fn pending_records(&self) -> Vec<(PathBuf, Vec<u8>)> {
         let config = PathBuf::from(self.jj_at(&self.root, &["--ignore-working-copy", "config", "path", "--repo"]));
         let dir = config.parent().unwrap().join("jj-waltz/reseed");
-        let mut records: Vec<_> = fs::read_dir(dir)
-            .unwrap()
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(error) => panic!("cannot read reseed storage: {error}"),
+        };
+        let mut records: Vec<_> = entries
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.file_name().unwrap().to_string_lossy().ends_with(".pending.json"))
             .map(|path| {

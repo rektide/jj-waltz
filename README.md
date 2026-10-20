@@ -8,6 +8,8 @@ updated:
   by: model:zai-coding-plan/glm-5.3#max
   at: 2026-10-17
 sources:
+  - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
+    title: Added explicit reseed preparation, preparation-only locking, and prospective preview semantics
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
     title: Replaced the keep/reset reseed contract with donor-current sync and post-sync jj duplicate/rebase layering
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -128,9 +130,9 @@ it can be the primary or an explicitly selected workspace.
 | Default source | Current checkout | Local `source` → verified primary | Same as reseed |
 | `--from` | Creation source and command context | Donor only; caller role stays the same | Source root |
 | `--path` | One exact destination; name can be inferred | — | — |
-| `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion | Upstream goal |
+| `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion; upstream goal with `--prepare` | Upstream goal |
 | `--at` | Explicit creation base | Explicit sync-target override | — |
-| Fetch / preparation commands | Never | Never | One pinned upstream / local argv |
+| Fetch / preparation commands | Never | Only with explicit `--prepare` | One pinned upstream / local argv |
 | `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Verify selected payload |
 | `--dry-run` | — | Supported | Supported |
 | `--format=json` | — | — | Machine-readable report |
@@ -295,7 +297,15 @@ The reported commit is frozen. Reuse it directly instead of preparing again:
 jw prepare                                       # prints the exact prepared commit
 jw reseed worker-a --copy-ignored node_modules   # sync a worker onto the donor's current commit
 jw reseed feature --at <commit>                  # or onto an explicitly reported commit
+jw reseed worker-a --prepare --copy-ignored node_modules  # prepare once, then sync
 ```
+
+Plain `reseed` uses the existing donor without preparation. `reseed --prepare`
+runs the same preparation as `jw prepare` before planning the refill, using the
+same source, upstream goal, local commands, and ignored-copy policy. Its
+`--dry-run` describes prospective preparation and marks refill readiness
+**NOT ASSESSED** until that future donor exists; it does not fetch/build or snapshot
+targets. Use plain `reseed --dry-run` after preparation for full readiness checks.
 
 Feature layering stays an ordinary `jj` operation after the sync: `jj duplicate
 -r <bookmark> --onto <base>` keeps the old line and its dated bookmarks, while
@@ -332,8 +342,8 @@ After failure, fix the source and run prepare again; every command may run again
 Use `command = [...]`
 for one command or `commands = [[...], ...]`, never both, even when empty. No commands
 means no guessed installer/build: selected existing payload can still be borrowed,
-but is not freshly built. Preparation commands are repository-local, run only via
-`prepare`, and execute trusted programs rather than a sandbox.
+but is not freshly built. Preparation commands are repository-local, run via
+`prepare` or explicit `reseed --prepare`, and execute trusted programs rather than a sandbox.
 
 Use `jw reseed --group workers --dry-run` to select refill targets; `prepare` has
 no groups because it has no targets. Groups can also select registered name/path
@@ -395,7 +405,10 @@ explains local overrides, conflicts, and `jw doctor` link checks.
 Refills require full, conflict-free eligible JJ-only targets, verified ownership,
 and real reflinks. A normal colocated donor is allowed; linked Git/app-owned donors
 cannot be prepared. Pause agents, builds, editors, monitors, and other writers;
-JW's advisory lock does not lock arbitrary JJ processes.
+JW's repository advisory lock covers preparation only and is released before
+reseed planning/refill. Plain reseed takes no operation lock. Keep donor and target
+writers quiescent yourself; the preparation lock does not coordinate refills or
+arbitrary JJ processes.
 
 Dry-run can snapshot real work to preserve it. It does not fetch, create new changes
 or bookmarks, run preparation, or refill files. `--replace-content` explicitly

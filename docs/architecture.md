@@ -5,9 +5,11 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:openai/gpt-6-astra#xhigh
-  at: 2026-10-19
+  by: model:openai/gpt-6-astra#high
+  at: 2026-10-26
 sources:
+  - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
+    title: Narrowed the operation lock to preparation and composed explicit reseed preparation with prospective preview reporting
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
     title: Linked dedicated execution and context/donor-state reports separating the reusable library from JW's actual compatibility integration
   - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
@@ -279,11 +281,15 @@ registrations become selection issues; all other members enter the existing
 readiness and bookmark checks. A local `all` definition is rejected. See
 [all registered workers](reseed.md#all-registered-workers).
 
-Reseeding retains no durable progress state. Its advisory lock serializes
-reseed callers, not editors, independent JJ commands, or build processes. These
-writers must be paused by the operator.
+Reseeding retains no durable progress state. The repository advisory operation
+lock serializes only preparation, including preparation previews. Both standalone
+`prepare` and explicit `reseed --prepare` enter the same scoped preparation branch;
+the guard drops on every return/error and before subsequent reseed donor proof,
+target snapshots, planning, and refill. Plain reseed does not acquire the lock.
+The operator owns donor/target quiescence, including overlapping reseeds and
+preparation versus refill; this lock does not coordinate independent JJ writers.
 
-The authoritative repository manifest is initialized before nested reseed storage
+During preparation, the authoritative repository manifest is initialized before nested reseed storage
 is created. This also works for unmanaged native JJ workspaces: initializing the
 repository identity does not adopt a workspace or create lifecycle records.
 Existing corrupt or nonempty manifest-less stores are rejected rather than reset.
@@ -302,6 +308,13 @@ otherwise the freshly snapshotted donor `@`. Asserted tree identity is checked a
 the same captured source operation before target snapshots. A donor/target tree
 difference is handled per path; an explicit/configured mismatch remains an error.
 Prepare uses native source selection instead of ordinary reseed's tree assertion.
+`ReseedRequest::prepare` defaults to false; when requested, it shares source/policy
+resolution with refill and passes the exact verified preparation goal into the
+subsequent donor assertion. It does not resolve a prospective upstream expression
+again or run preparation twice. The final report retains the preparation summary.
+Combined dry-run describes preparation and defers refill readiness with NOT ASSESSED
+outcomes; it cannot prove the future fetched tree or installed payload. Structural
+target blockers remain visible. See [preview semantics](reseed.md#prepare-the-source).
 
 Snapshot-free `Inventory` retains the caller's verified registered name. With no
 names/groups, `run` inserts that one non-primary literal target before
@@ -606,11 +619,10 @@ The missing-ref extension adds six focused cases: all 20 source cases pass on th
 installed JJ 0.45.1 development build, with the six missing-ref cases separately
 verified on official JJ 0.46.0. This extension did not rerun the full release
 matrix or unrelated suites. No live source was mutated.
-Those foundation checks concern graph/reference semantics. End-to-end combined-up
-and reflink verification are recorded historically in the
-[operator guide](reseed.md#combined-up-verification-historical); the prepare/reseed
-split itself had not been runtime-verified at this documentation's baseline
-(installed JJ `0.45.1-33d3a595`, Linux Btrfs).
+Those foundation checks concern graph/reference semantics. Later prepare/reseed
+and real-CoW checkpoints are recorded in the
+[operator guide](reseed.md#verification-and-limits); the historical release matrix
+does not establish verification of subsequent changes.
 
 ### Metadata repair
 

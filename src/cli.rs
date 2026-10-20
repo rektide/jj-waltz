@@ -368,9 +368,12 @@ struct ReseedCommand {
     /// Prepared source workspace root (default: configured source or verified primary checkout).
     #[arg(long = "from", value_name = "PATH")]
     source: Option<std::path::PathBuf>,
-    /// Donor tree assertion (CLI > local source_at > snapshotted @).
+    /// Donor tree assertion, or upstream goal with --prepare (CLI overrides local source_at).
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
+    /// Fetch and prepare the donor first; only preparation holds the repository operation lock.
+    #[arg(long)]
+    prepare: bool,
     /// Sync to this revset instead of the donor's current commit.
     #[arg(long, value_name = "REVSET")]
     at: Option<String>,
@@ -386,7 +389,7 @@ struct ReseedCommand {
     /// Allow work without a covering local/remote bookmark; all other guards still apply.
     #[arg(long)]
     allow_unbookmarked: bool,
-    /// Report READY/BLOCKED for every target without refilling/resetting files; may snapshot working copies.
+    /// Preview without fetch/build/refill; --prepare defers refill readiness. May snapshot working copies.
     #[arg(long)]
     dry_run: bool,
 }
@@ -557,6 +560,7 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         on_unmatched: cmd.on_unmatched,
         source: cmd.source,
         source_at: cmd.source_at,
+        prepare: cmd.prepare,
         at: cmd.at,
         copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
         no_copy_ignored: cmd.no_copy_ignored,
@@ -602,11 +606,14 @@ fn print_refill_report(report: &crate::reseed::ReseedReport, command: &str) -> R
         "{}source: {} ({})",
         if report.dry_run { "Dry-run " } else { "" },
         report.source.display(),
-        report.source_commit_id.as_deref().unwrap_or(if command == "reseed" {
-            "source not verified"
-        } else {
-            "post-fetch exact commit unknown"
-        })
+        report
+            .source_commit_id
+            .as_deref()
+            .unwrap_or(if command == "reseed" && report.preparation_summary.is_none() {
+                "source not verified"
+            } else {
+                "post-fetch exact commit unknown"
+            })
     );
     if let Some(summary) = &report.preparation_summary {
         println!("{summary}");
@@ -1245,12 +1252,22 @@ mod reseed_cli_tests {
         };
         assert!(cmd.at.is_none(), "plain reseed syncs to the donor; --at is not required");
         assert!(cmd.source_at.is_none(), "--source-at stays an optional assertion");
+        assert!(!cmd.prepare, "plain reseed never prepares implicitly");
         let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--at", "dev@origin"]).unwrap();
         let Some(Commands::Reseed(cmd)) = cli.command else {
             panic!("expected reseed command")
         };
         assert_eq!(cmd.at.as_deref(), Some("dev@origin"));
         assert!(cmd.source_at.is_none());
+    }
+
+    #[test]
+    fn reseed_preparation_is_explicit() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--prepare", "--dry-run"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert!(cmd.prepare && cmd.dry_run);
     }
 
     #[test]

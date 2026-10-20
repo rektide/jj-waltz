@@ -191,9 +191,7 @@ pub(super) fn execute(
             cow::validate_tree(&source.join(path))?;
         }
         verify_command_result(&identity, &client, &goal, &goal_entries, &change_id)?;
-        diagnostic(&format!(
-            "Prepare: donor verified at exact goal {goal}; source-only completion; no targets selected"
-        ));
+        diagnostic(&format!("Prepare: donor verified at exact goal {goal}"));
         Ok(goal)
     })();
     result.context(

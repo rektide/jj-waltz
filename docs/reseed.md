@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-19
+  by: model:openai/gpt-6-astra#high
+  at: 2026-10-26
 sources:
+  - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
+    title: Implemented explicit reseed preparation, preparation-only lock scope, and honest prospective previews with native integration tests
   - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
     title: Integrated root-bound early/late visitors, shared seed/clear kernels and collision-aware preview without selecting a broader transfer default; tested existing-workspace donor-state convergence separately
   - resource: "opencode://ses_eb2158009ffeyJ0q8NuTd6g1RP"
@@ -60,9 +62,11 @@ sources:
 # Reseed an existing workspace
 
 `jw reseed` renews copy-on-write sharing without replacing the workspace root,
-`.jj`, registration, name, bookmarks, or lifecycle identity. It never fetches or
-builds. `jw prepare` separately fetches and prepares only its donor and reports
-the exact prepared commit. The combined `up` command is gone.
+`.jj`, registration, name, bookmarks, or lifecycle identity. Plain reseed uses the
+existing donor without fetching or building. `jw prepare` fetches and prepares
+only its donor and reports the exact prepared commit; `jw reseed --prepare`
+explicitly runs that preparation once before planning and refilling targets.
+The old `up` command and `--freshen` flag remain removed.
 
 The update flow has three steps, in this order:
 
@@ -192,6 +196,7 @@ jw prepare --dry-run
 jw prepare --source-at 'dev@origin'
 jw prepare --from /path/to/donor --format=json
 jw reseed worker --copy-ignored node_modules
+jw reseed worker --prepare --copy-ignored node_modules  # prepare once, then refill
 ```
 
 Prepare is source-only from any registered workspace. It selects/fetches a pinned
@@ -202,6 +207,22 @@ snapshots, refills, or advances other workers, nor creates preservation bookmark
 Native fetch may update refs. Reuse the reported commit without preparing again;
 feature layering after a sync stays an ordinary JJ operation (`jj duplicate` keeps
 the old line and its dated bookmarks; `jj rebase` drags bookmarks).
+
+`reseed --prepare` uses the same effective donor path, upstream selection, local
+commands, and ignored-copy policy as standalone preparation. `--source-at` is then
+an upstream goal; the exact verified preparation result becomes the donor tree
+assertion for refill. `--at` still independently overrides the sync target. Target
+selection and early structural checks precede preparation; the ordinary donor,
+bookmark, payload, and target proofs run before refill. If preparation fails, no
+target is snapshotted or refilled, and donor progress is left for deliberate repair.
+
+With `reseed --prepare --dry-run`, no fetch, donor advancement, installer, target
+snapshot, or refill runs. Normal donor snapshots may still record existing work.
+The report describes prospective preparation, keeps the post-fetch commit unknown,
+and marks eligible targets **NOT ASSESSED**, rather than asserting today's donor
+matches tomorrow's goal or claiming READY. Early target blockers are still reported.
+Run standalone `prepare`, then plain `reseed --dry-run`, to check full readiness
+against the resulting donor and payload.
 
 ### Native upstream selection
 
@@ -215,8 +236,8 @@ explicitly selected remote. Fetch addresses only that pinned name/remote.
 Unpublished donor work blocks, including local commits beneath empty scratch.
 The selected remote must fast-forward. A not-yet-imported goal may use simple
 `branch@configured-remote`; dry-run leaves its exact commit unknown. Fetch must
-prove publication before source advancement. Prepare's `--source-at` is an
-upstream **goal**, unlike reseed's tracked-tree assertion.
+prove publication before source advancement. Prepare's `--source-at`, also used by
+`reseed --prepare`, is an upstream **goal**, unlike plain reseed's tracked-tree assertion.
 
 ### Local commands
 
@@ -322,8 +343,11 @@ blockers, not unrelated candidates to skip. No remaining targets is an error.
 ## Safety and recovery
 
 Pause agents, builds, editors, monitors, and independent JJ writers on donor and
-targets, including before previewing. The advisory lock serializes `jw` reseed/
-prepare calls, not arbitrary writers. Full, conflict-free checkouts and JJ-only
+targets, including before previewing. The repository `operation.lock` serializes
+only preparation (`jw prepare` and the preparation portion of `reseed --prepare`),
+including its preview, and is released on completion or error. Reseed planning
+and refill hold no operation lock; plain reseed does not acquire it. The caller
+must keep shared donors and targets quiescent across these operations. Full, conflict-free checkouts and JJ-only
 targets are required. Primary/source/overlapping targets, external ownership,
 nested repositories, mounted children, special files, and unverifiable identities
 are rejected. Colocated donors are allowed; linked Git/app-owned donors cannot be
@@ -343,7 +367,7 @@ this is not protection against hostile concurrent path/mount replacement.
 
 ### Check readiness before refilling
 
-`--dry-run` uses the real preflight and reports each selected target READY or
+Plain `reseed --dry-run` uses the real preflight and reports each selected target READY or
 BLOCKED, exiting nonzero for any blocker. Target-local failures do not hide peers.
 A failed shared donor proof marks unchecked targets **not assessed**, never READY.
 The real command rechecks structural guards and never refills just the valid
@@ -483,7 +507,8 @@ deletion, versus the supplied 6.64s baseline. A matched preserved-binary run
 measured 7.46s before / 5.93s after; prepare measured 5.39s / 2.78s.
 Instrumented 100 → 8,555-file scaling passed with zero JJ, Git, and
 `file show` call growth. See
-[retained measurement evidence](../tools/performance/README.md#journal-deletion-checkpoint).
+[historical guide recovery](../tools/performance/README.md#verified-checkpoint-and-development)
+for the earlier measurement evidence.
 
 A follow-up pass removed payload hashing and stat-stamping entirely (creation
 digest/stamp walks, the untracked-`.gitignore` tree hunt, double-walk cloning,

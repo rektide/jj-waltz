@@ -24,8 +24,11 @@ pub struct ReseedRequest {
     pub on_unmatched: Option<UnmatchedPolicy>,
     /// Explicit donor root; otherwise local configuration or the verified primary checkout.
     pub source: Option<PathBuf>,
-    /// Donor tree assertion.
+    /// Donor tree assertion, or upstream goal when preparation is requested.
     pub source_at: Option<String>,
+    /// Prepare the donor once before reseeding; plain reseed uses its existing state.
+    #[serde(default)]
+    pub prepare: bool,
     pub at: Option<String>,
     /// None inherits local/global policy; Some([]) explicitly disables inheritance.
     pub copy_ignored: Option<Vec<String>>,
