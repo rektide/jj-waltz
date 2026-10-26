@@ -493,6 +493,18 @@ replacement, symlink boundaries, readiness aggregation, bookmark guards, and
 out-of-band recovery refusals. The bounded verifier retains zero-file-show-call
 and batched symlink process-count regressions.
 
+The explicit `--prepare` / preparation-only lock checkpoint covered 266 library,
+preparation, reseed, and bookmark cases with real CoW required on native JJ
+`0.45.1-33d3a595`. All passed across the main run and a focused rerun correcting
+missing-store fixture assumptions and test-environment path/shim constraints.
+The [preparation tests](../tests/prepare.rs) check contention, lock release before
+refill and after errors, single preparation, prospective previews, and source/policy
+propagation. Formatting, all-target/all-feature Clippy (`-D warnings`), and maintained
+document checks passed. Build verification used byte-identical source in scratch
+with `diff-dirs` revision `3db9293`, its last pre-relocation layout: the shared
+checkout's newer crate relocation no longer matches this manifest's existing paths.
+That newer dependency layout was not adopted or verified by this checkpoint.
+
 The journal-deletion checkpoint passed 258 native cases (library, reseed,
 prepare, bookmark guards, and upstream selection) on Linux Btrfs with actual CoW
 required. The separate CLI/colocation run passed 112 of 113 cases; the

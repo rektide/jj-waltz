@@ -84,8 +84,12 @@ impl Fixture {
     }
     fn records(&self, suffix: &str) -> Vec<serde_json::Value> {
         let config = PathBuf::from(self.jj(&self.source, &["--ignore-working-copy", "config", "path", "--repo"]));
-        fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed"))
-            .unwrap()
+        let entries = match fs::read_dir(config.parent().unwrap().join("jj-waltz/reseed")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(error) => panic!("cannot read reseed storage: {error}"),
+        };
+        entries
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.file_name().unwrap().to_string_lossy().ends_with(suffix))
             .map(|path| serde_json::from_slice(&fs::read(path).unwrap()).unwrap())
