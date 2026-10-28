@@ -1,4 +1,4 @@
-"""Real terminal acceptance checks. Run: uv run --with pyte tests/terminal_ui.py.
+"""Real terminal acceptance checks. Run: uv run --with pyte app/cli/tests/terminal_ui.py.
 
 Uses disposable repositories only. Build jw first with cargo build.
 """
@@ -106,7 +106,8 @@ class Terminal:
 
 
 def run():
-    binary = Path(__file__).resolve().parents[2] / "target/debug/jw"
+    # tests/ lives three levels below the workspace root (app/cli/tests).
+    binary = Path(__file__).resolve().parents[3] / "target/debug/jw"
     assert binary.is_file(), "run cargo build first"
     with tempfile.TemporaryDirectory(prefix="jw-terminal-") as temporary:
         root = Path(temporary)
