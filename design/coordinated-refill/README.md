@@ -7,13 +7,19 @@ status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Integrated architecture and foundation, selected Astra's plan, reviewed Sol's implemented native/authority checkpoint and commissioned the upstream conditional-routing effect
+    title: Orchestrated foundation, plan and two implementation slices; commissioned independent review and narrow path corrections while the human assesses product steering before CLI cutover
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
     title: Completed Astra xhigh implementation plan, selected by the parent for construction with native/authority and end-to-end review checkpoints
   - resource: "opencode://ses_e7be6b24fffeDISpWdV1xNbqhD"
     title: Sol xhigh implements and verifies native N1 and pure source-qualified transfer, then receives the conditional-routing implementation commission
   - resource: /design/coordinated-refill/implementation1.sol61x.md
     title: Parent-reviewed callable N1 implementation, native command ledger, required-CoW tests and remaining missing-route limitation
+  - resource: /design/coordinated-refill/implementation2.sol61x.md
+    title: Delivered conditional-routing effect, diff-dirs 0.2 adoption and streaming wildcard evidence
+  - resource: /design/coordinated-refill/review0.gpt6ax.md
+    title: Independent pinned slice-one review, two reproduced path defects, native/query cost assessment and product steering questions
+  - resource: "opencode://ses_e7bae73c1ffeS9xaw29hyAhrNJ"
+    title: Fresh Sol xhigh commissioned for the two reproduced path-semantics corrections while CLI integration waits on the product discussion
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
     title: Approved crate shape, dependency rules and structural implementation commission
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
@@ -53,13 +59,24 @@ sources:
 
 ## Implementation checkpoints
 
+- [Independent review](review0.gpt6ax.md): the central native ownership/adoption
+  sequence is coherent under its stated assumptions; two reproduced path-semantics
+  defects need correction. A fresh Sol xhigh is fixing loaded symlink/`..` target
+  meaning and unselected target-only byte filenames. Root-query/index reuse and
+  everyday sharing/authority promises are explicit discussion points before CLI
+  cutover. The review is pinned to slice one, not a review of later routing changes.
+- [Deferred routing and wildcard adoption](implementation2.sol61x.md): diff-dirs
+  `10361cf0` and JW `cbf0a53c` implement conditional source-only containers and
+  consume the 0.2 interface. Missing routes are created only for actual selected
+  descendants. Reported checks include 230 upstream cases and required-CoW JW
+  wildcard cases; the public CLI still uses the old driver.
 - [Native and authority slice](implementation1.sol61x.md): committed through
   `ec7fe09f`, parent source-reviewed. Strict full-S installation, source-state
   adoption and native conformance, immutable ignore rules, source-qualified
   transfer and forward link finish work through a callable N1 seam. Nine native
   cases passed with required CoW. The current native profile is JJ 0.45.1; the
-  normal CLI still uses the old driver. Missing unselected routing directories
-  refuse until the commissioned conditional-routing effect is implemented.
+  normal CLI still uses the old driver. Its missing-route refusal is superseded
+  by slice two above; the account preserves that initial checkpoint's evidence.
 
 ## Independent evidence
 
