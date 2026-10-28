@@ -3,11 +3,11 @@ type: DesignAssessment
 title: Prove the seed adapter, then make reseed a coordinated refill
 description: A staged jj-waltz adoption of diff-dirs coordinated synchronization, emphasizing understandable ownership, repeated-reseed value, native lifecycle boundaries and discriminating evidence.
 resource: /design/coordinated-refill/assessment0.gpt6a.md
-status: proposed
+status: superseded-plan-retained-evidence
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human commissions coordinated-refill assessment; parent integrates two independent reports and bounded tests, narrows seed-first to API proof and prioritizes native reseed adoption
+    title: Initial coordinated-refill assessment and test synthesis; human subsequently rejects compatibility-led scope, superseded by assessment1 lifecycle redesign
   - resource: /design/coordinated-refill/current0.gpt6a.md
     revision: 57b96821
     title: Independent current implementation census, creation rollback distinction and source-derived 1+8N native verification count
@@ -45,6 +45,12 @@ sources:
 ---
 
 # Prove the seed adapter, then make reseed a coordinated refill
+
+**Plan superseded:** [reseed-first lifecycle redesign](assessment1.gpt6a.md)
+records the human's correction: assess execution choices up front, allow ordinary
+failure, and redesign the whole frequent reseed operation. The rollback, fallback,
+peer-completion and staging commitments below are historical recommendations,
+not requirements for the revised work. Source/API findings and test evidence remain.
 
 ## Recommendation
 

@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3#max
-  at: 2026-10-17
+  by: model:openai/gpt-6-astra#high
+  at: 2026-10-28
 sources:
+  - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
+    title: Human requests right-sized lifecycle guarantees and visible hazards; parent groups current operating limits and links the proposed reseed-first redesign
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Added explicit reseed preparation, preparation-only locking, and prospective preview semantics
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
@@ -438,6 +440,35 @@ files are ignored and left untouched. If prepare fails, fix its donor and run
 prepare again; commands may repeat and the upstream is selected/fetched anew.
 `[prepare]` remains a warned alias for `[freshen]`.
 See [recovery details](docs/reseed.md#safety-and-recovery).
+
+### Operating assumptions and hazards
+
+- **Stable live trees:** the donor must be prepared and writers paused on both
+  sides. Native snapshots and upfront checks do not create an atomic snapshot of
+  the donor's ignored files or protect against concurrent path/mount changes.
+- **Partial progress:** a reseed error can follow tracked changes and completed
+  copies or deletions. Root and `.jj` preservation does not mean their contents
+  are ready for normal work. Use the reported failure context and the recovery
+  guidance above before snapshotting an interrupted tracked refill.
+- **Deletion authority:** selected payload roots are mirrors; target-only entries
+  inside them are deleted. `--replace-content` also clears unrelated unrecorded
+  data. Saving tracked work in JJ does not back up ignored files such as `.env`.
+- **Filesystem errors:** usable CoW support does not guarantee every later clone,
+  rename or permission change succeeds. Disk exhaustion and I/O failures can
+  happen during refill; required-reflink payload/reseed operations do not silently
+  become ordinary copies.
+- **Comparison limits:** auxiliary files compare by type, size and exact mtime;
+  symlinks compare literal link text. Stat-preserving byte edits and mode-only
+  changes are not repaired. This is not a byte-integrity or full-metadata audit.
+- **Installed-data compatibility:** copied dependencies and build outputs reflect
+  the donor environment. A different `--at` revision may require its own install
+  or build even when its tracked tree was materialized correctly.
+
+**Redesign direction:** the [reseed-first lifecycle plan](design/coordinated-refill/assessment1.gpt6a.md)
+prioritizes the frequent refill workflow, chooses native/transfer routes up front,
+and proposes fail-fast partial progress instead of inherited rollback and ongoing
+fallback guarantees. These are proposed changes; the command behavior documented
+above describes the current implementation.
 
 ## Inspect and manage
 

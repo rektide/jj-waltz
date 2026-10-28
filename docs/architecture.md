@@ -9,7 +9,7 @@ updated:
   at: 2026-10-28
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Connected the current architecture to the coordinated seed/reseed adoption assessment and independent research
+    title: Connected coordinated-refill evidence and the human-directed whole-command lifecycle redesign with upfront mode choice and ordinary failure
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Narrowed the operation lock to preparation and composed explicit reseed preparation with prospective preview reporting
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
@@ -66,11 +66,12 @@ Each has separate JW sections; the first follows actual reseed calls, and the
 second distinguishes visitor payloads, frozen command facts, live donor data and
 native JJ identity/cache state.
 
-The [coordinated-refill assessment](../design/coordinated-refill/README.md)
-plans adoption of diff-dirs' newer source-to-many synchronization: a small seed
-API proof followed by batched reseed, with native setup/finish remaining JW's
-responsibility. It is a proposed redesign, separate from the delivered pipeline
-described below.
+The [reseed-first lifecycle redesign](../design/coordinated-refill/assessment1.gpt6a.md)
+plans a whole-command replacement around diff-dirs' source-to-many synchronization,
+upfront native/transfer choices and ordinary forward failure. It reconsiders current
+rollback, fallback and repeated verification commitments; occasional creation reuses
+the resulting machinery. This is the current design direction, separate from the
+delivered pipeline described below.
 
 ## Product boundary
 

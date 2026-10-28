@@ -7,7 +7,9 @@ status: proposed
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Integrated two independent assessments and bounded tests, prioritizing coordinated reseed after the small seed API proof
+    title: Integrated independent evidence, then revised the direction at human request toward whole-command reseed, upfront execution choices and ordinary failure
+  - resource: /design/coordinated-refill/assessment1.gpt6a.md
+    title: Current lifecycle redesign direction and useful end-to-end implementation sequence
   - resource: /design/coordinated-refill/assessment0.gpt6a.md
     title: Parent ownership assessment, concrete command structure and staged implementation plan
 ---
@@ -16,9 +18,13 @@ sources:
 
 ## Start here
 
-- [Assessment and plan](assessment0.gpt6a.md): the small seed API proof passes;
-  implement coordinated reseed first, remove repeated native work, then reuse the
-  adapter in creation. Includes the actual cursor loop and review gates.
+- [Revised scope and plan](assessment1.gpt6a.md): redesign the whole frequent reseed
+  operation; choose execution routes up front, fail normally, remove inherited
+  lifecycle guarantees and document hazards. The end-to-end working command is the
+  milestone; occasional seed reuses its machinery.
+- [Initial assessment](assessment0.gpt6a.md): retained source/API findings and
+  caller-loop example. Its compatibility-led lifecycle and sequencing plan is
+  superseded by the revised direction.
 
 ## Independent evidence
 
