@@ -47,8 +47,9 @@ impl SourceQualified {
     /// Unknown means genuinely present but not yet typed. Never use it as
     /// absence, or suppress a possible selected/native conflict before late.
     fn disposition(&self, path: &Path, source: Option<FileKind>) -> Result<Disposition> {
-        let candidate = self.candidate(path)?;
-        let inside = candidate.as_ref().is_some_and(|p| p != path);
+        // Ancestor authority is independent of this entry's source presence or
+        // kind. Do not decode the final name as a selection directory yet.
+        let inside = self.candidate(path.parent().unwrap_or_else(|| Path::new("")))?.is_some();
         let admin = path.file_name().is_some_and(|n| n == ".jj" || n == ".git");
         if admin {
             if inside {
@@ -67,7 +68,13 @@ impl SourceQualified {
         if !matches!(kind, FileKind::Unknown | FileKind::Directory) {
             return Ok(Disposition::Preserve);
         }
-        if candidate.as_deref() == Some(path) {
+        // A listing without a kind hint may still describe an unrelated byte-
+        // named leaf. Let late facts distinguish it from a routing directory;
+        // that directory retains the selector's existing UTF-8 requirement.
+        if kind == FileKind::Unknown && path.file_name().is_some_and(|name| name.to_str().is_none()) {
+            return Ok(Disposition::Observe);
+        }
+        if self.patterns.matches(path)? && self.source_ignore.ignored(path, true) {
             if kind == FileKind::Unknown {
                 return Ok(Disposition::Observe);
             }
@@ -213,7 +220,9 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualifi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::fs;
+    use std::os::unix::ffi::OsStringExt;
     use std::os::unix::fs::symlink;
 
     struct Fixture {
@@ -270,6 +279,94 @@ mod tests {
                 .to_string()
                 .contains("not ignored")
         );
+    }
+
+    #[test]
+    fn non_utf8_leaf_classification_defers_unknown_without_losing_ancestor_authority() {
+        let f = Fixture::new();
+        let v = f.visitor(&["cache"], &[], &[]);
+        let name = PathBuf::from(OsString::from_vec(vec![0xff]));
+        for kind in [None, Some(FileKind::RegularFile), Some(FileKind::Symlink), Some(FileKind::Other)] {
+            assert_eq!(v.disposition(&name, kind).unwrap(), Disposition::Preserve, "{kind:?}");
+        }
+        assert_eq!(v.disposition(&name, Some(FileKind::Unknown)).unwrap(), Disposition::Observe);
+        assert!(
+            v.disposition(&name, Some(FileKind::Directory))
+                .unwrap_err()
+                .to_string()
+                .contains("directory selection entry not UTF-8")
+        );
+        // Once Q was admitted, even absent sources (including opaque removal
+        // interiors) retain mirror authority without decoding their byte names.
+        let inside = Path::new("cache").join(&name).join(&name);
+        for kind in [
+            None,
+            Some(FileKind::Unknown),
+            Some(FileKind::Directory),
+            Some(FileKind::RegularFile),
+            Some(FileKind::Symlink),
+        ] {
+            assert_eq!(v.disposition(&inside, kind).unwrap(), Disposition::Mirror, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn target_only_non_utf8_local_is_preserved_through_real_cursor() {
+        let f = Fixture::new();
+        let name = OsString::from_vec(vec![0xff]);
+        fs::write(f.target.join(&name), "local").unwrap();
+        let mut v = f.visitor(&["cache"], &[], &[]);
+        v.source_ignore = Arc::new(FrozenIgnore::default());
+        v.desired_ignore = Arc::new(FrozenIgnore::default());
+        let done = sync_one(&f.source, &f.target, "byte-local", v).unwrap().unwrap();
+        assert!(done.satisfied);
+        assert_eq!(done.totals.completed, Default::default());
+        assert_eq!(fs::read(f.target.join(&name)).unwrap(), b"local");
+    }
+
+    #[test]
+    fn source_non_utf8_unselected_leaves_preserve_local_collisions_and_absence() {
+        let f = Fixture::new();
+        for (index, paired) in [(0xff, true), (0xfe, false)] {
+            let file = OsString::from_vec(vec![index, b'f']);
+            let link = OsString::from_vec(vec![index, b'l']);
+            fs::write(f.source.join(&file), "donor").unwrap();
+            symlink("donor-destination", f.source.join(&link)).unwrap();
+            if paired {
+                fs::write(f.target.join(&file), "local").unwrap();
+                symlink("local-destination", f.target.join(&link)).unwrap();
+            }
+        }
+        let done = f.run(&["cache"]).unwrap().unwrap();
+        assert!(done.satisfied);
+        assert_eq!(done.totals.completed, Default::default());
+        assert_eq!(fs::read(f.target.join(OsString::from_vec(vec![0xff, b'f']))).unwrap(), b"local");
+        assert_eq!(
+            fs::read_link(f.target.join(OsString::from_vec(vec![0xff, b'l']))).unwrap(),
+            Path::new("local-destination")
+        );
+        for suffix in *b"fl" {
+            assert!(fs::symlink_metadata(f.target.join(OsString::from_vec(vec![0xfe, suffix]))).is_err());
+        }
+    }
+
+    #[test]
+    fn target_only_non_utf8_selected_interiors_are_removed_through_real_cursor() {
+        let f = Fixture::new();
+        let name = OsString::from_vec(vec![0xff]);
+        fs::create_dir_all(f.source.join("cache")).unwrap();
+        fs::create_dir_all(f.target.join("cache/stale").join(&name)).unwrap();
+        fs::create_dir_all(f.target.join("cache").join(&name)).unwrap();
+        fs::write(f.target.join("cache").join(OsString::from_vec(vec![0xfe])), "paired child").unwrap();
+        fs::write(f.target.join("cache/stale").join(&name).join(&name), "opaque removal child").unwrap();
+        fs::write(f.target.join("cache").join(&name).join(&name), "byte directory child").unwrap();
+        let done = f.run(&["cache"]).unwrap().unwrap();
+        assert!(done.satisfied);
+        assert!(f.target.join("cache").is_dir());
+        assert_eq!(fs::read_dir(f.target.join("cache")).unwrap().count(), 0);
+        assert_eq!(done.totals.completed.files_removed, 3);
+        assert_eq!(done.totals.completed.directories_removed, 3);
+        assert_eq!(f.run(&["cache"]).unwrap().unwrap().totals.completed, Default::default());
     }
 
     #[test]
