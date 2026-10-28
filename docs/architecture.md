@@ -6,8 +6,10 @@ resource: /docs/architecture.md
 status: maintained
 updated:
   by: model:openai/gpt-6-astra#high
-  at: 2026-10-26
+  at: 2026-10-28
 sources:
+  - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
+    title: Connected the current architecture to the coordinated seed/reseed adoption assessment and independent research
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Narrowed the operation lock to preparation and composed explicit reseed preparation with prospective preview reporting
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
@@ -63,6 +65,12 @@ and [context/donor-state report](file:///home/rektide/src/diff-dirs/design/execu
 Each has separate JW sections; the first follows actual reseed calls, and the
 second distinguishes visitor payloads, frozen command facts, live donor data and
 native JJ identity/cache state.
+
+The [coordinated-refill assessment](../design/coordinated-refill/README.md)
+plans adoption of diff-dirs' newer source-to-many synchronization: a small seed
+integration followed by batched reseed, with native setup/finish remaining JW's
+responsibility. It is a proposed redesign, separate from the delivered pipeline
+described below.
 
 ## Product boundary
 

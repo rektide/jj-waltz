@@ -93,6 +93,12 @@ destination. Consequently:
 | Mostly replaced/one-sided subtrees | Effects and per-destination recursive work can dominate; directory-group sharing is a smaller fraction. |
 | Several separate `jw reseed` processes | No sharing between invocations. The callers must submit a batch to share observations. |
 
+For a completely paired shape with comparable source and target observation costs,
+the inspection component moves roughly from **2N tree observations to N+1**.
+That suggests 25% fewer such observations at N=2, approaching 50% at large N—not
+an N-fold command speedup. Policy work, native operations, routing checks, copying
+and one-sided recursion sit outside that simple estimate.
+
 The existing multi-name/group interface already supplies a natural batch. The
 first implementation needs no daemon or persistent source catalog. Normal
 one-target reseed remains a one-lane use of the same conceptual operation.
@@ -158,7 +164,8 @@ Resolve configuration and source; optionally run explicitly requested preparatio
 capture the good, stable donor and exact revision/tree facts once. Resolve targets
 and their wanted revisions, bookmark coverage, retained regions and links. Share
 immutable donor entries, ignore inputs and topology facts rather than reconstructing
-them in each lane. Different desired trees can require different destination policy.
+them in each lane. Today's reseed selects one D for the batch; old-tree,
+retained-path and receiving-identity facts remain target-local.
 
 This step produces bounded native facts and per-target intent, not a recursive
 payload inventory or a serialized operation journal. Repeated proof of the same
@@ -201,6 +208,20 @@ and records accepted results. Visitors read frozen facts and supplied observatio
 they never run JJ, print, update progress or mutate filesystem state. The library
 owns paired recursion and opaque one-sided recursion in their existing places.
 
+For example, at `node_modules/pkg` with two existing receivers:
+
+1. Inspect the source directory once and each receiver's directory separately.
+2. Acquire the source facts needed by either lane. A sees `index.js` equal;
+   B sees it changed. Each lane still makes its own decision.
+3. Accept A's no-op application and reflink the changed leaf into B.
+4. Advance the shared traversal to the next admitted child with its lane membership.
+
+If B instead lacks the whole `pkg` directory, B's current application recursively
+copies that subtree. A's paired descent remains the frontier's responsibility.
+The two source visits in that mixed case are a real limit of today's sharing,
+not something an application-side loop should conceal or try to fix by recursing
+over the same edges itself.
+
 Use the production cursor process-locally. Owned continuation is available if a
 later operator workflow needs pausing, but ordinary seed/reseed does not require a
 transport format. A traversal checkpoint is not recovery for half a JJ transition
@@ -229,6 +250,12 @@ selected actions and completed recursive installs/deletes are different counters
 Progress comes from returned groups and accepted applications. An opaque subtree
 can be large, so a group count is not a percentage or latency bound. Collecting a
 total with an extra pre-counting traversal would defeat the purpose.
+
+Keep dry-run's existing joint read-only preview contract, including one-sided
+interiors and type-replacement removability. Reuse the same frozen policy even
+if preview initially remains one library call per target. A read-only coordinated
+comparison alone does not inspect every opaque subtree and cannot substitute for
+that preview. Execution must not gain an obligatory full payload preview pass.
 
 ## Landing sequence and review gates
 
