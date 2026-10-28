@@ -13,6 +13,7 @@ pub const MINIMUM_SUPPORTED_JJ_VERSION: JjVersion = JjVersion::new(0, 39, 0);
 // Keep every workspace field JSON encoded. Tabs and newlines inside names and descriptions cannot
 // corrupt record boundaries. The conflict guards keep diff statistics compatible with JJ 0.39.
 const WORKSPACE_NAMES_TEMPLATE: &str = r#"json(name) ++ "\n""#;
+const WORKSPACE_BINDINGS_TEMPLATE: &str = r#"json(name) ++ "\t" ++ json(target.change_id()) ++ "\t" ++ json(target.commit_id()) ++ "\n""#;
 const CURRENT_WORKSPACE_NAMES_TEMPLATE: &str = r#"if(target.current_working_copy(), json(name) ++ "\n", "")"#;
 const WORKSPACE_FACTS_TEMPLATE: &str = r#"json(name) ++ "\t" ++ json(target.change_id()) ++ "\t" ++ json(target.commit_id()) ++ "\t" ++ json(target.description().first_line()) ++ "\t" ++ json(target.current_working_copy()) ++ "\t" ++ json(target.empty()) ++ "\t" ++ json(target.conflict()) ++ "\t" ++ json(target.divergent()) ++ "\t" ++ json(target.diff().files().len()) ++ "\t" ++ json(if(target.conflict(), 0, target.diff().stat().total_added())) ++ "\t" ++ json(if(target.conflict(), 0, target.diff().stat().total_removed())) ++ "\t" ++ json(target.conflicted_files().len()) ++ "\n""#;
 const REVISION_TEMPLATE: &str = "change_id ++ \"\\0\" ++ commit_id ++ \"\\0\" ++ description.first_line() ++ \"\\0\"";
@@ -286,6 +287,14 @@ pub struct WorkspaceTargetFacts {
     pub conflicts: u32,
 }
 
+/// Lean registration coordinates, without tree diffs/statistics or snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceBinding {
+    pub name: String,
+    pub change_id: String,
+    pub commit_id: String,
+}
+
 /// Direct, shell-free JJ process adapter rooted at one working directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JjClient {
@@ -409,6 +418,42 @@ impl JjClient {
     pub fn workspace_target_facts_at(&self, operation_id: impl AsRef<OsStr>) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
         let output = self.run_at(operation_id, ["workspace", "list", "-T", WORKSPACE_FACTS_TEMPLATE])?;
         parse_workspace_target_facts(output.stdout()?)
+    }
+
+    pub fn workspace_bindings_at(&self, operation: &str) -> Result<BTreeMap<String, WorkspaceBinding>> {
+        let output = self.run_at(operation, ["workspace", "list", "-T", WORKSPACE_BINDINGS_TEMPLATE])?;
+        let mut bindings = BTreeMap::new();
+        for (index, line) in output.stdout()?.lines().enumerate() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let [name, change, commit] = fields.as_slice() else {
+                bail!("malformed workspace binding");
+            };
+            let binding = WorkspaceBinding {
+                name: parse_json_field(name, index, "name")?,
+                change_id: parse_json_field(change, index, "change ID")?,
+                commit_id: parse_json_field(commit, index, "commit ID")?,
+            };
+            if bindings.insert(binding.name.clone(), binding).is_some() {
+                bail!("duplicate workspace binding");
+            }
+        }
+        Ok(bindings)
+    }
+
+    /// Refill's fixed native mutation profile. The initial preservation snapshot
+    /// intentionally uses the caller's ordinary auto-tracking policy instead.
+    pub fn run_refill<I, S>(&self, args: I) -> Result<JjOutput>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut configured = collect_args([
+            "--config=fsmonitor.backend=none",
+            "--config=snapshot.auto-track=none()",
+            "--config=snapshot.auto-update-stale=false",
+        ]);
+        configured.extend(collect_args(args));
+        self.run(configured)
     }
 
     /// Read one workspace target by its literal workspace name at a frozen operation.
@@ -661,6 +706,24 @@ pub fn copy_tree_state(source_root: &Path, workspace_root: &Path) -> Result<Vec<
 pub fn write_tree_state(workspace_root: &Path, state: &[u8]) -> Result<()> {
     let path = tree_state_path(workspace_root);
     std::fs::write(&path, state).with_context(|| format!("failed to write {}", path.display()))
+}
+
+/// Read only the reusable tracked cache/membership, never checkout identity.
+pub fn read_tree_state(root: &Path) -> Result<Vec<u8>> {
+    let path = tree_state_path(root);
+    std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))
+}
+
+/// Forward-only donor-state adoption. A later native command must establish the
+/// result. No restore-on-rejection: callers report partial state and stop.
+pub fn adopt_tree_state(root: &Path, state: &[u8]) -> Result<()> {
+    let checkout = root.join(".jj/working_copy/checkout");
+    let before = std::fs::read(&checkout).context("read receiving checkout identity before adoption")?;
+    write_tree_state(root, state)?;
+    if std::fs::read(&checkout)? != before {
+        bail!("receiving checkout identity changed across tree_state adoption");
+    }
+    Ok(())
 }
 
 fn tree_state_path(workspace_root: &Path) -> PathBuf {

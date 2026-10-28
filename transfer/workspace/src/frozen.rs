@@ -122,20 +122,27 @@ pub struct FrozenIgnores {
     files: BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>,
     excludes: BTreeMap<PathBuf, Excludes>,
     rules: BTreeMap<(String, Excludes), Arc<FrozenIgnore>>,
+    equivalent: BTreeMap<String, String>,
 }
 impl FrozenIgnores {
+    /// Caller supplies native whole-tree equality (for example an empty
+    /// single-parent change), not merely equal ignore filenames or stat keys.
+    pub fn same_tree(&mut self, commit: &str, coordinate: &str) {
+        self.equivalent.insert(commit.to_owned(), coordinate.to_owned());
+    }
     pub fn get(&mut self, client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Arc<FrozenIgnore>> {
         if !self.excludes.contains_key(client.cwd()) {
             self.excludes.insert(client.cwd().to_path_buf(), Excludes::capture(client, operation)?);
         }
-        let key = (commit.to_owned(), self.excludes[client.cwd()].clone());
+        let coordinate = self.equivalent.get(commit).map(String::as_str).unwrap_or(commit);
+        let key = (coordinate.to_owned(), self.excludes[client.cwd()].clone());
         if let Some(rules) = self.rules.get(&key) {
             return Ok(Arc::clone(rules));
         }
-        if !self.files.contains_key(commit) {
-            self.files.insert(commit.to_owned(), ignore_files(client, operation, commit, entries)?);
+        if !self.files.contains_key(coordinate) {
+            self.files.insert(coordinate.to_owned(), ignore_files(client, operation, commit, entries)?);
         }
-        let rules = Arc::new(FrozenIgnore::build(&self.files[commit], &key.1)?);
+        let rules = Arc::new(FrozenIgnore::build(&self.files[coordinate], &key.1)?);
         self.rules.insert(key, Arc::clone(&rules));
         Ok(rules)
     }

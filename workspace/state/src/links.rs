@@ -88,6 +88,61 @@ pub struct LinkConfig {
     rules: Vec<LinkRuleRaw>,
 }
 
+/// Command-owned, already normalized declarations. Reseed can validate ownership
+/// before mutation and finish against the actual result without reloading config.
+#[derive(Debug)]
+pub struct LoadedWorkspaceLinks {
+    root: PathBuf,
+    rules: Vec<LinkRule>,
+}
+
+impl LoadedWorkspaceLinks {
+    pub fn new(config: Option<&LinkConfig>, workspace_root: &Path) -> Result<Self> {
+        let mut rules = config.map(|c| normalize_rules(c, workspace_root)).transpose()?.unwrap_or_default();
+        for rule in &mut rules {
+            rule.target = normalize_lexical(&rule.target);
+            if rule
+                .source
+                .strip_prefix(workspace_root)?
+                .components()
+                .any(|c| c.as_os_str() == ".jj" || c.as_os_str() == ".git")
+            {
+                bail!("link source cannot name administration: {}", rule.source.display());
+            }
+        }
+        for (index, left) in rules.iter().enumerate() {
+            for right in &rules[index + 1..] {
+                if paths_overlap(&left.source, &right.source) {
+                    bail!("configured link sources overlap");
+                }
+            }
+        }
+        Ok(Self {
+            root: workspace_root.to_path_buf(),
+            rules,
+        })
+    }
+
+    pub fn active_sources(&self) -> std::collections::BTreeSet<PathBuf> {
+        self.rules
+            .iter()
+            .filter(|r| r.source != r.target)
+            .map(|r| r.source.strip_prefix(&self.root).expect("normalized source").to_path_buf())
+            .collect()
+    }
+
+    pub fn inspect(&self) -> Vec<LinkCheck> {
+        self.rules.iter().map(classify_rule).collect()
+    }
+}
+
+/// Forward-only finish for reseed. Local path checks happen against the actual
+/// final tree. Failure leaves earlier links/directories; lifecycle's reversible
+/// application below retains its separate contract.
+pub fn apply_loaded_workspace_links(loaded: &LoadedWorkspaceLinks) -> Result<LinkApplyReport> {
+    LinkPlan::build(&loaded.root, loaded.rules.clone())?.apply_forward()
+}
+
 #[derive(Debug, Deserialize, Clone)]
 struct LinkRuleRaw {
     source: String,
@@ -203,6 +258,23 @@ fn normalize_rule(workspace_root: &Path, raw: LinkRuleRaw) -> Result<LinkRule> {
 }
 
 impl LinkPlan {
+    fn apply_forward(self) -> Result<LinkApplyReport> {
+        let mut directories = 0;
+        let mut links = 0;
+        let result = (|| {
+            for directory in &self.directories_to_create {
+                if create_planned_directory(directory)? {
+                    directories += 1;
+                }
+            }
+            for rule in &self.links_to_create {
+                create_symlink(&rule.target, &rule.source)?;
+                links += 1;
+            }
+            Ok::<_, anyhow::Error>(self.report)
+        })();
+        result.with_context(|| format!("link finish partial effects: {links} links, {directories} directories created; no rollback"))
+    }
     fn build(workspace_root: &Path, rules: Vec<LinkRule>) -> Result<Self> {
         if !workspace_root.is_dir() {
             bail!("workspace root is not a directory: {}", workspace_root.display())
@@ -678,6 +750,35 @@ fn remove_symlink(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn forward_loaded_finish_keeps_earlier_links_after_late_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(root.join("target"), "target").unwrap();
+        let config = LinkConfig {
+            rules: vec![
+                LinkRuleRaw {
+                    source: "nested/first".into(),
+                    target: "target".into(),
+                    required: true,
+                },
+                LinkRuleRaw {
+                    source: "late".into(),
+                    target: "target".into(),
+                    required: true,
+                },
+            ],
+        };
+        let loaded = LoadedWorkspaceLinks::new(Some(&config), root).unwrap();
+        let plan = LinkPlan::build(root, loaded.rules).unwrap();
+        fs::write(root.join("late"), "late claimant").unwrap();
+        let error = plan.apply_forward().unwrap_err();
+        assert!(format!("{error:#}").contains("1 links, 1 directories created; no rollback"));
+        assert!(fs::symlink_metadata(root.join("nested/first")).unwrap().is_symlink());
+        assert_eq!(fs::read(root.join("late")).unwrap(), b"late claimant");
+    }
 
     #[test]
     fn normalize_lexical_clamps_parent_traversal_at_absolute_root() {

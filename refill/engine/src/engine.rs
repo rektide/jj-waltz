@@ -27,6 +27,7 @@ use std::rc::Rc;
 mod bookmarks;
 mod payload;
 mod prepare;
+pub mod replacement;
 mod selection;
 
 #[derive(Debug, Default, Deserialize)]
@@ -690,7 +691,7 @@ impl Inventory {
         let operation = client.operation_id()?;
         let mut roots = BTreeMap::new();
         let mut registered = Registrations::new();
-        for name in client.workspace_target_facts_at(&operation)?.keys() {
+        for name in client.workspace_bindings_at(&operation)?.keys() {
             let output = client.run_at_unchecked(&operation, ["workspace", "root", "--name", name])?;
             registered.insert(name.clone(), None);
             if output.success() {

@@ -141,4 +141,9 @@ fn run_internal(request: ReseedRequest, source_only: bool, diagnostic: impl FnMu
 #[cfg(unix)]
 mod engine;
 
+/// Temporary callable integration seam; not an alternate CLI mode.
+#[cfg(unix)]
+#[doc(hidden)]
+pub use engine::replacement::{RefillOneReport, refill_one_from};
+
 pub mod freshen;

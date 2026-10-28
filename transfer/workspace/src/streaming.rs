@@ -82,10 +82,15 @@ impl SourceQualified {
             }
             return Ok(Disposition::Mirror);
         }
+        // A declared link owns this whole name even if a broad wildcard could
+        // otherwise search below it. Only an actual Q boundary above conflicts.
+        if self.links.contains(path) {
+            return Ok(Disposition::Preserve);
+        }
         if !self.patterns.may_match_below(path)? {
             return Ok(Disposition::Preserve);
         }
-        if self.native.contains(path) || self.links.contains(path) {
+        if self.native.contains(path) {
             if kind == FileKind::Unknown {
                 return Ok(Disposition::Observe);
             }
@@ -176,7 +181,9 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualifi
     }
     let runtime = SyncRuntime::new(vec![SyncTarget {
         id: TargetId(name.to_owned()),
-        descriptor: format!("jw-source-qualified-v1:{visitor:?}"),
+        // Fresh, process-local runtime only; never reconstructed with a changed
+        // policy. Do not serialize the whole native index into a descriptor.
+        descriptor: "jw-source-qualified-v1;frozen-process-local-n1".into(),
         applier: diff_dirs_sync::Applier::new(source, target, diff_dirs_sync::CopyPolicy::ReflinkRequired)?.visitor(visitor),
     }]);
     let mut cursor = SyncCursor::new(&runtime, diff_dirs::Execution::Sequential)?;
@@ -217,7 +224,7 @@ mod tests {
         fn new() -> Self {
             let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.test-agent/streaming-tests");
             fs::create_dir_all(&scratch).unwrap();
-            let temp = tempfile::tempdir_in(scratch).unwrap();
+            let temp = tempfile::tempdir_in(scratch.canonicalize().unwrap()).unwrap();
             let source = temp.path().join("source");
             let target = temp.path().join("target");
             fs::create_dir_all(source.join(".jj")).unwrap();
@@ -243,14 +250,25 @@ mod tests {
     fn pure_known_unknown_and_overlap_ordering() {
         let f = Fixture::new();
         let v = f.visitor(&["**/node_modules", "forced"], &["forced/file", "blocked"], &["linked"]);
-        for owned in ["forced", "blocked", "linked"] {
+        for owned in ["forced", "blocked"] {
             assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Unknown)).unwrap(), Disposition::Observe);
             assert!(v.disposition(Path::new(owned), Some(FileKind::Directory)).is_err(), "{owned}");
             assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Symlink)).unwrap(), Disposition::Preserve);
         }
+        assert_eq!(v.disposition(Path::new("linked"), Some(FileKind::Unknown)).unwrap(), Disposition::Preserve);
         assert_eq!(v.disposition(Path::new("node_modules"), None).unwrap(), Disposition::Preserve);
         assert_eq!(v.disposition(Path::new("node_modules/old"), None).unwrap(), Disposition::Mirror);
         assert!(v.disposition(Path::new("node_modules/.git"), None).is_err());
+        let v = f.visitor(&["forced"], &[], &["forced"]);
+        assert!(v.disposition(Path::new("forced"), Some(FileKind::Directory)).is_err());
+        let mut v = f.visitor(&["cache"], &[], &[]);
+        v.desired_ignore = Arc::new(FrozenIgnore::default());
+        assert!(
+            v.disposition(Path::new("cache"), Some(FileKind::Directory))
+                .unwrap_err()
+                .to_string()
+                .contains("not ignored")
+        );
     }
 
     #[test]
@@ -310,6 +328,17 @@ mod tests {
         fs::create_dir_all(f.source.join("cache/new")).unwrap();
         fs::write(f.source.join("cache/new/file"), "data").unwrap();
         symlink(".jj", f.target.join("cache")).unwrap();
+        fs::create_dir_all(f.source.join("cache/new/.git")).unwrap();
+        assert!(format!("{:#}", f.run(&["cache"]).unwrap_err()).contains("administrative"));
+        assert_eq!(fs::read_link(f.target.join("cache")).unwrap(), Path::new(".jj"));
+        fs::remove_dir(f.source.join("cache/new/.git")).unwrap();
+        let socket = std::os::unix::net::UnixListener::bind(f.source.join("cache/new/socket")).unwrap();
+        assert!(format!("{:#}", f.run(&["cache"]).unwrap_err()).contains("special"));
+        assert_eq!(fs::read_link(f.target.join("cache")).unwrap(), Path::new(".jj"));
+        drop(socket);
+        fs::remove_file(f.source.join("cache/new/socket")).unwrap();
+        // Top-level native administration is excluded pair-wide before metadata.
+        let _hidden = std::os::unix::net::UnixListener::bind(f.source.join(".jj/socket")).unwrap();
         assert_eq!(f.run(&["cache"]).unwrap().unwrap().totals.completed.files_reflinked, 1);
         fs::create_dir_all(f.source.join("cache/new/.git")).unwrap();
         assert!(format!("{:#}", f.run(&["cache"]).unwrap_err()).contains("administrative"));
