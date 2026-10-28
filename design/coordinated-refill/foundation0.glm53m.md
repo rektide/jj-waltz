@@ -1,13 +1,13 @@
 ---
 type: ImplementationReport
-title: Six-crate foundation restructure completed
+title: Six-crate foundation restructure completed, review corrections landed
 description: Delivered crate split, dependency-direction and test ownership mapping, repaired diff-dirs coordinates, verification results including one inherited colocate failure with root cause, and remaining hooks for the streaming rewrite.
 resource: /design/coordinated-refill/foundation0.glm53m.md
 status: implemented-foundation
 generated: { by: "model:zai-coding-plan/glm-5.3#max", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c479171ffeGjjWpkruJHEmUO"
-    title: Commissioned structural implementation of the approved six-crate shape with test moves, coordinate repair, and this source-grounded completion report
+    title: Implements the six-crate split, then lands the parent-review corrections (lazy global policy, config boundary, perf provenance, defaults, pins) with focused verification and amends this report
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
     title: Approved target architecture whose owner boundaries the crate split mirrors
   - resource: /design/coordinated-refill/current0.gpt6a.md
@@ -31,9 +31,9 @@ sources:
   - resource: /docs/architecture.md
     title: Maintained architecture doc with source links updated to the new layout
 verification:
-  method: cargo check/clippy/fmt across the workspace, cargo test for every member with real /usr/local/bin/jj ahead of mise shims, release build with payload-parallel forwarded through app/cli
-  result: All checks pass; full test suite green except one pre-existing colocate failure reproduced identically before the restructure and root-caused to a jj 0.45.1 error-wording change
-  scope: Linux x86_64 with real CoW filesystem; musl target not installed locally so the CI musl job is unverified here
+  method: cargo check/clippy/fmt across the workspace, cargo test for every member with real /usr/local/bin/jj ahead of mise shims, release build with payload-parallel forwarded through app/cli, then focused nextest/clippy per review correction plus one pinned jw-perf build smoke
+  result: All checks pass; full test suite green except one pre-existing colocate failure reproduced identically before the restructure and root-caused to a jj 0.45.1 error-wording change; six review-round corrections verified individually
+  scope: Linux x86_64 on btrfs (real CoW available and exercised, JW_TEST_REQUIRE_COW enforcement not set for the Linux runs); musl target not installed locally so the CI musl job is unverified here
 ---
 
 # Foundation restructure: what shipped
@@ -42,7 +42,10 @@ verification:
 
 The approved six-crate structure is implemented as a virtual workspace. Every
 production crate sits in a two-level domain directory and carries the matching
-`jj-waltz-*` package name at shared version `0.8.0` with exact internal pins;
+`jj-waltz-*` package name at shared version `0.8.0` with exact internal pins
+(`=0.8.0`; the initial checkpoint shipped caret requirements and the parent
+review caught the mismatch with this report's claim — corrected in the review
+round);
 `publish = false` keeps internal crates out of distribution. `app/cli` retains
 package name `jj-waltz` and binary `jw`, so every existing `-p jj-waltz`,
 `--bin jw`, dist, and `cargo metadata` reference keeps working.
@@ -88,10 +91,14 @@ and `plugins/herdr` remains a separate Cargo workspace, untouched.
    (`previous`, `default`, `primary_root`) replaced direct field access.
 3. **Transfer receives resolved policy.** `Policy::load` (which read the
    application global config inside the transfer crate) is gone. `Policy::resolve`
-   takes cli/local/global layers explicitly; the refill engine loads the global
-   config once through workspace-state and passes its layer. Lifecycle already
-   resolved all three layers itself. No application configuration loading remains
-   under `transfer/`.
+   takes cli/local/global layers explicitly; the refill engine passes the global
+   layer explicitly. No application configuration loading remains under
+   `transfer/` — the initial checkpoint still left `Policy::local_patterns`
+   reading `.jwreseed.local.toml` there (contrary to this report's first
+   wording); the review round moved it to workspace/state as
+   `config::local_copy_ignored`, and the engine's global read was also restored
+   to the old lazy semantics via `Config::load_inherited_copy_ignored` after the
+   review caught an unconditional load.
 4. **Clap decoupled from engine types.** `reseed::UnmatchedPolicy` no longer
    derives `clap::ValueEnum`; `cli.rs` owns `UnmatchedPolicyArg` with the parse
    and a `From` conversion. Clap and ratatui are app/cli-only dependencies.
@@ -134,13 +141,17 @@ no manifest change. No diff-dirs production file was touched.
   the deepened manifest path plus `..` components otherwise pushed its
   unix-socket path past `SUN_LEN`, which was the one test failure this
   restructure introduced and fixed.
-- `terminal_ui.py` resolves `jw` via `parents[2]` now; scratch/discovery
-  conventions (project `.test-agent`, outside-repo TMPDIR for discovery tests,
-  real CoW under `JW_TEST_REQUIRE_COW`) are unchanged.
+- `terminal_ui.py` resolves `jw` via `parents[3]` (the first checkpoint's
+  `parents[2]` was wrong, caught in review); scratch/discovery conventions
+  (project `.test-agent`, outside-repo TMPDIR for discovery tests, real CoW
+  under `JW_TEST_REQUIRE_COW`) are unchanged.
 - Doc references to moved sources updated in `docs/architecture.md`,
   `docs/reseed.md`, and `docs/workspace-manager.md`; historical OKF `resource:`
   fields in `tools/performance/README.md` were left as records of where files
-  lived when read.
+  lived when read. The first checkpoint's terminal-script fix was itself wrong
+  (`parents[2]` resolves to `app/`, not the workspace root) and the review round
+  corrected it to `parents[3]` with the header run command; this paragraph now
+  claims only what the corrected tree shows.
 
 ## Verification
 
@@ -159,6 +170,47 @@ documented exec recursion:
   forwarded feature compiles; `jw --version` reports `0.8.0`; the CI
   `cargo metadata` version probe still resolves.
 - Not verifiable here: the musl CI job (target not installed locally).
+
+### Real-CoW extent, stated precisely
+
+The development filesystem is btrfs, so reflinks genuinely work, and every
+test path that performed clones during the suite performed *real* clones —
+the transfer visitor fixtures probe `probe_between` and the colocate/creation
+routes materialize actual reflinks. However, `JW_TEST_REQUIRE_COW=1` was **not
+set** for the Linux suite runs (CI sets it only on macOS), so suite-level
+enforcement was inactive: on a host without CoW the guarding tests would skip
+rather than fail, and this report does not claim an enforced-CoW suite run.
+
+### Review-round corrections and their evidence
+
+The parent review of the initial checkpoint found six concrete regressions or
+unsupported claims; each landed as its own correction commit with focused
+verification rather than a rerun of the whole suite:
+
+1. **Lazy inherited-global policy restored.** The engine had an unconditional
+   `Config::load()`. `Config::load_inherited_copy_ignored` in workspace/state
+   reloads the old `Policy::load` laziness; two new state tests prove bypass
+   routes never read the global layer (injected broken loader) and that a real
+   broken global file fails only the inheriting route.
+2. **`.jwreseed.local.toml` reading moved out of transfer** to
+   `config::local_copy_ignored`; transfer lost its `toml` dependency. All
+   three affected crates' suites pass (112 tests).
+3. **Perf-tool build provenance repaired.** Application inputs are the six
+   crates plus workspace pins and `rust-toolchain.toml`; library inputs are
+   the observe/inspect/compare/api/sync closure. Focused tests assert
+   existence and selected/unselected hash behavior, and one real
+   `jw-perf build` smoke (serial variant, pinned `7ccb4f7d`/`5c4192e7`)
+   produced provenance covering exactly those inputs and a working `jw`.
+4. **`terminal_ui.py`** binary root fixed to `parents[3]` with the header
+   command; verified by path resolution, not a suite rerun.
+5. **Default members are the six production crates** (Unix-only perf tooling
+   no longer selected on Windows); `cargo tree --depth 0` shows exactly the
+   six, a default build produces no `jw-perf`, and the Linux lint job clippy
+   now uses `--workspace` to retain perf lint coverage. No Windows build run
+   or claimed.
+6. **README install** now `cargo install --path app/cli --locked`, verified by
+   running it; **internal pins are `=0.8.0`** exactly (lockfile unchanged);
+   the Worktrun typo is fixed.
 
 ### The inherited colocate failure, root-caused
 
@@ -180,10 +232,10 @@ versions to match) belongs to the parent, so no behavior change shipped here.
   internal path dependencies. Release distribution remains dist/homebrew (which
   never published to crates.io); if crates.io publishing is ever wanted, the
   internal crates must be versioned and published or the split reconsidered.
-- The engine still loads the application global config itself (through
-  workspace-state) to fill the policy's global layer; when the reseed command
-  moves to the app-owned request assembly the parent may prefer to hoist that
-  load into the CLI.
+- The engine still decides *when* to load the application global config (now
+  lazily, through workspace-state's helper) to fill the policy's global layer;
+  when the reseed command moves to the app-owned request assembly the parent
+  may prefer to hoist that load into the CLI.
 - Reseed orchestration, rollback/fallback routes, and all current behavior are
   deliberately unchanged — this stage moved code, it did not select streaming
   policy, failure contracts, or any item from the architecture's selection
