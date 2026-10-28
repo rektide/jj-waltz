@@ -276,11 +276,18 @@ fn run_inner(mut request: ReseedRequest, source_only: bool, diagnostic: &mut dyn
     }
     checked_context(&source_client)?;
     let source_rev = request.source_at.as_ref().or(config.source_at.as_ref()).map(String::as_str);
-    let global_policy = jj_waltz_workspace_state::config::Config::load()?;
+    // The global layer is read only when it can actually be inherited: an
+    // explicit CLI/local list or --no-copy-ignored never touches the global
+    // configuration file, matching the pre-split Policy::load laziness.
+    let global_copy_ignored = jj_waltz_workspace_state::config::Config::load_inherited_copy_ignored(
+        request.copy_ignored.as_deref(),
+        config.copy_ignored.as_deref(),
+        request.no_copy_ignored,
+    )?;
     let ignored_policy = Policy::resolve(
         request.copy_ignored.as_deref(),
         config.copy_ignored.as_deref(),
-        global_policy.copy_ignored.as_deref(),
+        global_copy_ignored.as_deref(),
         request.no_copy_ignored,
     );
 

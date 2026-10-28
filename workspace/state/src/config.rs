@@ -96,6 +96,30 @@ impl Config {
 
         Ok(raw.into())
     }
+
+    /// Global `copy_ignored` layer, read only when a caller would actually
+    /// inherit it: a disabled policy, an explicit CLI list, or an explicit
+    /// local list each bypass the global configuration file entirely, so a
+    /// broken or unreadable global config cannot fail those routes. Returns
+    /// the layer to hand to the transfer crate's supplied-value resolver;
+    /// `None` means no global layer participates.
+    pub fn load_inherited_copy_ignored(cli: Option<&[String]>, local: Option<&[String]>, disabled: bool) -> Result<Option<Vec<String>>> {
+        Self::load_inherited_copy_ignored_with(cli, local, disabled, Config::load)
+    }
+
+    /// Testable core: the loader is injected so bypass behavior can be proven
+    /// without touching the real configuration path.
+    pub fn load_inherited_copy_ignored_with(
+        cli: Option<&[String]>,
+        local: Option<&[String]>,
+        disabled: bool,
+        loader: impl FnOnce() -> Result<Self>,
+    ) -> Result<Option<Vec<String>>> {
+        if disabled || cli.is_some() || local.is_some() {
+            return Ok(None);
+        }
+        Ok(loader()?.copy_ignored)
+    }
 }
 
 impl From<RawConfig> for Config {
@@ -139,6 +163,11 @@ fn config_path() -> Result<Option<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
+    use std::sync::Mutex;
+
+    /// Serializes tests that temporarily repoint XDG_CONFIG_HOME.
+    static CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn defaults_do_not_create_bookmarks() {
@@ -230,5 +259,59 @@ mod tests {
     #[test]
     fn template_replaces_workspace_token() {
         assert_eq!(bookmark_from_template("wip/{workspace}", "feature-a"), "wip/feature-a");
+    }
+
+    /// An injected loader proves the bypass routes never read global config:
+    /// reaching the loader on those routes would return the poisoned error.
+    #[test]
+    fn inherited_copy_ignored_bypasses_global_config_for_explicit_or_disabled_policy() {
+        fn broken() -> Result<Config> {
+            Err(anyhow!("broken global configuration must not be read"))
+        }
+        let cli = vec!["cli".to_owned()];
+        let local = vec!["local".to_owned()];
+        for (cli, local, disabled) in [
+            (Some(cli.as_slice()), None, false),
+            (Some(&[]), None, false),
+            (None, Some(local.as_slice()), false),
+            (None, Some(&[]), false),
+            (None, None, true),
+        ] {
+            let inherited = Config::load_inherited_copy_ignored_with(cli, local, disabled, broken).expect("bypass routes never read the global layer");
+            assert_eq!(inherited, None);
+        }
+        assert!(
+            Config::load_inherited_copy_ignored_with(None, None, false, broken).is_err(),
+            "inheritance must actually read the global layer"
+        );
+    }
+
+    /// The real reader must show the same laziness against the filesystem:
+    /// a broken global file only fails the route that inherits from it.
+    #[test]
+    fn broken_global_config_file_fails_only_the_inheriting_route() {
+        let guard = CONFIG_ENV_LOCK.lock();
+        let previous = env::var_os("XDG_CONFIG_HOME");
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("jj-waltz")).unwrap();
+        fs::write(temp.path().join("jj-waltz/config.toml"), "not valid toml [[").unwrap();
+        // Safety: the only environment mutation in this test, serialized by the
+        // guard and restored before returning; config_path reads it directly.
+        unsafe { env::set_var("XDG_CONFIG_HOME", temp.path()) };
+
+        let cli = vec!["cli".to_owned()];
+        let bypassed = Config::load_inherited_copy_ignored(Some(&cli), None, false).expect("explicit CLI list bypasses the broken global file");
+        let inherited = Config::load_inherited_copy_ignored(None, None, false);
+
+        unsafe {
+            match previous {
+                Some(value) => env::set_var("XDG_CONFIG_HOME", value),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+        drop(guard);
+
+        assert_eq!(bypassed, None);
+        assert!(inherited.is_err(), "inheriting route must surface the broken global file");
     }
 }
