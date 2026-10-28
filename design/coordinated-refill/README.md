@@ -7,7 +7,7 @@ status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Orchestrated foundation, plan and two implementation slices; commissioned independent review and narrow path corrections while the human assesses product steering before CLI cutover
+    title: Orchestrated foundation and two implementation slices, reviewed independent findings and completed path corrections, and holds CLI cutover at the human's product-discussion checkpoint
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
     title: Completed Astra xhigh implementation plan, selected by the parent for construction with native/authority and end-to-end review checkpoints
   - resource: "opencode://ses_e7be6b24fffeDISpWdV1xNbqhD"
@@ -19,7 +19,9 @@ sources:
   - resource: /design/coordinated-refill/review0.gpt6ax.md
     title: Independent pinned slice-one review, two reproduced path defects, native/query cost assessment and product steering questions
   - resource: "opencode://ses_e7bae73c1ffeS9xaw29hyAhrNJ"
-    title: Fresh Sol xhigh commissioned for the two reproduced path-semantics corrections while CLI integration waits on the product discussion
+    title: Fresh Sol xhigh implements and verifies both path-semantics corrections, preserving the product-discussion boundary
+  - resource: /design/coordinated-refill/corrections0.sol61x.md
+    title: Parent-reviewed link-target and byte-name fixes, regression evidence and remaining supported-name limit
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
     title: Approved crate shape, dependency rules and structural implementation commission
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
@@ -61,10 +63,15 @@ sources:
 
 - [Independent review](review0.gpt6ax.md): the central native ownership/adoption
   sequence is coherent under its stated assumptions; two reproduced path-semantics
-  defects need correction. A fresh Sol xhigh is fixing loaded symlink/`..` target
-  meaning and unselected target-only byte filenames. Root-query/index reuse and
-  everyday sharing/authority promises are explicit discussion points before CLI
-  cutover. The review is pinned to slice one, not a review of later routing changes.
+  defects are corrected by the account below. Root-query/index reuse and everyday
+  sharing/authority promises are explicit discussion points before CLI cutover.
+  The review is pinned to slice one, not a review of later routing changes.
+- [Path corrections](corrections0.sol61x.md): commits `eee3fdb7` and `36cfe173`,
+  parent source-reviewed. Declared symlink/`..` target meaning is retained, and
+  unselected byte-named leaves are preserved without losing selected-interior
+  deletion authority. Reported checks: 29 focused state tests and nine streaming
+  tests in each profile, plus strict affected lint/format checks. No new product
+  defaults or CLI cutover were included.
 - [Deferred routing and wildcard adoption](implementation2.sol61x.md): diff-dirs
   `10361cf0` and JW `cbf0a53c` implement conditional source-only containers and
   consume the 0.2 interface. Missing routes are created only for actual selected
