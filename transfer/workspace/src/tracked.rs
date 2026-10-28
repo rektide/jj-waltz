@@ -45,7 +45,7 @@ pub fn entries(client: &JjClient, operation: &str, commit: &str) -> Result<Vec<E
                 "file",
                 "list",
                 "-r",
-                commit,
+                &jj_waltz_native_jj::jj::commit_id_revset(commit)?,
                 "-T",
                 r#"json(path) ++ "\t" ++ json(file_type) ++ "\t" ++ json(executable) ++ "\n""#,
             ],
@@ -75,7 +75,7 @@ pub fn file_bytes(client: &JjClient, operation: &str, commit: &str, path: &Path)
     // Filesets are expressions, not literal paths. `file:` with a JSON-quoted
     // string preserves newlines, spaces, quotes and names resembling selectors.
     let fileset = format!("file:{}", serde_json::to_string(path.to_str().context("tracked path not UTF-8")?)?);
-    let output = client.run_at(operation, ["file", "show", "-r", commit, &fileset])?;
+    let output = client.run_at(operation, ["file", "show", "-r", &jj_waltz_native_jj::jj::commit_id_revset(commit)?, &fileset])?;
     let diagnostics = output.stderr();
     if !diagnostics.is_empty() {
         eprintln!("{diagnostics}");
@@ -96,4 +96,49 @@ pub fn confined_parents(root: &Path, path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Strict installation of *every* recorded source leaf. Unlike the creation
+/// adapter this has no pre-stat filter and never skips a missing/changed kind.
+/// Failure retains production partial progress; required reflinks never downgrade.
+pub fn seed(source: &Path, target: &Path, entries: &[Entry], devices: (u64, u64)) -> Result<diff_dirs_sync::Progress, diff_dirs_sync::Failure> {
+    use diff_dirs::Check;
+    struct NativeLeaves<'a> {
+        entries: std::collections::BTreeMap<&'a Path, &'a Entry>,
+        devices: (u64, u64),
+    }
+    impl Check for NativeLeaves<'_> {
+        fn check(&self, e: diff_dirs::Entry<'_>) -> Result<(), diff_dirs::CheckError> {
+            use std::os::unix::fs::PermissionsExt;
+            let device = if e.side == diff_dirs::Side::Original {
+                self.devices.0
+            } else {
+                self.devices.1
+            };
+            if e.metadata.dev() != device {
+                return Err("native seed crossed a device boundary".into());
+            }
+            if e.side == diff_dirs::Side::Original && !e.metadata.is_dir() {
+                let path = e.path.strip_prefix(e.root)?;
+                let expected = self.entries.get(path).ok_or("native seed observed unlisted leaf")?;
+                if (expected.kind == "file" && !e.metadata.is_file())
+                    || (expected.kind == "symlink" && !e.metadata.is_symlink())
+                    || (expected.kind == "file" && expected.executable != (e.metadata.permissions().mode() & 0o111 != 0))
+                {
+                    return Err("prepared source leaf kind/mode differs from recorded membership".into());
+                }
+            }
+            Ok(())
+        }
+    }
+    diff_dirs_sync::seed_leaves(
+        source,
+        target,
+        entries.iter().map(|e| &e.path),
+        diff_dirs_sync::CopyPolicy::ReflinkRequired,
+        NativeLeaves {
+            entries: entries.iter().map(|e| (e.path.as_path(), e)).collect(),
+            devices,
+        },
+    )
 }

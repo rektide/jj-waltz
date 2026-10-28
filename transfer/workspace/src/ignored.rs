@@ -169,6 +169,31 @@ struct State {
 }
 
 impl Patterns {
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Pure path replay of the same component automaton used by discovery.
+    /// No directory existence, kind or ignoredness is implied by a match.
+    pub fn matches(&self, path: &Path) -> Result<bool> {
+        Ok(self.path_prefix(path)?.0.iter().any(|s| s.offset == self.patterns[s.pattern].segments.len()))
+    }
+
+    pub fn may_match_below(&self, path: &Path) -> Result<bool> {
+        Ok(self.can_descend(&self.path_prefix(path)?))
+    }
+
+    fn path_prefix(&self, path: &Path) -> Result<Prefix> {
+        let mut states = self.close(self.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 }));
+        for part in path.components() {
+            let Component::Normal(name) = part else {
+                bail!("selection path must be relative: {}", path.display())
+            };
+            states = self.advance(&states, name.to_str().context("directory selection entry not UTF-8")?);
+        }
+        Ok(Prefix(states))
+    }
+
     pub fn compile(patterns: &[String]) -> Result<Self> {
         let mut seen = BTreeSet::new();
         let mut compiled = Vec::new();
@@ -406,6 +431,21 @@ fn component_matches(pattern: &[char], text: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pure_queries_share_recursive_and_unicode_component_grammar() {
+        let p = Patterns::compile(&["**/node_modules".into(), "packages/?/dist".into()]).unwrap();
+        for path in ["node_modules", "packages/a/node_modules", "packages/λ/dist"] {
+            assert!(p.matches(Path::new(path)).unwrap(), "{path}");
+        }
+        assert!(!p.matches(Path::new("packages/ab/dist")).unwrap());
+        assert!(p.may_match_below(Path::new("packages/ab/dist")).unwrap());
+        let p = Patterns::compile(&["packages/?/dist".into()]).unwrap();
+        assert!(p.may_match_below(Path::new("packages/λ")).unwrap());
+        assert!(!p.may_match_below(Path::new("packages/ab")).unwrap());
+        assert!(!p.may_match_below(Path::new("packages/λ/dist")).unwrap());
+        assert!(!Patterns::compile(&[]).unwrap().may_match_below(Path::new("")).unwrap());
+    }
 
     #[test]
     fn explicit_empty_policy_does_not_inherit_lower_layers() {

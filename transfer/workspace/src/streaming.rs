@@ -1,0 +1,319 @@
+//! Source-qualified ordinary authority, evaluated during production inspection.
+//! No realized-root set, payload census, native commands or mutable admission map.
+use crate::frozen::FrozenIgnore;
+use crate::ignored::Patterns;
+use anyhow::{Context, Result, bail};
+use diff_dirs::{Action, CheckError, Container, FileKind, Names, Operations, Visitor};
+use std::collections::BTreeSet;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Debug)]
+pub struct SourceQualified {
+    pub patterns: Arc<Patterns>,
+    pub source_ignore: Arc<FrozenIgnore>,
+    pub desired_ignore: Arc<FrozenIgnore>,
+    /// Whole S/D native leaf names; ancestors are structural, not exclusions.
+    pub native: Arc<BTreeSet<PathBuf>>,
+    /// Active links only. A source==target private-directory rule is not a link.
+    pub links: BTreeSet<PathBuf>,
+    pub devices: (u64, u64),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Disposition {
+    Preserve,
+    Observe,
+    Mirror,
+}
+
+fn overlaps(paths: &BTreeSet<PathBuf>, path: &Path) -> bool {
+    path.ancestors().any(|p| paths.contains(p)) || paths.range(path.to_path_buf()..).next().is_some_and(|p| p.starts_with(path))
+}
+
+impl SourceQualified {
+    fn candidate(&self, path: &Path) -> Result<Option<PathBuf>> {
+        let mut current = PathBuf::new();
+        for part in path.components() {
+            current.push(part);
+            if self.patterns.matches(&current)? && self.source_ignore.ignored(&current, true) {
+                return Ok(Some(current));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Unknown means genuinely present but not yet typed. Never use it as
+    /// absence, or suppress a possible selected/native conflict before late.
+    fn disposition(&self, path: &Path, source: Option<FileKind>) -> Result<Disposition> {
+        let candidate = self.candidate(path)?;
+        let inside = candidate.as_ref().is_some_and(|p| p != path);
+        let admin = path.file_name().is_some_and(|n| n == ".jj" || n == ".git");
+        if admin {
+            if inside {
+                bail!("administrative entry inside selected ordinary root");
+            }
+            return Ok(Disposition::Preserve);
+        }
+        // Reachability invariant: only a real source directory can admit its Q
+        // boundary. Target-only candidates and source links stop at that name.
+        // Thus a visited descendant of Q already has source-qualified authority,
+        // including during opaque source-copy and target-removal recursion.
+        if inside {
+            return Ok(Disposition::Mirror);
+        }
+        let Some(kind) = source else { return Ok(Disposition::Preserve) };
+        if !matches!(kind, FileKind::Unknown | FileKind::Directory) {
+            return Ok(Disposition::Preserve);
+        }
+        if candidate.as_deref() == Some(path) {
+            if kind == FileKind::Unknown {
+                return Ok(Disposition::Observe);
+            }
+            if overlaps(&self.native, path) {
+                bail!("selected ordinary root overlaps native tracked leaf");
+            }
+            if overlaps(&self.links, path) {
+                bail!("selected ordinary root overlaps active link");
+            }
+            if !self.desired_ignore.ignored(path, true) {
+                bail!("selected ordinary root is not ignored under frozen desired rules");
+            }
+            return Ok(Disposition::Mirror);
+        }
+        if !self.patterns.may_match_below(path)? {
+            return Ok(Disposition::Preserve);
+        }
+        if self.native.contains(path) || self.links.contains(path) {
+            if kind == FileKind::Unknown {
+                return Ok(Disposition::Observe);
+            }
+            bail!("native leaf or active link blocks ordinary selection route");
+        }
+        Ok(Disposition::Observe)
+    }
+}
+
+impl Visitor for SourceQualified {
+    fn early(&self, names: &mut Names) -> Result<(), CheckError> {
+        if names.is_root() {
+            return Ok(());
+        }
+        for name in names.entries_mut() {
+            match self.disposition(name.relative_path(), name.source().map(|f| f.kind())) {
+                Ok(Disposition::Preserve) => name.preserve_tree(),
+                Ok(_) => {}
+                Err(e) => return Err(name.refuse(e.to_string())),
+            }
+        }
+        Ok(())
+    }
+
+    fn late(&self, batch: &mut Operations) -> Result<(), CheckError> {
+        let root = batch.is_root();
+        for entry in batch.entries_mut() {
+            if root {
+                entry.set_action(Action::Directory {
+                    container: Container::Keep,
+                    descend: true,
+                });
+                continue;
+            }
+            let source = entry.source().map(|f| {
+                let m = f.metadata();
+                if m.is_dir() {
+                    FileKind::Directory
+                } else if m.is_file() {
+                    FileKind::RegularFile
+                } else if m.is_symlink() {
+                    FileKind::Symlink
+                } else {
+                    FileKind::Other
+                }
+            });
+            let disposition = self.disposition(entry.relative_path(), source).map_err(|e| entry.refuse(e.to_string()))?;
+            if disposition == Disposition::Preserve {
+                entry.preserve_tree();
+                continue;
+            }
+            for (fact, device) in [(entry.source(), self.devices.0), (entry.target(), self.devices.1)] {
+                if let Some(fact) = fact {
+                    let m = fact.metadata();
+                    if m.dev() != device {
+                        return Err(entry.refuse("mounted filesystem boundary"));
+                    }
+                    if !(m.is_dir() || m.is_file() || m.is_symlink()) {
+                        return Err(entry.refuse("unsupported special entry"));
+                    }
+                }
+            }
+            if disposition == Disposition::Observe {
+                if entry.target().is_some_and(|f| !f.metadata().is_dir()) {
+                    return Err(entry.refuse("ordinary routing ancestor is not a real target directory"));
+                }
+                if entry.target().is_none() {
+                    return Err(entry.refuse("missing unselected routing directory requires conditional creation (slice 2)"));
+                }
+                entry.set_action(Action::Directory {
+                    container: Container::Keep,
+                    descend: true,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// First vertical seam: real one-lane coordinated application at workspace
+/// roots. Fail immediately; never use drive's healthy-peer continuation policy.
+/// Empty selection does not even construct/bind a runtime.
+pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualified) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
+    use diff_dirs::coordinated::TargetId;
+    use diff_dirs_sync::coordinated::{SyncCursor, SyncRuntime, SyncTarget};
+    if visitor.patterns.is_empty() {
+        return Ok(None);
+    }
+    let runtime = SyncRuntime::new(vec![SyncTarget {
+        id: TargetId(name.to_owned()),
+        descriptor: format!("jw-source-qualified-v1:{visitor:?}"),
+        applier: diff_dirs_sync::Applier::new(source, target, diff_dirs_sync::CopyPolicy::ReflinkRequired)?.visitor(visitor),
+    }]);
+    let mut cursor = SyncCursor::new(&runtime, diff_dirs::Execution::Sequential)?;
+    let result = (|| {
+        while let Some(group) = cursor.next_group(&runtime)? {
+            for lane in &group.outcomes {
+                if let Err(error) = &lane.outcome {
+                    return Err(anyhow::anyhow!("ordinary inspection: {error}"));
+                }
+            }
+            for target in cursor.pending() {
+                cursor.apply(&runtime, &group.token, &target)?;
+            }
+            cursor.settle()?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })();
+    result.with_context(|| format!("ordinary transfer partial reports: {:?}", cursor.reports()))?;
+    let report = cursor.reports().pop().context("missing ordinary lane report")?;
+    if !report.satisfied {
+        bail!("ordinary lane did not satisfy policy: {report:?}");
+    }
+    Ok(Some(report))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        source: PathBuf,
+        target: PathBuf,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.test-agent/streaming-tests");
+            fs::create_dir_all(&scratch).unwrap();
+            let temp = tempfile::tempdir_in(scratch).unwrap();
+            let source = temp.path().join("source");
+            let target = temp.path().join("target");
+            fs::create_dir_all(source.join(".jj")).unwrap();
+            fs::create_dir_all(target.join(".jj")).unwrap();
+            Self { _temp: temp, source, target }
+        }
+        fn visitor(&self, patterns: &[&str], native: &[&str], links: &[&str]) -> SourceQualified {
+            SourceQualified {
+                patterns: Arc::new(Patterns::compile(&patterns.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()),
+                source_ignore: Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
+                desired_ignore: Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
+                native: Arc::new(native.iter().map(PathBuf::from).collect()),
+                links: links.iter().map(PathBuf::from).collect(),
+                devices: (fs::metadata(&self.source).unwrap().dev(), fs::metadata(&self.target).unwrap().dev()),
+            }
+        }
+        fn run(&self, patterns: &[&str]) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
+            sync_one(&self.source, &self.target, "test", self.visitor(patterns, &[], &[]))
+        }
+    }
+
+    #[test]
+    fn pure_known_unknown_and_overlap_ordering() {
+        let f = Fixture::new();
+        let v = f.visitor(&["**/node_modules", "forced"], &["forced/file", "blocked"], &["linked"]);
+        for owned in ["forced", "blocked", "linked"] {
+            assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Unknown)).unwrap(), Disposition::Observe);
+            assert!(v.disposition(Path::new(owned), Some(FileKind::Directory)).is_err(), "{owned}");
+            assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Symlink)).unwrap(), Disposition::Preserve);
+        }
+        assert_eq!(v.disposition(Path::new("node_modules"), None).unwrap(), Disposition::Preserve);
+        assert_eq!(v.disposition(Path::new("node_modules/old"), None).unwrap(), Disposition::Mirror);
+        assert!(v.disposition(Path::new("node_modules/.git"), None).is_err());
+    }
+
+    #[test]
+    fn source_qualified_mirror_and_target_only_root_retention_through_real_cursor() {
+        let f = Fixture::new();
+        crate::probe_between(&f.source, &f.target).unwrap();
+        fs::create_dir_all(f.source.join("pkg/cache/new")).unwrap();
+        fs::create_dir_all(f.target.join("pkg/cache/old/deep")).unwrap();
+        fs::create_dir_all(f.target.join("vanished/cache")).unwrap();
+        fs::create_dir_all(f.source.join("notignored/node_modules")).unwrap();
+        fs::create_dir_all(f.target.join("notignored")).unwrap();
+        fs::write(f.source.join("pkg/cache/new/file"), "new").unwrap();
+        fs::write(f.source.join("notignored/node_modules/file"), "nested match").unwrap();
+        fs::write(f.target.join("pkg/cache/old/deep/file"), "old").unwrap();
+        fs::write(f.target.join("vanished/cache/local"), "retain").unwrap();
+        fs::write(f.source.join(".env"), "donor").unwrap();
+        fs::write(f.target.join(".env"), "local").unwrap();
+        symlink("elsewhere", f.source.join("cache")).unwrap();
+        fs::create_dir_all(f.target.join("cache")).unwrap();
+        fs::write(f.target.join("cache/local"), "retain link candidate").unwrap();
+        let patterns = ["**/cache", "notignored", "**/node_modules"];
+        let report = f.run(&patterns).unwrap().unwrap();
+        assert!(report.satisfied);
+        assert_eq!(report.totals.completed.files_reflinked, 2);
+        assert_eq!(report.totals.completed.files_copied, 0);
+        assert!(!f.target.join("pkg/cache/old").exists());
+        assert_eq!(fs::read(f.target.join("vanished/cache/local")).unwrap(), b"retain");
+        assert_eq!(fs::read(f.target.join("cache/local")).unwrap(), b"retain link candidate");
+        assert_eq!(fs::read(f.target.join(".env")).unwrap(), b"local");
+        assert_eq!(f.run(&patterns).unwrap().unwrap().totals.completed, Default::default());
+    }
+
+    #[test]
+    fn missing_unselected_route_refuses_without_empty_skeleton_and_empty_policy_never_binds() {
+        let f = Fixture::new();
+        fs::create_dir_all(f.source.join("pkg/no-match")).unwrap();
+        let e = f.run(&["**/node_modules"]).unwrap_err();
+        assert!(format!("{e:#}").contains("conditional creation"));
+        assert!(!f.target.join("pkg").exists());
+        // Nonexistent roots are fine only because empty policy does no runtime I/O.
+        assert!(
+            sync_one(
+                Path::new("/nonexistent-source"),
+                Path::new("/nonexistent-target"),
+                "empty",
+                f.visitor(&[], &[], &[])
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn selected_collision_opaque_copy_and_nested_administration_refusal() {
+        let f = Fixture::new();
+        crate::probe_between(&f.source, &f.target).unwrap();
+        fs::create_dir_all(f.source.join("cache/new")).unwrap();
+        fs::write(f.source.join("cache/new/file"), "data").unwrap();
+        symlink(".jj", f.target.join("cache")).unwrap();
+        assert_eq!(f.run(&["cache"]).unwrap().unwrap().totals.completed.files_reflinked, 1);
+        fs::create_dir_all(f.source.join("cache/new/.git")).unwrap();
+        assert!(format!("{:#}", f.run(&["cache"]).unwrap_err()).contains("administrative"));
+        let v = f.visitor(&["cache"], &["cache/forced"], &[]);
+        assert!(format!("{:#}", sync_one(&f.source, &f.target, "overlap", v).unwrap_err()).contains("overlaps native"));
+    }
+}

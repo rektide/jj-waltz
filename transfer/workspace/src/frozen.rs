@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use jj_waltz_native_jj::jj::JjClient;
 
@@ -50,6 +51,92 @@ impl FrozenRules {
         }
         let rules = Rc::new(IgnoreRules::build(&self.files[coordinate], &key.1)?);
         self.rules.insert(key, Rc::clone(&rules));
+        Ok(rules)
+    }
+}
+
+/// Immutable Git-compatible matching over captured control-file bytes. No live
+/// ignore files, subprocesses, answer cache or filesystem calls during matching.
+#[derive(Debug, Default)]
+pub struct FrozenIgnore {
+    base: gix_ignore::Search,
+    directories: BTreeMap<PathBuf, gix_ignore::Search>,
+}
+
+impl FrozenIgnore {
+    #[cfg(test)]
+    pub(crate) fn test_rules(bytes: &[u8]) -> Self {
+        Self::build(
+            &BTreeMap::from([(PathBuf::from(".gitignore"), bytes.to_vec())]),
+            &Excludes { global: vec![], info: vec![] },
+        )
+        .unwrap()
+    }
+    fn build(files: &BTreeMap<PathBuf, Vec<u8>>, excludes: &Excludes) -> Result<Self> {
+        let parse = gix_ignore::search::Ignore { support_precious: false };
+        let mut base = gix_ignore::Search::default();
+        base.add_patterns_buffer(&excludes.global, "global-excludes", None, parse)?;
+        base.add_patterns_buffer(&excludes.info, "info-exclude", None, parse)?;
+        let directories = files
+            .iter()
+            .map(|(path, bytes)| {
+                let mut matcher = gix_ignore::Search::default();
+                // Strip the prefix ourselves, as JJ does. This prevents filesystem
+                // path interpretation from changing repository-relative semantics.
+                matcher.add_patterns_buffer(bytes, path, None, parse)?;
+                Ok((path.parent().unwrap_or(Path::new("")).to_path_buf(), matcher))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self { base, directories })
+    }
+
+    /// Native membership is independent of ignoredness. Callers must still
+    /// exclude forced-tracked paths. Ancestor exclusion cannot be reopened by a
+    /// deeper negation (including a negation in that ignored directory).
+    pub fn ignored(&self, path: &Path, is_directory: bool) -> bool {
+        let mut ancestors = path.ancestors().filter(|p| !p.as_os_str().is_empty()).collect::<Vec<_>>();
+        ancestors.reverse();
+        ancestors.into_iter().any(|p| self.exact(p, p != path || is_directory))
+    }
+
+    fn exact(&self, path: &Path, is_directory: bool) -> bool {
+        let case = gix_ignore::glob::pattern::Case::Sensitive;
+        for parent in path.parent().unwrap_or(Path::new("")).ancestors() {
+            if let Some(matcher) = self.directories.get(parent) {
+                let relative = path.strip_prefix(parent).expect("ancestor");
+                if let Some(matched) = matcher.pattern_matching_relative_path(relative.as_os_str().as_encoded_bytes().into(), Some(is_directory), case) {
+                    return !matched.pattern.is_negative();
+                }
+            }
+        }
+        self.base
+            .pattern_matching_relative_path(path.as_os_str().as_encoded_bytes().into(), Some(is_directory), case)
+            .is_some_and(|matched| !matched.pattern.is_negative())
+    }
+}
+
+/// Batch-owned extraction cache for the streaming consumer. Membership is
+/// supplied by the native phase, never enumerated again to capture ignore rules.
+#[derive(Default)]
+pub struct FrozenIgnores {
+    files: BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>,
+    excludes: BTreeMap<PathBuf, Excludes>,
+    rules: BTreeMap<(String, Excludes), Arc<FrozenIgnore>>,
+}
+impl FrozenIgnores {
+    pub fn get(&mut self, client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Arc<FrozenIgnore>> {
+        if !self.excludes.contains_key(client.cwd()) {
+            self.excludes.insert(client.cwd().to_path_buf(), Excludes::capture(client, operation)?);
+        }
+        let key = (commit.to_owned(), self.excludes[client.cwd()].clone());
+        if let Some(rules) = self.rules.get(&key) {
+            return Ok(Arc::clone(rules));
+        }
+        if !self.files.contains_key(commit) {
+            self.files.insert(commit.to_owned(), ignore_files(client, operation, commit, entries)?);
+        }
+        let rules = Arc::new(FrozenIgnore::build(&self.files[commit], &key.1)?);
+        self.rules.insert(key, Arc::clone(&rules));
         Ok(rules)
     }
 }
@@ -303,6 +390,77 @@ where
 #[cfg(test)]
 mod oracle_tests {
     use super::*;
+
+    #[test]
+    fn immutable_matcher_agrees_with_git_on_bounded_precedence_and_ancestor_corpus() {
+        fn assert_sync<T: Send + Sync>() {}
+        assert_sync::<FrozenIgnore>();
+        let files = BTreeMap::from([
+            (
+                PathBuf::from(".gitignore"),
+                b"cache/\n*.tmp\n!keep.tmp\n/rooted\n**/build/\nblocked/\n!blocked/open\n\\#literal\n\\!bang\nspace\\ \n$literal\n!override\n".to_vec(),
+            ),
+            (PathBuf::from("pkg/.gitignore"), b"!local.tmp\n/deep\noverride\n".to_vec()),
+            (PathBuf::from("blocked/.gitignore"), b"!open\n!nested/\n".to_vec()),
+            (PathBuf::from("pkg/sub/.gitignore"), b"!override\n".to_vec()),
+        ]);
+        let excludes = Excludes {
+            global: b"*.global\noverride\n*.precedence\n".to_vec(),
+            info: b"!info.global\n!yes.precedence\n".to_vec(),
+        };
+        let pure = FrozenIgnore::build(&files, &excludes).unwrap();
+        let oracle = IgnoreRules::build(&files, &excludes).unwrap();
+        let paths = [
+            "cache",
+            "cache/file",
+            "cache/deep/keep.tmp",
+            "file.tmp",
+            "keep.tmp",
+            "rooted",
+            "pkg/rooted",
+            "pkg/build",
+            "pkg/build/a",
+            "blocked",
+            "blocked/open",
+            "blocked/nested/file",
+            "pkg/local.tmp",
+            "pkg/deep",
+            "pkg/deep/a",
+            "pkg/sub/deep",
+            "#literal",
+            "!bang",
+            "space ",
+            "space",
+            "$literal",
+            "x.global",
+            "info.global",
+            "yes.precedence",
+            "no.precedence",
+            "override",
+            "pkg/override",
+            "pkg/sub/override",
+            "normal",
+            "λ/build",
+            "λ/local.tmp",
+        ];
+        for path in paths {
+            for directory in [false, true] {
+                // Git also stats real directories in its oracle sandbox. Do
+                // not ask it to pretend an existing directory is a file.
+                if !directory && oracle.directory.path().join(path).is_dir() {
+                    continue;
+                }
+                assert_eq!(
+                    pure.ignored(Path::new(path), directory),
+                    oracle.is_ignored(Path::new(path), directory).unwrap(),
+                    "{path:?}, dir={directory}"
+                );
+            }
+        }
+        // Matching does not consult live files after compilation.
+        fs::write(oracle.directory.path().join(".gitignore"), "normal\n").unwrap();
+        assert!(!pure.ignored(Path::new("normal"), true));
+    }
 
     #[test]
     fn persistent_oracle_frames_negation_nonmatches_and_memoizes() {

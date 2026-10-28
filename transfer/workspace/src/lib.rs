@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 pub mod frozen;
 pub mod ignored;
 #[cfg(unix)]
+pub mod streaming;
+#[cfg(unix)]
 pub mod topology;
 #[cfg(unix)]
 pub mod tracked;
