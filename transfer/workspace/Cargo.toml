@@ -8,7 +8,7 @@ publish = false
 description = "CoW capability and topology helpers, path policy, frozen-ignore and tracked-leaf adapters, and diff-dirs integration for jj-waltz"
 
 [dependencies]
-jj-waltz-native-jj = { version = "0.8.0", path = "../../native/jj" }
+jj-waltz-native-jj = { version = "=0.8.0", path = "../../native/jj" }
 anyhow = "1.0.100"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

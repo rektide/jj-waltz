@@ -8,9 +8,9 @@ publish = false
 description = "Donor preparation and reseed request types, orchestration, and source freshening for jj-waltz"
 
 [dependencies]
-jj-waltz-native-jj = { version = "0.8.0", path = "../../native/jj" }
-jj-waltz-workspace-state = { version = "0.8.0", path = "../../workspace/state" }
-jj-waltz-transfer-workspace = { version = "0.8.0", path = "../../transfer/workspace" }
+jj-waltz-native-jj = { version = "=0.8.0", path = "../../native/jj" }
+jj-waltz-workspace-state = { version = "=0.8.0", path = "../../workspace/state" }
+jj-waltz-transfer-workspace = { version = "=0.8.0", path = "../../transfer/workspace" }
 anyhow = "1.0.100"
 fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }
