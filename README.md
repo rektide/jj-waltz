@@ -76,7 +76,7 @@ in-place reseeding, and source-only upstream preparation. It works with stock JJ
 Install this checkout's fork:
 
 ```sh
-cargo install --path . --locked
+cargo install --path app/cli --locked
 ```
 
 For development, build with `cargo build --bin jw` and run `target/debug/jw`.
