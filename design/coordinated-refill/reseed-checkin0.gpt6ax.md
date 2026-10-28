@@ -3,11 +3,30 @@ type: ArchitectureAssessment
 title: Reseed performance check-in across jj-waltz and diff-dirs
 description: Product and architecture assessment of the shipped reseed, callable replacement and library, with a cost model and evidence-gated next decisions.
 resource: /design/coordinated-refill/reseed-checkin0.gpt6ax.md
-status: parent-assessment-awaiting-independent-returns
+status: assessed-recommendations-open
 generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-28 }
 sources:
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
-    title: Human commissions an architectural and performance check-in of both projects after the coordinated rebuild; parent reconstructs current adoption, runtime identity and historical measurements
+    title: Assesses current adoption and historical measurements, records an independent parent position, then integrates two Sol reviews and library-side consumer feedback
+  - resource: "opencode://ses_e7b386178ffe35om7FsR11rYky"
+    title: Independent JW-side review of public versus callable paths, native outcomes, costs and product alternatives
+  - resource: "opencode://ses_e7b37dd77ffeIu8mHUKf204c5B"
+    title: Independent library-side review of source-sharing coverage, route and decision costs, opaque work and alternative execution shapes
+  - resource: /design/coordinated-refill/reseed-checkin0.gpt61sxh.md
+    revision: 224eba75
+    title: Consumer-side independent assessment and source-derived native pass ledger
+  - resource: "file:///home/rektide/src/diff-dirs/design/fit/jw-checkin0.gpt61sxh.md"
+    revision: f04b5c5d
+    title: Library-side independent assessment and source-linked architectural pressures
+  - resource: /transfer/workspace/src/streaming.rs
+    revision: 76fb0656
+    title: Parent-checked single-lane sequential use, repeated disposition work and metadata guards
+  - resource: "file:///home/rektide/src/diff-dirs/transfer/sync/src/coordinated/mod.rs"
+    revision: 10361cf0
+    title: Parent-checked eager decision projection, clean application states and repeated application route checks
+  - resource: "file:///home/rektide/src/diff-dirs/tree/inspect/src/visitor.rs"
+    revision: 10361cf0
+    title: Parent-checked stat equality, retained equal leaves and deliberate restriction on equal-leaf installation
   - resource: /design/coordinated-refill/README.md
     revision: 76fb0656
     title: Actual delivered slices and the held CLI/product checkpoint
@@ -57,9 +76,10 @@ useful, but its main new source-to-many benefit is not yet delivered through the
 public command. The immediate leverage is command-wide reuse and a deliberate
 native materialization contract, not another general framework.
 
-This is an assessment, not selection of new product defaults. The parent recorded
-this position before reading the two independent check-in returns. Their eventual
-integration belongs below, with any revisions to this judgment made explicit.
+This is an assessment, not selection of new product defaults. Parent checkpoint
+`fcbd7aa2` recorded the initial position before reading the two independent returns.
+Their integration below sharpens the library recommendations and sharing contract;
+it does not turn agreement on a problem into automatic acceptance of a new default.
 
 ## Basis: three different things currently exist
 
@@ -130,9 +150,26 @@ Two useful products should be distinguished before choosing their default:
 | Establish distant D efficiently | Compare current full-S adoption with the existing equal-leaf/native route | Full-S can install S-only files only to remove them, or changed files before native replacement. Any alternative must retain its own authority and sharing contract. |
 
 My recommendation is to keep strict renewal as a first-class supported operation
-and evaluate a less disruptive frequent-refresh route against it. **Do not silently
-skip equal tracked files while continuing to promise renewed sharing.** Likewise,
-an S-file reflink count is not a count of sharing retained in the final D tree.
+and retain a clear renew-and-reset meaning for `reseed`. Evaluate a less disruptive
+frequent-refresh operation separately if that is the common user job. **Do not
+silently skip equal tracked files while continuing to promise renewed sharing.**
+Likewise, an S-file reflink count is not a count of sharing retained in the final D tree.
+
+### Equality, private inodes and shared extents are separate results
+
+The consumer review identifies an important scope boundary: a retained stat-equal
+auxiliary file need not currently be a reflink, or even have an inode distinct from
+the source. I checked the comparison predicate and JW's late visitor: type/size/mtime
+equality retains the leaf; the visitor checks supported kind and device, not inode
+independence or extent sharing. This is source-derived, not a new alias experiment.
+
+That does not invalidate the newly installed private reflinks or existing fixtures.
+It means that "preserve clean payload" and "re-establish private shared storage for
+every payload leaf" are different contracts. Test a stat-equal private ordinary
+copy and a stat-equal source hardlink before making the latter promise. Today an
+equal leaf cannot simply be force-installed by the visitor: `InstallLeaf` requires
+`is_different()`. If mandatory privacy/sharing repair is selected, it needs explicit
+effect authority, not falsified comparison facts or hidden unconditional copying.
 
 There is also a larger possible investment: a JJ-native materialization operation
 that can combine receiving identity, donor tree-state knowledge and tracked update
@@ -192,6 +229,51 @@ ancestor searches, native membership and lane-slot allocation deserve CPU/alloca
 evidence alongside syscall counts. More filesystem parallelism will not necessarily
 fix those costs.
 
+## Where I would adjust diff-dirs first
+
+The library review materially sharpens the initial parent assessment. Source
+acquisition is genuinely shared, but the live execution path still pays for:
+
+- `Coordinated::validate_route`: source/target ancestry checks per group;
+- `SyncCursor::apply → route`: source and target root canonicalization/ancestor
+  checks again per application, including clean ordinary groups;
+- `SyncCursor::next_group`: an exact `DirectoryDecision` for every admitted entry,
+  cloned into the saved barrier and returned to the caller, alongside full plans;
+- lane-specific policy evaluation and growing path-level summaries.
+
+I checked the consequential route and decision paths directly. These are actual
+operations, but their wall-time/allocation importance has not been measured. The
+comparison route diagnostic does not include all sync-side checks, so a source-stat
+counter alone would understate source-side work.
+
+**First library candidate: make ordinary live execution cheaper without weakening
+the pause model.** Explore lazy checkpoint projection and borrowed/lightweight
+group results using the same inspector, frontier and effect kernel. Exact decisions
+can be needed at export/rebind without necessarily requiring their full duplicate
+representation on every nonpersistent call. Reuse source route admission within
+its explicit live epoch; reconstruction still checks fresh routes. Do not fork a
+second copier or regard an old stat as permanent confinement.
+
+A genuinely effect-free batch could also avoid effect dispatch while still
+accepting comparison and coverage. `planned == 0` is not that proof: a retained
+target-only container can own descendant removals. The existing opaque-work tests
+are the constraint on any shortcut.
+
+**Second candidate, conditional on cold/mixed workload evidence:** share source
+observations within source-only/replacement transfer cohorts. Put this primarily
+in effect execution rather than redefining paired comparison. It can preserve
+opaque calls and their independent container/staging/permission obligations while
+sharing bounded source batches. Destination installations remain separate. Source
+descriptor reuse is a later choice with real fallback/offset semantics.
+
+**Third, if heterogeneous lanes prove troublesome:** bounded opportunistic cohorts
+can trade repeated source observations for independent progress. Today's lane
+heads are independently represented but deliberately not independently scheduled.
+Keep the simple group barrier until receiver skew, retained memory or latency
+actually warrants another scheduler; `stop_lanes` is abandonment, not suspension.
+
+<a id="performance-evidence"></a>
+
 ## What the evidence does—and does not—say
 
 | Claim | Evidence inspected | Standing |
@@ -232,6 +314,9 @@ decisions need a cheaper, bounded method.
 
 ## Connections
 
+- [Library-side consumer account](file:///home/rektide/src/diff-dirs/doc/consumer/jj-waltz.md)
+  keeps current use, demonstrated help and these prospective improvement requests
+  visible at the library's home.
 - [Current integration index](README.md) owns the delivered/held slice boundaries.
 - [Earlier native review](review0.gpt6ax.md) anticipated the full-renewal and
   source-authority choices; its two reproduced path bugs have since been corrected.
@@ -239,3 +324,25 @@ decisions need a cheaper, bounded method.
   context and cohort shape. This check-in challenges the universal-route assumption
   and establishes how to evaluate its payoff, rather than automatically selecting
   the next implementation slice.
+
+## Independent-review integration
+
+The [JW review](reseed-checkin0.gpt61sxh.md) and
+[library review](file:///home/rektide/src/diff-dirs/design/fit/jw-checkin0.gpt61sxh.md)
+were independently committed before their gate opened. They ended at 190.4k and
+201.1k context. Both were source-only assessments with document checks; there were
+no new runtime tests, benchmark campaigns or workspace mutations in this check-in.
+
+| Thread | Distinct contribution | Integrated decision |
+| --- | --- | --- |
+| Native product | JW review favors strict D=S renewal as the meaning of reseed; parent initially emphasized evaluating cheaper frequent refresh | Keep the meaning honest and evaluate separate frequent jobs. Do not impose one full-S route on all uses merely because it is implemented. |
+| Successful storage state | JW review separates newly installed sharing from retained payload equality/private-inode assumptions | Add the concrete retained-alias/unshared-copy discriminator before claiming a blanket sharing guarantee. |
+| Library live cost | Library review traces repeated route checks, eager decision construction and clean-group dispatch | Prioritize a lighter live view experiment over more persistence or generalized scheduling features. |
+| Cold/mixed receivers | Both reviews identify per-lane opaque work; library review places a shared-source effect cohort below the comparison frontier | Measure missing and paired/missing cases separately before promoting this larger library change. |
+| Whole command | All three accounts distinguish public CLI, callable N1 and future N2 | Next integration must reuse one command context and form a real cohort, with measured N1 as a first-class case. |
+
+**Bottom line:** I am happy with the ownership boundaries and the correctness
+mechanisms we have built. I am not yet satisfied that the current live cursor cost,
+full tracked renewal policy and native command composition form the best frequent
+path. The next useful work is to discriminate those choices in one real command,
+not to add more architecture around the existing prototype by default.

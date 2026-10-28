@@ -5,7 +5,10 @@ description: Assessment and evidence for adopting diff-dirs source-to-many synch
 resource: /design/coordinated-refill/README.md
 status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
+updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-28" }
 sources:
+  - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
+    title: Connects a new cross-project architecture/performance check-in, independent consumer/library reviews and maintained library-side feedback before CLI selection
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
     title: Orchestrated foundation and two implementation slices, reviewed independent findings and completed path corrections, and holds CLI cutover at the human's product-discussion checkpoint
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
@@ -36,6 +39,16 @@ sources:
 
 ## Start here
 
+- [Cross-project performance and architecture check-in](reseed-checkin0.gpt6ax.md):
+  parent assessment and integrated independent findings. Separates public CLI,
+  callable N1 and prospective cohort; reassesses renewal versus refresh, live
+  cursor cost and the next discriminating measurements. This is a decision aid,
+  not authorization to change the product defaults below.
+- [Independent consumer review](reseed-checkin0.gpt61sxh.md) and
+  [library review](file:///home/rektide/src/diff-dirs/design/fit/jw-checkin0.gpt61sxh.md):
+  source-derived native/pass ledger, sharing limits and alternative execution shapes.
+  The [library-side consumer account](file:///home/rektide/src/diff-dirs/doc/consumer/jj-waltz.md)
+  keeps actual adoption and prospective improvement requests visible to diff-dirs.
 - [Implementation plan](implementation0.gpt6ax.md): Astra xhigh's exact native
   sequence, pure source-qualified authority, conditional-routing library gap and
   four build slices. Parent reviewed the plan and native probe and selected this
