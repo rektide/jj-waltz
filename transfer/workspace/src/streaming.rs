@@ -157,11 +157,12 @@ impl Visitor for SourceQualified {
                 if entry.target().is_some_and(|f| !f.metadata().is_dir()) {
                     return Err(entry.refuse("ordinary routing ancestor is not a real target directory"));
                 }
-                if entry.target().is_none() {
-                    return Err(entry.refuse("missing unselected routing directory requires conditional creation (slice 2)"));
-                }
                 entry.set_action(Action::Directory {
-                    container: Container::Keep,
+                    container: if entry.target().is_some() {
+                        Container::Keep
+                    } else {
+                        Container::CreateIfNeeded
+                    },
                     descend: true,
                 });
             }
@@ -183,7 +184,7 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualifi
         id: TargetId(name.to_owned()),
         // Fresh, process-local runtime only; never reconstructed with a changed
         // policy. Do not serialize the whole native index into a descriptor.
-        descriptor: "jw-source-qualified-v1;frozen-process-local-n1".into(),
+        descriptor: "jw-source-qualified-v2;frozen-process-local-n1".into(),
         applier: diff_dirs_sync::Applier::new(source, target, diff_dirs_sync::CopyPolicy::ReflinkRequired)?.visitor(visitor),
     }]);
     let mut cursor = SyncCursor::new(&runtime, diff_dirs::Execution::Sequential)?;
@@ -302,11 +303,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_unselected_route_refuses_without_empty_skeleton_and_empty_policy_never_binds() {
+    fn missing_unselected_route_without_matches_creates_no_skeleton_and_empty_policy_never_binds() {
         let f = Fixture::new();
         fs::create_dir_all(f.source.join("pkg/no-match")).unwrap();
-        let e = f.run(&["**/node_modules"]).unwrap_err();
-        assert!(format!("{e:#}").contains("conditional creation"));
+        let done = f.run(&["**/node_modules"]).unwrap().unwrap();
+        assert!(done.satisfied);
+        assert_eq!(done.totals.completed, Default::default());
         assert!(!f.target.join("pkg").exists());
         // Nonexistent roots are fine only because empty policy does no runtime I/O.
         assert!(
@@ -319,6 +321,35 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn wildcard_selection_discovers_through_absent_routes_without_unmatched_skeletons() {
+        let f = Fixture::new();
+        crate::probe_between(&f.source, &f.target).unwrap();
+        fs::create_dir_all(f.source.join("packages/a/node_modules/empty")).unwrap();
+        fs::create_dir_all(f.source.join("packages/a/src/unmatched")).unwrap();
+        fs::create_dir_all(f.source.join("packages/b/src/unmatched")).unwrap();
+        fs::write(f.source.join("packages/a/node_modules/file"), "opaque payload").unwrap();
+        fs::create_dir_all(f.source.join("paired/nested/node_modules")).unwrap();
+        fs::write(f.source.join("paired/nested/node_modules/file"), "paired payload").unwrap();
+        fs::create_dir_all(f.target.join("paired/nested/node_modules/stale/deep")).unwrap();
+        fs::write(f.target.join("paired/nested/node_modules/stale/deep/file"), "remove").unwrap();
+        fs::create_dir_all(f.target.join("target-only/node_modules")).unwrap();
+        fs::write(f.target.join("target-only/node_modules/local"), "retain absent source root").unwrap();
+        let done = f.run(&["**/node_modules"]).unwrap().unwrap();
+        assert!(done.satisfied);
+        assert_eq!(done.totals.completed.files_reflinked, 2);
+        assert_eq!(done.totals.completed.files_copied, 0);
+        assert_eq!(done.totals.completed.directories_created, 4);
+        assert!(f.target.join("packages/a/node_modules/empty").is_dir());
+        assert!(!f.target.join("packages/a/src").exists());
+        assert!(!f.target.join("packages/b").exists());
+        assert!(!f.target.join("paired/nested/node_modules/stale").exists());
+        assert_eq!(fs::read(f.target.join("target-only/node_modules/local")).unwrap(), b"retain absent source root");
+        assert_eq!(f.run(&["**/node_modules"]).unwrap().unwrap().totals.completed, Default::default());
+        fs::write(f.target.join("packages/a/node_modules/file"), "private").unwrap();
+        assert_eq!(fs::read(f.source.join("packages/a/node_modules/file")).unwrap(), b"opaque payload");
     }
 
     #[test]

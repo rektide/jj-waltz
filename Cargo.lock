@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "diff-dirs-transfer-sync"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diff-dirs-tree-compare",
  "diff-dirs-tree-inspect",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "diff-dirs-tree-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diff-dirs-tree-compare",
  "diff-dirs-tree-inspect",
@@ -497,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "diff-dirs-tree-compare"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diff-dirs-tree-inspect",
  "rayon",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "diff-dirs-tree-inspect"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "diff-dirs-tree-observe",
  "rayon",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "diff-dirs-tree-observe"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "difflib"
