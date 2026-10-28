@@ -9,7 +9,9 @@ updated:
   at: 2026-10-28
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Connected coordinated-refill evidence and the new technical architecture separating root-level mode choice, costed native execution and streaming transfer
+    title: Developed the streaming architecture, then commissioned and reviewed the six-crate foundation and recorded its actual module boundaries and correction evidence
+  - resource: "opencode://ses_e7c479171ffeGjjWpkruJHEmUO"
+    title: GLM 5.3 max extracts the six crates, repairs dependency/build paths and completes the parent-reviewed configuration and provenance corrections
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Narrowed the operation lock to preparation and composed explicit reseed preparation with prospective preview reporting
   - resource: "opencode://ses_eb262a81effea1HgF0pPS3f1sy"
@@ -89,6 +91,29 @@ general wrappers for ordinary JJ verbs. Forge and network adapters are optional;
 core creation, switching, inventory, local status, links, and removal stay
 offline.
 
+## Crate map
+
+The root is a virtual Cargo workspace. Its default members are the six production
+crates; the Unix development tool at `tools/performance` is selected explicitly.
+`app/cli` retains package `jj-waltz` and executable `jw`. Internal packages share
+version `0.8.0` with exact pins and currently disable registry publication.
+
+| Crate | Primary owners |
+| --- | --- |
+| [`native/jj`](../native/jj/Cargo.toml) | JJ command adapter, checkout discovery and native path handling. |
+| [`workspace/state`](../workspace/state/Cargo.toml) | Inventory, config, ownership, metadata, snapshot types and links. |
+| [`workspace/lifecycle`](../workspace/lifecycle/Cargo.toml) | Creation/switch/removal/adoption/repair, observation and doctor. |
+| [`transfer/workspace`](../transfer/workspace/Cargo.toml) | CoW/topology, supplied-value transfer policy, frozen-ignore/tracked adapters and diff-dirs integration. |
+| [`refill/engine`](../refill/engine/Cargo.toml) | Prepare/reseed requests, source selection and current orchestration. |
+| [`app/cli`](../app/cli/Cargo.toml) | Parsing, rendering, shell integration and TUI. |
+
+Lifecycle and refill depend on shared state, transfer and native mechanisms; neither
+depends on the other's workflow. State depends on native mechanisms; transfer
+depends on native mechanisms and diff-dirs. App owns Clap/Ratatui. Global and local
+application configuration I/O lives outside transfer, including the lazy inherited
+copy-policy load. [Foundation review](../design/coordinated-refill/foundation0.gpt6a.md)
+records extraction, correction and native-test evidence.
+
 ## Module map
 
 - `cli` is the terminal adapter. It parses flags, asks questions, and renders
@@ -104,19 +129,20 @@ offline.
 - `metadata` persists repository-scoped managed-workspace intent.
 - `doctor` runs independent read-only checks and always produces a complete report,
   including configured-link health for every managed workspace.
-- `workspace` owns Jujutsu workspace discovery and mutation. Its inventory gives
-  commands one consistent view; removal is planned before execution.
-- `cow` owns copy-on-write file cloning and filesystem capability probing. The
-  `workspace` module orchestrates JJ adoption of the clone. The `jj` adapter owns
+- `workspace/state::inventory` owns shared workspace queries/bindings, and
+  `workspace/lifecycle::workspace` owns mutation. Inventory gives commands one
+  consistent view; removal is planned before execution.
+- `transfer/workspace` owns copy-on-write file cloning and filesystem capability
+  probing. The lifecycle workspace module orchestrates JJ adoption of the clone. The `jj` adapter owns
   listing tracked files and reading and writing JJ's local working-copy state,
   which is not a public interface: every copied state is validated by JJ and
   replaced on rejection.
-  Its `cow::ignored` submodule owns shared ignored-copy precedence and the compiled
+  Its `ignored` module owns supplied-value ignored-copy precedence and the compiled
   eligible-root selector; command adapters supply frozen source rules and tracked
   paths instead of implementing their own pattern traversal.
-  `cow::payload` owns the shared native frozen-ignore adapter, operation-bound
-  tree entries, and confinement/identity primitives.
-- `reseed` owns existing-workspace batch reseeding: explicit selection and local
+  `frozen` owns the shared native frozen-ignore adapter; `tracked` owns operation-bound
+  tree entries and confinement/identity primitives.
+- `refill/engine` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and out-of-band failure guidance. Plans exist only in memory. It uses
   public commands through `JjClient`, not creation's private `tree_state` copying.

@@ -36,6 +36,8 @@ jobs:
         run: |
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo clippy --locked --manifest-path plugins/herdr/Cargo.toml --all-targets --all-features -- -D warnings
+      - name: Performance tooling tests
+        run: cargo test --locked -p jj-waltz-perf
 
   test:
     name: test (${{ matrix.os }}, jj ${{ matrix.jj_version }})

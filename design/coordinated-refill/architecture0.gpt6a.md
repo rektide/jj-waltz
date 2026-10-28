@@ -7,7 +7,9 @@ status: proposed-architecture
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human commissions a new technical architecture after directing reseed-first lifecycle simplification and challenging hidden file iteration in preparation; parent defines phases, pass accounting, streaming policy and implementation boundaries
+    title: Human commissions streaming reseed architecture and approves its crate foundation; parent defines phases and pass accounting, then connects reviewed structural implementation and relocated source owners
+  - resource: /design/coordinated-refill/foundation0.gpt6a.md
+    title: Approved and parent-reviewed six-crate foundation, with implementation and focused native verification
   - resource: /design/coordinated-refill/assessment1.gpt6a.md
     title: Human-directed lifecycle parameters, upfront route selection, ordinary failure and full-command ambition
   - resource: /design/coordinated-refill/assessment0.gpt6a.md
@@ -16,13 +18,13 @@ sources:
     title: Current native implementation census, repeated desired-tree work and source-derived 1+8N verification calls
   - resource: /design/coordinated-refill/library0.gpt6a.md
     title: Production coordinated API and twenty-two focused tests, with root, source-sharing, preview and completion limitations
-  - resource: /src/reseed/engine.rs
+  - resource: /refill/engine/src/engine.rs
     title: Current planning, tracked transition, selected-root transfer, repeated validation and reporting seams
-  - resource: /src/cow/transfer.rs
+  - resource: /transfer/workspace/src/transfer.rs
     title: Current compiled Auxiliary visitor, eager realized-root requirement and pair-specific pool adapter
-  - resource: /src/workspace.rs
+  - resource: /workspace/lifecycle/src/workspace.rs
     title: Existing creation materialization, donor tree-state reuse and automatic recreation fallback
-  - resource: /src/lifecycle.rs
+  - resource: /workspace/lifecycle/src/lib.rs
     title: Existing creation batch rollback and local finishing behavior
   - resource: /docs/reseed.md
     title: Shipped source assertions, history, selection, native result and interruption semantics
@@ -53,6 +55,11 @@ with its actual partial effects left in place.
 This is the current technical proposal for the whole command. It incorporates the
 human's lifecycle direction and supersedes the earlier assessments' ambiguous
 “capture inputs” phase. It does not claim implementation or measured speedup.
+
+**Structural prerequisite delivered:** the [six-crate foundation](foundation0.gpt6a.md)
+now provides the native, state, lifecycle, transfer, refill and application owners.
+It retains the current operational routes; the streaming/lifecycle changes below
+remain the next implementation.
 
 Three boundaries are fundamental:
 

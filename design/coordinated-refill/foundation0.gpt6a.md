@@ -3,11 +3,11 @@ type: ImplementationBrief
 title: Approved domain-grouped crate foundation
 description: Human-approved six-crate decomposition, dependency boundaries and foundation commission preceding the streaming reseed implementation.
 resource: /design/coordinated-refill/foundation0.gpt6a.md
-status: implemented-foundation-under-review
+status: implemented-parent-reviewed
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human approves six-crate decomposition; parent commissions GLM 5.3 max, reviews the delivered interfaces and identifies integration corrections before acceptance
+    title: Human approves six-crate decomposition; parent commissions GLM 5.3 max, reviews and integrates correction commits, and verifies three native reseed cases with required CoW and parallel feature forwarding
   - resource: "opencode://ses_e7c479171ffeGjjWpkruJHEmUO"
     title: GLM 5.3 max implements the extraction and receives the parent's focused configuration, build-input and relocation corrections
   - resource: /design/coordinated-refill/foundation0.glm53m.md
@@ -180,5 +180,44 @@ internal pre-alpha extraction; a separate testing framework is not warranted.
 The existing colocation/removal test failure was reported reproduced on the repaired
 pre-extraction baseline and is outside these structural corrections.
 
-Acceptance awaits the focused correction return. This review does not reopen the
-approved crate layout or commission new lifecycle behavior.
+### Reviewed completion
+
+The correction return is complete through `c80e3969`. Parent source review confirms
+lazy inherited-global loading and local configuration I/O in workspace/state,
+complete performance-build input lists, six production default members, exact
+`=0.8.0` internal pins and the corrected install/terminal paths. The builder reports
+a real pinned performance-build smoke, focused regression tests, strict affected-
+crate lint/format checks and an integrated all-target workspace check. Its
+[account](foundation0.glm53m.md#review-round-corrections-and-their-evidence) owns
+those results.
+
+The parent added one specific missing evidence check: enforce actual reflinks while
+exercising the relocated native reseed command with `payload-parallel` enabled:
+
+```sh
+PATH="/usr/local/bin:$PATH" JW_TEST_REQUIRE_COW=1 \
+  cargo nextest run --locked -p jj-waltz --features payload-parallel --test reseed \
+  -E 'test(=plain_sync_replaces_feature_tree_types_modes_and_literal_paths) | test(=incremental_payload_preserves_clean_inodes_and_reconciles_sparse_changes) | test(=incremental_payload_batch_reuses_execution_across_roots_and_targets)' \
+  --test-threads 1
+```
+
+**Three selected tests passed**, with the other 49 tests filtered out. This verifies
+required CoW, clean incremental payloads, native tree/type/mode outcomes and the
+multi-root/multi-target feature-enabled path. It is not a rerun of the entire suite
+or a throughput measurement. Parent also connected explicit performance-tool tests
+to the Linux CI job, retaining their coverage outside production default members.
+
+The foundation is ready for the subsequent reseed implementation. The known
+colocation/removal test failure remains independently reproduced on the baseline;
+musl and Windows builds were not run locally. Internal crates currently have
+`publish = false`, so crates.io publication would need a separate package-release
+decision; local installation and binary distribution remain the current route.
+
+The builder's installation verification ran the real install command: Cargo records
+`jj-waltz 0.8.0` installed from `app/cli` under `/home/rektide/.cargo`, with the
+default feature set. This is an actual local executable update, not merely an
+installation-path syntax check.
+
+Review acceptance covers the approved structural foundation and integration
+corrections. It does not select new transfer defaults or commission the next
+lifecycle implementation implicitly.
