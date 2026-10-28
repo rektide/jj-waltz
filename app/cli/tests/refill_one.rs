@@ -27,6 +27,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_colocation(false)
+    }
+    fn with_colocation(colocated: bool) -> Self {
         let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.test-agent/refill-one-tests");
         fs::create_dir_all(&scratch).unwrap();
         let temp = tempfile::tempdir_in(scratch.canonicalize().unwrap()).unwrap();
@@ -36,7 +39,15 @@ impl Fixture {
             source,
             s: String::new(),
         };
-        f.jj(f.temp.path(), &["git", "init", "--no-colocate", f.source.to_str().unwrap()]);
+        f.jj(
+            f.temp.path(),
+            &[
+                "git",
+                "init",
+                if colocated { "--colocate" } else { "--no-colocate" },
+                f.source.to_str().unwrap(),
+            ],
+        );
         fs::write(f.source.join(".gitignore"), "cache/\n.env\ntool\n.jwlinks.toml\n.jwreseed.local.toml\n").unwrap();
         fs::write(f.source.join("shared"), vec![b'x'; 128 * 1024]).unwrap();
         fs::write(f.source.join("modified"), "source\n").unwrap();
@@ -45,7 +56,7 @@ impl Fixture {
         fs::write(f.source.join("collapse/old"), "source descendant\n").unwrap();
         fs::write(f.source.join("mode"), "#!/bin/sh\n").unwrap();
         fs::write(f.source.join("line\nbreak"), "literal path\n").unwrap();
-        symlink("shared", f.source.join("link")).unwrap();
+        symlink("././shared", f.source.join("link")).unwrap();
         f.jj(&f.source, &["status"]);
         f.s = JjClient::new(&f.source).resolve_one("@").unwrap().commit_id;
         f
@@ -71,7 +82,16 @@ impl Fixture {
         let root = self.temp.path().join(name);
         self.jj(
             &self.source,
-            &["workspace", "add", "--name", name, "-r", &commit_id_revset(at).unwrap(), root.to_str().unwrap()],
+            &[
+                "workspace",
+                "add",
+                "--no-colocate",
+                "--name",
+                name,
+                "-r",
+                &commit_id_revset(at).unwrap(),
+                root.to_str().unwrap(),
+            ],
         );
         root
     }
@@ -86,6 +106,8 @@ impl Fixture {
         fs::set_permissions(root.join("mode"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::remove_file(root.join("link")).unwrap();
         fs::write(root.join("link"), "now regular\n").unwrap();
+        fs::remove_file(root.join("line\nbreak")).unwrap();
+        symlink("./shared", root.join("line\nbreak")).unwrap();
         self.jj(&root, &["status"]);
         JjClient::new(&root).resolve_one("@").unwrap().commit_id
     }
@@ -196,7 +218,7 @@ fn native_result(f: &Fixture, target: &Path, result: &Value, desired: &str) {
 
 #[test]
 fn default_s_native_transfer_links_and_real_call_ledger() {
-    let f = Fixture::new();
+    let f = Fixture::with_colocation(true);
     let target = f.workspace("target", &f.s);
     fs::write(target.join("modified"), "old receiving edits\n").unwrap();
     f.bookmark(&target);
@@ -222,6 +244,8 @@ fn default_s_native_transfer_links_and_real_call_ledger() {
     assert_eq!(fs::read(target.join("tool")).unwrap(), b"payload\n");
     assert_eq!(fs::metadata(&target).unwrap().ino(), root_id);
     assert_eq!(fs::metadata(target.join(".jj")).unwrap().ino(), jj_id);
+    assert!(fs::symlink_metadata(target.join(".git")).is_err());
+    assert_eq!(fs::read_link(target.join("link")).unwrap().as_os_str(), Path::new("././shared").as_os_str());
     assert_eq!(fs::read(f.source.join(".jj/working_copy/checkout")).unwrap(), source_checkout);
     assert_eq!(fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(), source_state);
     assert_eq!(JjClient::new(&f.source).resolve_one("@").unwrap().commit_id, f.s);
@@ -269,6 +293,10 @@ fn explicit_d_direct_restore_covers_shapes_modes_and_source_only_removal() {
     assert_eq!(fs::read(target.join("desired-only")).unwrap(), b"desired only\n");
     assert_eq!(fs::read(target.join("collapse")).unwrap(), b"desired leaf\n");
     assert_eq!(fs::read(target.join("link")).unwrap(), b"now regular\n");
+    assert_eq!(
+        fs::read_link(target.join("line\nbreak")).unwrap().as_os_str(),
+        Path::new("./shared").as_os_str()
+    );
     assert_eq!(fs::metadata(target.join("mode")).unwrap().permissions().mode() & 0o111, 0o111);
     native_result(&f, &target, &result, &d);
 }

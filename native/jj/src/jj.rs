@@ -982,6 +982,10 @@ mod tests {
         assert!(!revision.commit_id.is_empty());
         assert_eq!(client.workspace_names().unwrap(), ["default"]);
         assert_eq!(client.current_workspace_target_names().unwrap(), ["default"]);
+        let bindings = client.workspace_bindings_at(&operation_id).unwrap();
+        assert_eq!(bindings["default"].commit_id, revision.commit_id);
+        assert_eq!(bindings["default"].change_id, revision.change_id);
+        assert_eq!(client.operation_id().unwrap(), operation_id, "binding query must be snapshot-free");
         assert!(client.workspace_target_facts_at(&operation_id).unwrap().contains_key("default"));
         assert!(client.local_bookmark_names_at(&operation_id).unwrap().is_empty());
 

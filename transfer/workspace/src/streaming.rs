@@ -191,7 +191,7 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualifi
         while let Some(group) = cursor.next_group(&runtime)? {
             for lane in &group.outcomes {
                 if let Err(error) = &lane.outcome {
-                    return Err(anyhow::anyhow!("ordinary inspection: {error}"));
+                    return Err(anyhow::Error::new(Arc::clone(error)).context("ordinary inspection"));
                 }
             }
             for target in cursor.pending() {
