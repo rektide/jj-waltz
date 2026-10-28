@@ -88,8 +88,9 @@ pub struct LinkConfig {
     rules: Vec<LinkRuleRaw>,
 }
 
-/// Command-owned, already normalized declarations. Reseed can validate ownership
-/// before mutation and finish against the actual result without reloading config.
+/// Command-owned declarations with validated sources and receiver-relative targets.
+/// Target spelling retains filesystem meaning (in particular symlink/.. traversal).
+/// Reseed can validate ownership before mutation and finish without reloading config.
 #[derive(Debug)]
 pub struct LoadedWorkspaceLinks {
     root: PathBuf,
@@ -98,9 +99,8 @@ pub struct LoadedWorkspaceLinks {
 
 impl LoadedWorkspaceLinks {
     pub fn new(config: Option<&LinkConfig>, workspace_root: &Path) -> Result<Self> {
-        let mut rules = config.map(|c| normalize_rules(c, workspace_root)).transpose()?.unwrap_or_default();
-        for rule in &mut rules {
-            rule.target = normalize_lexical(&rule.target);
+        let rules = config.map(|c| normalize_rules(c, workspace_root)).transpose()?.unwrap_or_default();
+        for rule in &rules {
             if rule
                 .source
                 .strip_prefix(workspace_root)?

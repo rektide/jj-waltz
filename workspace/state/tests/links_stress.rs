@@ -217,6 +217,99 @@ fn apply_links_resolves_relative_targets_from_each_receiving_workspace() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn loaded_links_preserve_symlink_parent_traversal_like_legacy() {
+    let env = LinkTestEnv::new();
+    let outside = env.tempdir.path().join("outside");
+    fs::create_dir_all(outside.join("deep")).unwrap();
+    fs::create_dir_all(outside.join("shared")).unwrap();
+    fs::write(outside.join("shared/marker"), "outside").unwrap();
+    fs::write(
+        env.workspace_root.join(".jwlinks.toml"),
+        "[[link]]\nsource = 'shortcut'\ntarget = 'jump/../shared'\nrequired = true\n",
+    )
+    .unwrap();
+    let config = links::load_link_config(&env.workspace_root).unwrap().unwrap();
+
+    for forward in [true, false] {
+        let receiver = env.tempdir.path().join(if forward { "forward" } else { "legacy" });
+        fs::create_dir_all(receiver.join("shared")).unwrap();
+        fs::write(receiver.join("shared/marker"), "receiver").unwrap();
+        std::os::unix::fs::symlink(outside.join("deep"), receiver.join("jump")).unwrap();
+        let declared_target = receiver.join("jump/../shared");
+        let loaded = links::LoadedWorkspaceLinks::new(Some(&config), &receiver).unwrap();
+        let check = loaded.inspect().pop().unwrap();
+        assert_eq!(check.target.as_os_str(), declared_target.as_os_str());
+        assert_eq!(check.state, links::LinkCheckState::Missing);
+        assert!(check.target_exists);
+        assert_eq!(loaded.active_sources(), [PathBuf::from("shortcut")].into());
+
+        let report = if forward {
+            links::apply_loaded_workspace_links(&loaded).unwrap()
+        } else {
+            links::apply_workspace_links(&env.workspace_root, &receiver).unwrap()
+        };
+        assert_eq!(report.linked, 1);
+        assert_eq!(fs::read_link(receiver.join("shortcut")).unwrap().as_os_str(), declared_target.as_os_str());
+        assert_eq!(
+            receiver.join("shortcut").canonicalize().unwrap(),
+            outside.join("shared").canonicalize().unwrap()
+        );
+        assert_eq!(fs::read(receiver.join("shortcut/marker")).unwrap(), b"outside");
+        assert_eq!(loaded.inspect()[0].state, links::LinkCheckState::Satisfied);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn loaded_links_do_not_mistake_lexical_self_target_for_private_directory() {
+    let env = LinkTestEnv::new();
+    let outside = env.tempdir.path().join("outside");
+    fs::create_dir_all(outside.join("deep")).unwrap();
+    fs::create_dir_all(outside.join("shared")).unwrap();
+    fs::create_dir_all(env.workspace_root.join("shared")).unwrap();
+    std::os::unix::fs::symlink(outside.join("deep"), env.workspace_root.join("jump")).unwrap();
+    fs::write(
+        env.workspace_root.join(".jwlinks.toml"),
+        "[[link]]\nsource = 'shared'\ntarget = 'jump/../shared'\nrequired = true\n",
+    )
+    .unwrap();
+    let config = links::load_link_config(&env.workspace_root).unwrap().unwrap();
+    let loaded = links::LoadedWorkspaceLinks::new(Some(&config), &env.workspace_root).unwrap();
+    assert_eq!(loaded.active_sources(), [PathBuf::from("shared")].into());
+    assert_eq!(loaded.inspect()[0].state, links::LinkCheckState::Conflicting);
+    assert!(links::apply_loaded_workspace_links(&loaded).unwrap_err().to_string().contains("link conflict"));
+    assert!(!fs::symlink_metadata(env.workspace_root.join("shared")).unwrap().is_symlink());
+}
+
+#[test]
+fn loaded_links_resolve_receiving_relative_targets_and_keep_self_target_private() {
+    let env = LinkTestEnv::new();
+    fs::write(
+        env.workspace_root.join(".jwlinks.toml"),
+        "[[link]]\nsource = 'shortcut'\ntarget = 'shared'\nrequired = true\n\n[[link]]\nsource = './private'\ntarget = './private'\nrequired = true\n",
+    )
+    .unwrap();
+    let config = links::load_link_config(&env.workspace_root).unwrap().unwrap();
+    let receiver = env.tempdir.path().join("nested/receiver");
+    fs::create_dir_all(&receiver).unwrap();
+    let loaded = links::LoadedWorkspaceLinks::new(Some(&config), &receiver).unwrap();
+    // Private-directory ownership is declaration-based, including before the
+    // actual resulting directory exists. Loading does not resolve its target.
+    assert_eq!(loaded.active_sources(), [PathBuf::from("shortcut")].into());
+    fs::create_dir_all(receiver.join("shared")).unwrap();
+    fs::create_dir_all(receiver.join("private")).unwrap();
+    let report = links::apply_loaded_workspace_links(&loaded).unwrap();
+    assert_eq!(report.linked, 1);
+    assert_eq!(report.satisfied, 1);
+    assert_eq!(
+        receiver.join("shortcut").canonicalize().unwrap(),
+        receiver.join("shared").canonicalize().unwrap()
+    );
+    assert!(!fs::symlink_metadata(receiver.join("private")).unwrap().is_symlink());
+}
+
 #[test]
 fn apply_links_accepts_an_ordinary_path_that_is_the_target() {
     let env = LinkTestEnv::new();
