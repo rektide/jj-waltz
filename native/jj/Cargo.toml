@@ -1,0 +1,16 @@
+[package]
+name = "jj-waltz-native-jj"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Native JJ client, revision and tree queries, and checkout discovery for jj-waltz"
+
+[dependencies]
+anyhow = "1.0.100"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+
+[dev-dependencies]
+tempfile = "3.19.1"

@@ -1,0 +1,22 @@
+[package]
+name = "jj-waltz-workspace-state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Shared workspace inventory, configuration, ownership records, metadata, and link storage for jj-waltz"
+
+[dependencies]
+jj-waltz-native-jj = { version = "0.8.0", path = "../../native/jj" }
+anyhow = "1.0.100"
+fs2 = "0.4.3"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+toml = "1.1.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.190"
+
+[dev-dependencies]
+tempfile = "3.19.1"

@@ -836,16 +836,28 @@ dependencies = [
  "diff-dirs-transfer-sync",
  "diff-dirs-tree-api",
  "fs2",
+ "jj-waltz-native-jj",
+ "jj-waltz-refill-engine",
+ "jj-waltz-workspace-lifecycle",
+ "jj-waltz-workspace-state",
  "libc",
  "predicates",
  "ratatui",
- "rayon",
  "reflink-copy",
  "serde",
  "serde_json",
  "shlex",
  "tempfile",
- "toml",
+]
+
+[[package]]
+name = "jj-waltz-native-jj"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -857,6 +869,69 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "jj-waltz-refill-engine"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "diff-dirs-transfer-sync",
+ "diff-dirs-tree-api",
+ "fs2",
+ "jj-waltz-native-jj",
+ "jj-waltz-transfer-workspace",
+ "jj-waltz-workspace-state",
+ "serde",
+ "serde_json",
+ "shlex",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "jj-waltz-transfer-workspace"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "diff-dirs-transfer-sync",
+ "diff-dirs-tree-api",
+ "jj-waltz-native-jj",
+ "libc",
+ "rayon",
+ "reflink-copy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "jj-waltz-workspace-lifecycle"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "jj-waltz-native-jj",
+ "jj-waltz-transfer-workspace",
+ "jj-waltz-workspace-state",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
+name = "jj-waltz-workspace-state"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "jj-waltz-native-jj",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

@@ -1,0 +1,1313 @@
+use crate::manager;
+use crate::shell::{self, Shell};
+use anyhow::{Context, Result, bail};
+use clap::{ArgAction, Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{ArgValueCompleter, CompletionCandidate};
+use jj_waltz_native_jj::context;
+use jj_waltz_native_jj::jj::JjClient;
+use jj_waltz_refill_engine as reseed;
+use jj_waltz_workspace_lifecycle as lifecycle;
+use jj_waltz_workspace_lifecycle::doctor::DoctorEngine;
+use jj_waltz_workspace_lifecycle::observe::{ObservationEngine, RefreshMode, resolve_workspace_token};
+use jj_waltz_workspace_lifecycle::workspace;
+use jj_waltz_workspace_lifecycle::{AdoptionRequest, BookmarkIntent, CreatedWorkspace, CreationPolicy, RepairRequest};
+use jj_waltz_workspace_state::config::{Config, DefaultCommand};
+use jj_waltz_workspace_state::inventory::{
+    WorkspaceInventory, completion_workspace_candidates, current_workspace_name, path_for_workspace, workspace_root_current,
+};
+use jj_waltz_workspace_state::links;
+use jj_waltz_workspace_state::ownership;
+use jj_waltz_workspace_state::snapshot::{SnapshotEnvelope, WorkingCopyStatus};
+use serde::Serialize;
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
+use std::fmt::Write as FmtWrite;
+use std::io::{self, IsTerminal, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "jw",
+    version,
+    about = "Jujutsu workspace switching",
+    long_about = None
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+    /// Shell adapters reserve stdout for a selected workspace path.
+    #[arg(long, hide = true, global = true)]
+    ui_path: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    #[command(about = "Open the interactive workspace manager")]
+    Ui,
+    #[command(about = "Describe Git and JJ checkout context")]
+    Context(ContextCommand),
+    #[command(about = "Create one or more workspaces")]
+    Add(AddCommand),
+    #[command(
+        visible_aliases = shell::SWITCH_ALIASES,
+        about = "Switch to or create a workspace"
+    )]
+    Switch(SwitchCommand),
+    #[command(aliases = ["l", "ls"], about = "List known workspaces")]
+    List(ListCommand),
+    #[command(about = "Explain one workspace's semantic state")]
+    Status(StatusCommand),
+    #[command(about = "Diagnose repository and workspace configuration")]
+    Doctor(DoctorCommand),
+    #[command(about = "Record an existing workspace as managed")]
+    Adopt(AdoptCommand),
+    #[command(about = "Repair existing managed workspace metadata")]
+    Repair(RepairCommand),
+    #[command(about = "Reseed existing workspaces in place with copy-on-write files")]
+    Reseed(ReseedCommand),
+    #[command(about = "Prepare an upstream source and report its exact frozen commit")]
+    Prepare(PrepareCommand),
+    #[command(about = "Print a workspace path")]
+    Path(PathCommand),
+    #[command(alias = "rm", about = "Forget a workspace")]
+    Remove(RemoveCommand),
+    #[command(about = "Forget missing workspaces")]
+    Prune,
+    #[command(about = "Reconcile an external workspace after its owner removed checkout and Git registration")]
+    ReconcileExternal { name: String },
+    #[command(about = "Print the current workspace root")]
+    Root,
+    #[command(about = "Print the current workspace name")]
+    Current,
+    #[command(about = "Shell integration helpers")]
+    Shell(ShellCommand),
+    #[command(about = "Manage workspace links")]
+    Links(LinksCommand),
+    #[command(about = "Generate shell completions")]
+    Completions(CompletionCommand),
+}
+
+#[derive(Debug, Args)]
+struct AddCommand {
+    #[arg(
+        value_name = "NAME",
+        num_args = 1..,
+        required_unless_present = "path",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    names: Vec<String>,
+    /// Exact destination for one workspace; infer NAME when omitted.
+    #[arg(long, value_name = "DESTINATION")]
+    path: Option<std::path::PathBuf>,
+    /// Source checkout (default: current checkout).
+    #[arg(long = "from", value_name = "SOURCE")]
+    source: Option<std::path::PathBuf>,
+    /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
+    #[arg(long, value_name = "REVSET", help = "Create at one exact revset (default: snapshotted source @)")]
+    at: Option<String>,
+    #[arg(short, long, value_name = "BOOKMARK", help = "Create a bookmark in a new workspace")]
+    bookmark: Option<String>,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Do not create a bookmark for a new workspace"
+    )]
+    no_bookmark: bool,
+    #[arg(long, action = ArgAction::SetTrue, help = "Skip applying workspace links")]
+    no_links: bool,
+    /// Privately CoW-copy eligible ignored roots into new workspaces (repeatable; replaces local/global policy).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for new workspaces, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with = "no_cow",
+        help = "Use copy-on-write from the source checkout (default; overrides config colocation)"
+    )]
+    cow: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Use ordinary tracked JJ checkout (ignored payload still requires CoW)"
+    )]
+    no_cow: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_colocate",
+        help = "Create with a Git worktree instead of default CoW (JJ 0.46+; conflicts with --cow)"
+    )]
+    colocate: bool,
+    #[arg(long, help = "Override workspace.colocate for new workspaces")]
+    no_colocate: bool,
+}
+
+#[derive(Debug, Args)]
+struct SwitchCommand {
+    #[arg(
+        value_name = "NAME",
+        num_args = 1..,
+        required_unless_present = "path",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    names: Vec<String>,
+    /// Exact destination for one workspace; infer NAME when omitted.
+    #[arg(long, value_name = "DESTINATION")]
+    path: Option<std::path::PathBuf>,
+    /// Source checkout (default: current checkout).
+    #[arg(long = "from", value_name = "SOURCE")]
+    source: Option<std::path::PathBuf>,
+    /// Assert the snapshotted donor tracked tree matches this revision (new workspaces only).
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
+    #[arg(long, value_name = "REVSET", help = "Create at one exact revset (default: snapshotted source @)")]
+    at: Option<String>,
+    #[arg(short, long, value_name = "BOOKMARK", help = "Create a bookmark in a new workspace")]
+    bookmark: Option<String>,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Do not create a bookmark for a new workspace"
+    )]
+    no_bookmark: bool,
+    #[arg(short = 'x', long, value_name = "COMMAND", help = "Run a command after switching")]
+    execute: Option<String>,
+    #[arg(long, hide = true, action = ArgAction::SetTrue)]
+    print_path: bool,
+    #[arg(long, action = ArgAction::SetTrue, help = "Skip applying workspace links")]
+    no_links: bool,
+    /// Privately CoW-copy eligible ignored roots into new workspaces only (repeatable; replaces local/global policy).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for new workspaces, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with = "no_cow",
+        help = "Use copy-on-write from the source checkout (default; overrides config colocation)"
+    )]
+    cow: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Use ordinary tracked JJ checkout (ignored payload still requires CoW)"
+    )]
+    no_cow: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_colocate",
+        help = "Create with a Git worktree instead of default CoW (JJ 0.46+; conflicts with --cow)"
+    )]
+    colocate: bool,
+    #[arg(long, help = "Override workspace.colocate for new workspaces")]
+    no_colocate: bool,
+    #[arg(last = true)]
+    execute_args: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct LinksCommand {
+    #[command(subcommand)]
+    command: LinksSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum LinksSubcommand {
+    #[command(about = "Apply configured links to the current workspace")]
+    Apply,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    #[default]
+    Plain,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ListRefresh {
+    None,
+    Current,
+    All,
+}
+
+impl From<ListRefresh> for RefreshMode {
+    fn from(value: ListRefresh) -> Self {
+        match value {
+            ListRefresh::None => Self::None,
+            ListRefresh::Current => Self::Current,
+            ListRefresh::All => Self::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum StatusRefresh {
+    None,
+    Current,
+}
+
+impl From<StatusRefresh> for RefreshMode {
+    fn from(value: StatusRefresh) -> Self {
+        match value {
+            StatusRefresh::None => Self::None,
+            StatusRefresh::Current => Self::Current,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct ListCommand {
+    #[arg(long, value_enum, default_value_t)]
+    format: OutputFormat,
+    #[arg(long, value_enum)]
+    refresh: Option<ListRefresh>,
+}
+
+#[derive(Debug, Args)]
+struct StatusCommand {
+    #[arg(
+        value_name = "WORKSPACE",
+        default_value = "@",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    workspace: String,
+    #[arg(long, value_enum, default_value_t)]
+    format: OutputFormat,
+    #[arg(long, value_enum, default_value = "current")]
+    refresh: StatusRefresh,
+}
+
+#[derive(Debug, Args)]
+struct DoctorCommand {
+    #[arg(long, value_enum, default_value_t)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+struct ContextCommand {
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: std::path::PathBuf,
+    #[arg(long, value_enum, default_value = "human")]
+    format: ContextFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ContextFormat {
+    Human,
+    Json,
+}
+
+#[derive(Debug, Args)]
+struct AdoptCommand {
+    #[arg(
+        value_name = "NAME",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    name: String,
+    #[arg(long, value_name = "REVSET", required = true)]
+    base: String,
+    #[arg(long, value_name = "BOOKMARK", help = "Record a bookmark association without creating or moving the bookmark")]
+    bookmark: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "bookmark",
+        action = ArgAction::SetTrue,
+        help = "Do not record a bookmark association, even if a legacy marker exists"
+    )]
+    no_bookmark: bool,
+}
+
+#[derive(Debug, Args)]
+struct RepairCommand {
+    #[arg(
+        value_name = "NAME",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    name: String,
+    #[arg(long, value_name = "REVSET", required = true)]
+    base: String,
+    #[arg(
+        long,
+        value_name = "BOOKMARK",
+        required_unless_present = "no_bookmark",
+        conflicts_with = "no_bookmark",
+        help = "Replace the bookmark association without creating or moving the bookmark"
+    )]
+    bookmark: Option<String>,
+    #[arg(
+        long,
+        required_unless_present = "bookmark",
+        conflicts_with = "bookmark",
+        action = ArgAction::SetTrue,
+        help = "Remove the bookmark association"
+    )]
+    no_bookmark: bool,
+}
+
+#[derive(Debug, Args)]
+struct PathCommand {
+    #[arg(
+        value_name = "NAME",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum UnmatchedPolicyArg {
+    Error,
+    Warn,
+}
+
+impl From<UnmatchedPolicyArg> for reseed::UnmatchedPolicy {
+    fn from(value: UnmatchedPolicyArg) -> Self {
+        match value {
+            UnmatchedPolicyArg::Error => Self::Error,
+            UnmatchedPolicyArg::Warn => Self::Warn,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct ReseedCommand {
+    /// Literal targets (default: current variant; primary requires names or --group).
+    #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
+    names: Vec<String>,
+    /// Select a local group, or built-in all (registered workers except primary/donor; repeatable).
+    #[arg(long = "group", value_name = "GROUP")]
+    groups: Vec<String>,
+    /// Override group selection misses: error (default) or warn and skip; names stay strict.
+    #[arg(long, value_enum)]
+    on_unmatched: Option<UnmatchedPolicyArg>,
+    /// Prepared source workspace root (default: configured source or verified primary checkout).
+    #[arg(long = "from", value_name = "PATH")]
+    source: Option<std::path::PathBuf>,
+    /// Donor tree assertion, or upstream goal with --prepare (CLI overrides local source_at).
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
+    /// Fetch and prepare the donor first; only preparation holds the repository operation lock.
+    #[arg(long)]
+    prepare: bool,
+    /// Sync to this revset instead of the donor's current commit.
+    #[arg(long, value_name = "REVSET")]
+    at: Option<String>,
+    /// Select eligible ignored source roots (repeatable; replaces local/global selection).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored copying for this run, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
+    /// Delete unrecorded target contents except .jj before refilling.
+    #[arg(long)]
+    replace_content: bool,
+    /// Allow work without a covering local/remote bookmark; all other guards still apply.
+    #[arg(long)]
+    allow_unbookmarked: bool,
+    /// Preview without fetch/build/refill; --prepare defers refill readiness. May snapshot working copies.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct PrepareCommand {
+    /// Source root (default: configured source or verified primary checkout).
+    #[arg(long = "from", value_name = "PATH")]
+    source: Option<std::path::PathBuf>,
+    /// Upstream goal override; otherwise infer one native tracked or exact remote line before fetch.
+    #[arg(long, value_name = "REVSET")]
+    source_at: Option<String>,
+    /// Verify selected ignored source payload (repeatable; replaces local/global selection).
+    #[arg(long, value_name = "PATTERN")]
+    copy_ignored: Vec<String>,
+    /// Disable ignored payload selection, including an explicit selection.
+    #[arg(long)]
+    no_copy_ignored: bool,
+    /// Explain prospective fetch and preparation commands without performing them.
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long, value_enum, default_value_t)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Args)]
+struct RemoveCommand {
+    #[arg(
+        value_name = "NAME",
+        add = ArgValueCompleter::new(complete_workspaces)
+    )]
+    names: Vec<String>,
+    #[arg(long, action = ArgAction::SetTrue, help = "Forget the workspace but keep its directory")]
+    keep_dir: bool,
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        help = "Delete associated bookmarks; they are kept by default"
+    )]
+    delete_bookmark: bool,
+}
+
+#[derive(Debug, Args)]
+struct CompletionCommand {
+    #[arg(value_enum)]
+    shell: Shell,
+}
+
+#[derive(Debug, Args)]
+struct ShellCommand {
+    #[command(subcommand)]
+    command: ShellSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ShellSubcommand {
+    Init(ShellInitCommand),
+    Completions(CompletionCommand),
+}
+
+#[derive(Debug, Args)]
+struct ShellInitCommand {
+    #[arg(value_enum)]
+    shell: Shell,
+}
+
+pub fn run() -> Result<()> {
+    shell::complete_if_requested(Cli::command);
+    let args = normalized_args();
+    if args.get(1).is_some_and(|a| a == "reseed") && args.iter().skip(2).take_while(|a| *a != "--").any(|a| a == "--freshen") {
+        bail!("reseed --freshen was removed; use `jw prepare` to prepare the source");
+    }
+    let cli = Cli::parse_from(args);
+
+    let Some(command) = cli.command else {
+        return run_default(cli.ui_path).map_err(context::add_workspace_hint);
+    };
+    let result = match command {
+        Commands::Ui => run_ui(cli.ui_path),
+        Commands::Context(cmd) => run_context(cmd),
+        Commands::Add(cmd) => run_add(cmd),
+        Commands::Switch(cmd) => run_switch(cmd),
+        Commands::List(cmd) => run_list(cmd),
+        Commands::Status(cmd) => run_status(cmd),
+        Commands::Doctor(cmd) => run_doctor(cmd),
+        Commands::Adopt(cmd) => run_adopt(cmd),
+        Commands::Repair(cmd) => run_repair(cmd),
+        Commands::Reseed(cmd) => run_reseed(cmd),
+        Commands::Prepare(cmd) => run_prepare(cmd),
+        Commands::Path(cmd) => run_path(cmd),
+        Commands::Remove(cmd) => run_remove(cmd),
+        Commands::Prune => run_prune(),
+        Commands::ReconcileExternal { name } => {
+            ownership::reconcile(&name)?;
+            println!("Reconciled external workspace: {name}; commits and bookmarks retained");
+            Ok(())
+        }
+        Commands::Root => workspace_root_current().and_then(|root| print_line(root.display())),
+        Commands::Current => current_workspace_name().and_then(print_line),
+        Commands::Shell(cmd) => run_shell(cmd),
+        Commands::Links(cmd) => run_links(cmd),
+        Commands::Completions(cmd) => run_completions(cmd.shell),
+    };
+    result.map_err(context::add_workspace_hint)
+}
+
+fn print_help(shell_path: bool) -> Result<()> {
+    let help = Cli::command().render_help().to_string();
+    if shell_path {
+        writeln!(io::stderr(), "{help}")?;
+    } else {
+        print_line(help)?;
+    }
+    Ok(())
+}
+
+fn run_default(shell_path: bool) -> Result<()> {
+    // Pipes and scripts never unexpectedly enter raw terminal mode, even if config says `ui`.
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return print_help(shell_path);
+    }
+    match Config::load()?.default_command {
+        DefaultCommand::Ui => run_ui(shell_path),
+        DefaultCommand::Help => print_help(shell_path),
+        DefaultCommand::List => {
+            if shell_path {
+                write!(io::stderr(), "{}", render_list_plain()?)?;
+                Ok(())
+            } else {
+                run_list_plain()
+            }
+        }
+    }
+}
+
+fn run_ui(shell_path: bool) -> Result<()> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        bail!("jw ui requires a terminal on stdin and stderr; use jw list for scripts")
+    }
+    let config = Config::load()?;
+    validate_trunk_revset(&config.trunk.revset)?;
+    let Some(name) = manager::run(&config.trunk.revset)? else {
+        return Ok(());
+    };
+    let policy = CreationPolicy::load(None, None, false, false, None, 1)?;
+    let outcome = lifecycle::switch_existing_workspace(&name, &policy)?;
+    print_switch_path(&outcome.result)?;
+    if !shell_path {
+        eprintln!("The destination is printed above. Enable `jw shell init <shell>` to change your shell directory automatically.");
+    }
+    Ok(())
+}
+
+fn run_context(cmd: ContextCommand) -> Result<()> {
+    let report = context::discover(Some(&cmd.path));
+    match cmd.format {
+        ContextFormat::Human => write_text(&render_context_human(&report)),
+        ContextFormat::Json => write_json(&report),
+    }
+}
+
+fn run_reseed(cmd: ReseedCommand) -> Result<()> {
+    use reseed::ReseedRequest;
+
+    run_refill(ReseedRequest {
+        names: cmd.names,
+        groups: cmd.groups,
+        on_unmatched: cmd.on_unmatched.map(reseed::UnmatchedPolicy::from),
+        source: cmd.source,
+        source_at: cmd.source_at,
+        prepare: cmd.prepare,
+        at: cmd.at,
+        copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
+        no_copy_ignored: cmd.no_copy_ignored,
+        replace_content: cmd.replace_content,
+        allow_unbookmarked: cmd.allow_unbookmarked,
+        dry_run: cmd.dry_run,
+    })
+}
+
+fn run_prepare(cmd: PrepareCommand) -> Result<()> {
+    let report = reseed::prepare_with_diagnostics(
+        reseed::PrepareRequest {
+            source: cmd.source,
+            source_at: cmd.source_at,
+            copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
+            no_copy_ignored: cmd.no_copy_ignored,
+            dry_run: cmd.dry_run,
+        },
+        |diagnostic| eprintln!("{diagnostic}"),
+    )?;
+    match cmd.format {
+        OutputFormat::Json => write_json(&report),
+        OutputFormat::Plain => print_refill_report(&report, "prepare"),
+    }
+}
+
+fn run_refill(request: reseed::ReseedRequest) -> Result<()> {
+    let report = reseed::run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))?;
+    print_refill_report(&report, "reseed")
+}
+
+fn print_refill_report(report: &reseed::ReseedReport, command: &str) -> Result<()> {
+    use reseed::ReseedStatus;
+    if report.dry_run {
+        if command == "reseed" {
+            println!("Readiness check: JJ snapshots may record working-copy changes; no fetch, preparation, refill, checkout reset, or deletion is performed.");
+        }
+        for selected in &report.selections {
+            println!("SELECT {:?} {:?} via {}", selected.name, selected.root, selected.origins.join(", "));
+        }
+    }
+    println!(
+        "{}source: {} ({})",
+        if report.dry_run { "Dry-run " } else { "" },
+        report.source.display(),
+        report
+            .source_commit_id
+            .as_deref()
+            .unwrap_or(if command == "reseed" && report.preparation_summary.is_none() {
+                "source not verified"
+            } else {
+                "post-fetch exact commit unknown"
+            })
+    );
+    if let Some(summary) = &report.preparation_summary {
+        println!("{summary}");
+    }
+    for target in &report.targets {
+        let label = match target.status {
+            ReseedStatus::Planned => "PLAN",
+            ReseedStatus::Succeeded => "OK",
+            ReseedStatus::Failed if report.dry_run => "BLOCKED",
+            ReseedStatus::Failed => "FAIL",
+        };
+        println!("{label} {}: {}", target.name, target.message);
+    }
+    if report.has_failures() {
+        if report.dry_run {
+            bail!(
+                "{command} readiness blocked; no targets refilled: {}",
+                report
+                    .targets
+                    .iter()
+                    .filter(|target| target.status == ReseedStatus::Failed)
+                    .map(|target| format!("{}: {}", target.name, target.message))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        bail!("{command} did not complete for every target; follow the reported recovery instructions before retrying")
+    }
+    Ok(())
+}
+
+fn render_context_human(report: &context::ContextReport) -> String {
+    let mut output = String::new();
+    writeln!(output, "path: {}", report.path.display()).expect("write string");
+    writeln!(output, "git:").expect("write string");
+    let git = &report.git;
+    writeln!(output, "  checkout root: {}", display_optional_path(git.checkout_root.as_deref())).expect("write string");
+    writeln!(output, "  git dir: {}", display_optional_path(git.git_dir.as_deref())).expect("write string");
+    writeln!(output, "  common dir: {}", display_optional_path(git.common_dir.as_deref())).expect("write string");
+    writeln!(output, "  linked worktree: {}", display_optional(git.linked_worktree.as_ref())).expect("write string");
+    writeln!(output, "  HEAD: {}", git.head_commit.as_deref().unwrap_or("(unknown)")).expect("write string");
+    writeln!(output, "  ref: {}", git.head_ref.as_deref().unwrap_or("(detached or unknown)")).expect("write string");
+    let jj = &report.jj;
+    writeln!(output, "jj:").expect("write string");
+    writeln!(output, "  workspace root: {}", display_optional_path(jj.workspace_root.as_deref())).expect("write string");
+    writeln!(output, "  workspace name: {}", jj.workspace_name.as_deref().unwrap_or("(unknown)")).expect("write string");
+    writeln!(output, "  repository: {}", display_optional_path(jj.repository_path.as_deref())).expect("write string");
+    writeln!(output, "  Git backend: {}", display_optional_path(jj.git_backend_dir.as_deref())).expect("write string");
+    writeln!(
+        output,
+        "  Git backend common dir: {}",
+        display_optional_path(jj.git_backend_common_dir.as_deref())
+    )
+    .expect("write string");
+    writeln!(output, "  primary checkout: {}", display_optional_path(jj.primary_checkout.as_deref())).expect("write string");
+    writeln!(output, "  primary workspace: {}", jj.primary_workspace.as_deref().unwrap_or("(unknown)")).expect("write string");
+    if report.diagnostics.is_empty() {
+        output.push_str("diagnostics: none\n");
+    } else {
+        output.push_str("diagnostics:\n");
+        for diagnostic in &report.diagnostics {
+            writeln!(output, "  [{:?}] {}: {}", diagnostic.severity, diagnostic.code, diagnostic.message).expect("write string");
+        }
+    }
+    output
+}
+
+fn display_optional_path(value: Option<&Path>) -> String {
+    value.map_or_else(|| "(none)".to_owned(), |path| path.display().to_string())
+}
+
+fn display_optional<T: std::fmt::Display>(value: Option<&T>) -> String {
+    value.map_or_else(|| "(none)".to_owned(), ToString::to_string)
+}
+
+fn normalized_args() -> Vec<OsString> {
+    let mut args = std::env::args_os().collect::<Vec<_>>();
+    if args
+        .get(1)
+        .and_then(|arg| arg.to_str())
+        .is_some_and(|arg| shell::SWITCH_SHORTHANDS.contains(&arg))
+    {
+        let target = args[1].clone();
+        args[1] = OsString::from("switch");
+        args.insert(2, target);
+    }
+    args
+}
+
+fn run_add(cmd: AddCommand) -> Result<()> {
+    let (names, destination) = creation_location(cmd.names, cmd.path, cmd.source)?;
+    let policy = CreationPolicy::load(
+        cmd.at,
+        cmd.bookmark,
+        cmd.no_bookmark,
+        cmd.no_links,
+        copy_on_write_override(cmd.cow, cmd.no_cow),
+        names.len(),
+    )?
+    .with_colocation_override(if cmd.colocate {
+        Some(true)
+    } else if cmd.no_colocate {
+        Some(false)
+    } else {
+        None
+    })
+    .with_destination(destination)
+    .with_source_assertion(cmd.source_at)
+    .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
+    let outcome = lifecycle::add_workspaces(&names, &policy)?;
+    print_warnings(&outcome.warnings);
+    for created in &outcome.created {
+        print_created_workspace(created, false);
+    }
+
+    Ok(())
+}
+
+fn run_switch(cmd: SwitchCommand) -> Result<()> {
+    if cmd.execute.is_none() && !cmd.execute_args.is_empty() {
+        bail!("arguments after -- require --execute")
+    }
+    let (names, destination) = creation_location(cmd.names, cmd.path, cmd.source)?;
+    let policy = CreationPolicy::load(
+        cmd.at,
+        cmd.bookmark,
+        cmd.no_bookmark,
+        cmd.no_links,
+        copy_on_write_override(cmd.cow, cmd.no_cow),
+        names.len(),
+    )?
+    .with_colocation_override(if cmd.colocate {
+        Some(true)
+    } else if cmd.no_colocate {
+        Some(false)
+    } else {
+        None
+    })
+    .with_destination(destination)
+    .with_source_assertion(cmd.source_at)
+    .with_ignored_copy(cmd.copy_ignored, cmd.no_copy_ignored);
+    let outcome = lifecycle::switch_workspaces(&names, &policy)?;
+    print_warnings(&outcome.warnings);
+    for created in &outcome.intermediate {
+        if !cmd.print_path {
+            print_created_workspace(created, false);
+        }
+    }
+    print_links_report(outcome.links.as_ref(), cmd.print_path);
+    let result = outcome.result;
+
+    if cmd.print_path {
+        return print_switch_path(&result);
+    }
+
+    if let Some(command) = cmd.execute {
+        return run_execute(&result.path, &command, &cmd.execute_args);
+    }
+
+    if result.created {
+        println!("Created workspace: {}", result.workspace);
+    } else {
+        println!("Switched workspace: {}", result.workspace);
+    }
+    println!("  path: {}", result.path.display());
+    if let Some(bookmark) = result.bookmark {
+        println!("  bookmark: {bookmark}");
+    }
+    Ok(())
+}
+
+/// Establish the explicit source as the command context before loading repository state.
+/// Destination paths stay relative to the caller, not to --from. This CLI process performs
+/// one command, so all existing lifecycle/JJ helpers share the same source context.
+fn creation_location(
+    names: Vec<String>,
+    path: Option<std::path::PathBuf>,
+    source: Option<std::path::PathBuf>,
+) -> Result<(Vec<String>, Option<std::path::PathBuf>)> {
+    if path.is_some() && names.len() > 1 {
+        bail!("--path selects a single workspace; provide at most one NAME")
+    }
+    let destination = path.as_deref().map(workspace::normalize_destination).transpose()?;
+    if let Some(source) = source {
+        std::env::set_current_dir(&source).with_context(|| format!("cannot enter source checkout {}", source.display()))?;
+    }
+    let names = if let Some(destination) = &destination {
+        let inventory = WorkspaceInventory::load()?;
+        vec![workspace::name_for_destination(&inventory, names.first().map(String::as_str), destination)?]
+    } else {
+        names
+    };
+    Ok((names, destination))
+}
+
+fn print_switch_path(result: &workspace::SwitchResult) -> Result<()> {
+    let path = result.relative_subdir.as_ref().map(|relative| result.path.join(relative));
+    let path = path.as_ref().filter(|path| path.is_dir()).unwrap_or(&result.path);
+    print_line(path.display())
+}
+
+fn copy_on_write_override(cow: bool, no_cow: bool) -> Option<bool> {
+    match (cow, no_cow) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
+fn print_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("jw: warning: {warning}");
+    }
+}
+
+fn print_created_workspace(created: &CreatedWorkspace, quiet: bool) {
+    print_links_report(created.links.as_ref(), quiet);
+    if quiet {
+        return;
+    }
+    println!("Created workspace: {}", created.result.workspace);
+    println!("  path: {}", created.result.path.display());
+    if let Some(bookmark) = &created.result.bookmark {
+        println!("  bookmark: {bookmark}");
+    }
+}
+
+fn print_links_report(report: Option<&links::LinkApplyReport>, quiet: bool) {
+    if quiet {
+        return;
+    }
+    if let Some(report) = report
+        && report.has_entries()
+    {
+        println!(
+            "Links: {} created, {} already satisfied, {} missing target",
+            report.linked, report.satisfied, report.skipped_missing_target
+        );
+    }
+}
+
+fn run_list(cmd: ListCommand) -> Result<()> {
+    if cmd.format == OutputFormat::Plain {
+        if cmd.refresh.is_some() {
+            bail!("--refresh requires --format=json for `jw list`");
+        }
+        return run_list_plain();
+    }
+
+    let config = Config::load()?;
+    validate_trunk_revset(&config.trunk.revset)?;
+    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?.capture_list(cmd.refresh.unwrap_or(ListRefresh::Current).into())?;
+    write_json(&envelope)
+}
+
+// Compatibility contract: plain list remains the pre-snapshot implementation. In particular, it
+// does not load config, metadata, or trunk and therefore keeps its exact historical output.
+fn run_list_plain() -> Result<()> {
+    write_text(&render_list_plain()?)
+}
+
+fn render_list_plain() -> Result<String> {
+    let inventory = WorkspaceInventory::load()?;
+    let mut output = String::new();
+    for entry in inventory.entries() {
+        let marker = inventory.marker(&entry.name);
+
+        // JJ 0.46 reports recorded paths even when the checkout has disappeared.
+        let path = match entry.root.as_deref() {
+            Some(path) => match std::fs::metadata(path) {
+                Ok(_) => path.display().to_string(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => "(missing)".to_owned(),
+                Err(error) => return Err(error).context("cannot inspect listed workspace path"),
+            },
+            None => "(missing)".to_owned(),
+        };
+        writeln!(output, "{marker} {}\t{path}", entry.name).expect("write string");
+    }
+
+    Ok(output)
+}
+
+fn run_status(cmd: StatusCommand) -> Result<()> {
+    let config = Config::load()?;
+    validate_trunk_revset(&config.trunk.revset)?;
+    let envelope = ObservationEngine::new(JjClient::current()?, config.trunk.revset)?.capture_status(&cmd.workspace, cmd.refresh.into())?;
+    match cmd.format {
+        OutputFormat::Json => write_json(&envelope),
+        OutputFormat::Plain => write_text(&render_status_plain(&envelope)),
+    }
+}
+
+fn run_doctor(cmd: DoctorCommand) -> Result<()> {
+    let doctor = match Config::load() {
+        Ok(config) => DoctorEngine::current(config.trunk.revset)?,
+        Err(error) => DoctorEngine::current_with_configuration_error(format!("{error:#}"))?,
+    };
+    let report = doctor.run();
+    match cmd.format {
+        OutputFormat::Json => write_json(&report)?,
+        OutputFormat::Plain => write_text(&report.render_plain())?,
+    }
+    if report.has_errors() {
+        bail!("doctor found repository errors")
+    }
+    Ok(())
+}
+
+fn run_adopt(cmd: AdoptCommand) -> Result<()> {
+    let current_client = JjClient::current()?;
+    let resolved = resolve_workspace_token(&current_client, &cmd.name)?;
+    let path = resolved
+        .path
+        .filter(|path| path.is_dir())
+        .with_context(|| format!("workspace path is missing or unusable: {}", resolved.name))?;
+
+    let result = lifecycle::adopt_workspace(&AdoptionRequest {
+        workspace_name: resolved.name.clone(),
+        workspace_root: path.clone(),
+        base_revset: cmd.base,
+        bookmark: cmd.bookmark,
+        no_bookmark: cmd.no_bookmark,
+    })?;
+
+    let bookmark = result.metadata.associated_bookmark.as_deref().unwrap_or("(none)");
+    let output = format!(
+        "Adopted workspace: {}\n  path: {}\n  creation base: {}\n  frozen operation: {}\n  current revision: {} ({})\n  bookmark: {}\n  stack analysis: deferred to milestone 1\n",
+        result.metadata.workspace_name,
+        path.display(),
+        result.metadata.creation_base_commit_id,
+        result.metadata.creation_operation_id,
+        result.current_revision.commit_id,
+        result.current_revision.change_id,
+        bookmark,
+    );
+    write_text(&output)
+}
+
+fn run_repair(cmd: RepairCommand) -> Result<()> {
+    let bookmark = match cmd.bookmark {
+        Some(bookmark) => BookmarkIntent::Associate(bookmark),
+        None if cmd.no_bookmark => BookmarkIntent::None,
+        None => unreachable!("clap requires explicit repair bookmark intent"),
+    };
+    let result = lifecycle::repair_workspace(&RepairRequest {
+        workspace_name: cmd.name,
+        base_revset: cmd.base,
+        bookmark,
+    })?;
+    let previous_bookmark = result.previous.associated_bookmark.as_deref().unwrap_or("(none)");
+    let replacement_bookmark = result.replacement.associated_bookmark.as_deref().unwrap_or("(none)");
+    let output = format!(
+        "Repaired workspace: {}\n  validation operation: {}\n  previous creation base: {}\n  creation base: {}\n  previous bookmark: {}\n  bookmark: {}\n",
+        result.replacement.workspace_name,
+        result.validation_operation_id,
+        result.previous.creation_base_commit_id,
+        result.replacement.creation_base_commit_id,
+        previous_bookmark,
+        replacement_bookmark,
+    );
+    write_text(&output)
+}
+
+fn validate_trunk_revset(revset: &str) -> Result<()> {
+    if revset.trim().is_empty() {
+        bail!("configured trunk revset is blank; set `[trunk].revset` to an exact-one revset")
+    }
+    Ok(())
+}
+
+fn render_status_plain(envelope: &SnapshotEnvelope) -> String {
+    let workspace = envelope.workspaces.first().expect("status envelope contains one workspace");
+    let mut output = String::new();
+    writeln!(output, "workspace: {}", workspace.name).expect("write string");
+    writeln!(output, "operation: {}", envelope.repository.operation_id).expect("write string");
+    writeln!(
+        output,
+        "path: {}",
+        workspace.path.as_deref().map_or_else(|| "(missing)".into(), |path| path.display().to_string())
+    )
+    .expect("write string");
+    writeln!(
+        output,
+        "roles: current={} previous={} default={}",
+        workspace.role.current, workspace.role.previous, workspace.role.default
+    )
+    .expect("write string");
+    writeln!(output, "management: {:?}", workspace.management).expect("write string");
+    writeln!(
+        output,
+        "working copy: {}{}",
+        describe_working_copy(workspace.working_copy),
+        if workspace.working_copy_refreshed {
+            " (refreshed)"
+        } else {
+            " (not refreshed)"
+        }
+    )
+    .expect("write string");
+    writeln!(output, "revision: {} ({}) {}", workspace.commit_id, workspace.change_id, workspace.description).expect("write string");
+    writeln!(output, "trunk: {} ({})", envelope.repository.trunk.commit_id, envelope.repository.trunk.revset).expect("write string");
+    if workspace.hazards.is_empty() {
+        output.push_str("hazards: none\n");
+    } else {
+        output.push_str("hazards:\n");
+        for hazard in &workspace.hazards {
+            writeln!(output, "  {:?}: {}", hazard.id, hazard.message).expect("write string");
+        }
+    }
+    output
+}
+
+fn describe_working_copy(status: WorkingCopyStatus) -> String {
+    match status {
+        WorkingCopyStatus::Empty => "empty".to_owned(),
+        WorkingCopyStatus::Modified { files, added, removed } => format!("modified ({files} files, +{added}/-{removed})"),
+        WorkingCopyStatus::Conflicted { conflicts } => {
+            format!("conflicted ({conflicts} files)")
+        }
+        WorkingCopyStatus::Stale => "stale".to_owned(),
+        WorkingCopyStatus::Unknown => "unknown".to_owned(),
+    }
+}
+
+fn write_json(value: &impl Serialize) -> Result<()> {
+    let mut bytes = serde_json::to_vec(value).context("failed to serialize JSON output")?;
+    bytes.push(b'\n');
+    write_bytes(&bytes)
+}
+
+fn write_text(value: &str) -> Result<()> {
+    write_bytes(value.as_bytes())
+}
+
+fn write_bytes(bytes: &[u8]) -> Result<()> {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(bytes).context("failed to write stdout")?;
+    Ok(())
+}
+
+fn run_path(cmd: PathCommand) -> Result<()> {
+    print_line(path_for_workspace(&cmd.name)?.display())
+}
+
+fn run_remove(cmd: RemoveCommand) -> Result<()> {
+    let delete_dir = !cmd.keep_dir;
+    let inventory = WorkspaceInventory::load()?;
+    let plans = if cmd.names.is_empty() {
+        vec![workspace::plan_remove_workspace(&inventory, None, delete_dir)?]
+    } else {
+        cmd.names
+            .iter()
+            .map(|name| workspace::plan_remove_workspace(&inventory, Some(name), delete_dir).with_context(|| format!("failed to remove workspace {name}")))
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    let mut planned = HashSet::new();
+    for plan in &plans {
+        if !planned.insert(plan.workspace.as_str()) {
+            bail!("workspace listed more than once: {}", plan.workspace)
+        }
+    }
+
+    for plan in plans {
+        let result = workspace::execute_remove_workspace(plan, cmd.delete_bookmark)?;
+        print_remove_result(&result);
+    }
+    Ok(())
+}
+
+fn print_remove_result(result: &workspace::RemovalResult) {
+    println!("Forgot workspace: {}", result.workspace);
+    if result.deleted_dir {
+        println!("Deleted directory: {}", result.path.display());
+    }
+    for bookmark in &result.deleted_bookmarks {
+        println!("Deleted bookmark: {bookmark}");
+    }
+}
+
+fn run_prune() -> Result<()> {
+    let removed = workspace::prune_missing_workspaces()?;
+    for name in &removed {
+        println!("Forgetting missing workspace: {name}");
+    }
+    println!("Pruned {} workspace(s)", removed.len());
+    Ok(())
+}
+
+fn run_shell(cmd: ShellCommand) -> Result<()> {
+    match cmd.command {
+        ShellSubcommand::Init(cmd) => print_line(shell::init_script(cmd.shell)?),
+        ShellSubcommand::Completions(cmd) => run_completions(cmd.shell),
+    }
+}
+
+fn run_completions(shell: Shell) -> Result<()> {
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+    shell::write_completions(shell, &mut handle)?;
+    Ok(())
+}
+
+fn run_links(cmd: LinksCommand) -> Result<()> {
+    match cmd.command {
+        LinksSubcommand::Apply => {
+            let inventory = WorkspaceInventory::load()?;
+            let config_root = inventory
+                .root(inventory.default_name()?)
+                .context("failed to locate default workspace link configuration")?;
+            let report = links::apply_workspace_links(&config_root, inventory.current_root())?;
+            println!(
+                "Links: {} created, {} already satisfied, {} missing target",
+                report.linked, report.satisfied, report.skipped_missing_target
+            );
+            Ok(())
+        }
+    }
+}
+
+fn run_execute(cwd: &Path, command: &str, args: &[String]) -> Result<()> {
+    let status = if cfg!(windows) {
+        let mut full = String::from(command);
+        for arg in args {
+            full.push(' ');
+            full.push_str(&shlex::try_quote(arg).unwrap_or_else(|_| arg.into()));
+        }
+        Command::new("cmd")
+            .arg("/C")
+            .arg(full)
+            .current_dir(cwd)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .context("failed to execute command")?
+    } else {
+        let mut full = String::from(command);
+        for arg in args {
+            full.push(' ');
+            full.push_str(&shlex::try_quote(arg).unwrap_or_else(|_| arg.into()));
+        }
+        Command::new("sh")
+            .arg("-lc")
+            .arg(full)
+            .current_dir(cwd)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .context("failed to execute command")?
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        bail!("execute command exited with {status}")
+    }
+}
+
+fn print_line(value: impl std::fmt::Display) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "{value}").context("failed to write stdout")?;
+    Ok(())
+}
+
+fn complete_workspaces(current: &OsStr) -> Vec<CompletionCandidate> {
+    let current = current.to_string_lossy();
+    let candidates = match completion_workspace_candidates() {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            eprintln!("jw: failed to complete workspaces: {error:#}");
+            return Vec::new();
+        }
+    };
+
+    candidates
+        .into_iter()
+        .filter(|(candidate, _)| candidate.starts_with(current.as_ref()))
+        .map(|(candidate, description)| CompletionCandidate::new(candidate).help(Some(description.into())))
+        .collect()
+}
+
+#[cfg(test)]
+mod reseed_cli_tests {
+    use super::*;
+
+    #[test]
+    fn prepare_is_source_only_and_rejects_resume() {
+        let cli = Cli::try_parse_from(["jw", "prepare", "--source-at", "new@origin"]).unwrap();
+        let Some(Commands::Prepare(cmd)) = cli.command else {
+            panic!("expected prepare")
+        };
+        assert_eq!(cmd.source_at.as_deref(), Some("new@origin"));
+        assert!(Cli::try_parse_from(["jw", "up"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "prepare"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "prepare", "--resume"]).is_err());
+        for args in [
+            vec!["worker"],
+            vec!["--group", "workers"],
+            vec!["--at", "dev@origin"],
+            vec!["--replace-content"],
+            vec!["--no-freshen-bookmark"],
+        ] {
+            assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_err());
+        }
+        for args in [
+            vec!["--from", "/source"],
+            vec!["--source-at", "dev@origin"],
+            vec!["--copy-ignored", "node_modules"],
+            vec!["--no-copy-ignored"],
+        ] {
+            assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_ok());
+        }
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--no-freshen"]).is_err());
+    }
+
+    #[test]
+    fn one_off_reseed_needs_no_group() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--from", "/prepared", "--source-at", "dev@origin"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert_eq!(cmd.names, ["feature"]);
+        assert!(cmd.groups.is_empty());
+        assert!(cmd.at.is_none());
+    }
+
+    #[test]
+    fn plain_reseed_is_the_default_path_and_at_only_overrides_the_target() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert!(cmd.at.is_none(), "plain reseed syncs to the donor; --at is not required");
+        assert!(cmd.source_at.is_none(), "--source-at stays an optional assertion");
+        assert!(!cmd.prepare, "plain reseed never prepares implicitly");
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--at", "dev@origin"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert_eq!(cmd.at.as_deref(), Some("dev@origin"));
+        assert!(cmd.source_at.is_none());
+    }
+
+    #[test]
+    fn reseed_preparation_is_explicit() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--prepare", "--dry-run"]).unwrap();
+        let Some(Commands::Reseed(cmd)) = cli.command else {
+            panic!("expected reseed command")
+        };
+        assert!(cmd.prepare && cmd.dry_run);
+    }
+
+    #[test]
+    fn reseed_rejects_resume_and_validates_group_miss_policy() {
+        for args in [vec!["feature", "--resume"], vec!["--group", "all", "--resume"], vec!["--resume", "--dry-run"]] {
+            assert!(Cli::try_parse_from(["jw", "reseed"].into_iter().chain(args)).is_err());
+        }
+        assert!(Cli::try_parse_from(["jw", "reseed", "--group", "workers", "--on-unmatched", "warn"]).is_ok());
+        assert!(Cli::try_parse_from(["jw", "reseed", "--group", "workers", "--on-unmatched", "ignore"]).is_err());
+    }
+
+    #[test]
+    fn reseed_no_copy_ignored_overrides_an_explicit_selection() {
+        let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--copy-ignored", "node_modules", "--no-copy-ignored"]).unwrap();
+        let Some(Commands::Reseed(command)) = cli.command else {
+            panic!("expected reseed");
+        };
+        assert!(command.no_copy_ignored);
+        assert_eq!(command.copy_ignored, ["node_modules"]);
+    }
+}

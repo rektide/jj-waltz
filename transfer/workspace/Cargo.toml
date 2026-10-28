@@ -1,0 +1,31 @@
+[package]
+name = "jj-waltz-transfer-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "CoW capability and topology helpers, path policy, frozen-ignore and tracked-leaf adapters, and diff-dirs integration for jj-waltz"
+
+[dependencies]
+jj-waltz-native-jj = { version = "0.8.0", path = "../../native/jj" }
+anyhow = "1.0.100"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+toml = "1.1.2"
+diff-dirs = { package = "diff-dirs-tree-api", version = "0.1.0", path = "../../../diff-dirs/tree/api" }
+diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "0.1.0", path = "../../../diff-dirs/transfer/sync" }
+rayon = { version = "1.12.0", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+reflink-copy = "0.1.30"
+tempfile = "3.19.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.190"
+
+[dev-dependencies]
+tempfile = "3.19.1"
+
+[features]
+payload-parallel = ["dep:rayon", "diff-dirs/parallel", "diff-dirs-sync/parallel"]
