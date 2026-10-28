@@ -7,7 +7,9 @@ status: proposed-architecture
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human commissions architecture and approves foundation, then requests Astra xhigh planning followed by Sol xhigh implementation; parent connects reviewed construction plan and phased implementation
+    title: Human commissions architecture, foundation and Astra/Sol implementation; parent integrates the reviewed plan and approves the implemented native/authority checkpoint before conditional routing
+  - resource: /design/coordinated-refill/implementation1.sol61x.md
+    title: Reviewed first native/authority implementation and required-CoW evidence, with current CLI and routing limits
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
     title: Parent-reviewed implementation plan selecting strict full-source native adoption, pure source-qualified authority and the narrow conditional-routing effect
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
@@ -66,9 +68,11 @@ remain the next implementation.
 **Construction plan selected:** [Astra xhigh's implementation plan](implementation0.gpt6ax.md)
 supplies the concrete native sequence and pass ledger, preserving source-qualified
 ordinary authority through a pure frozen matcher and a narrow conditional-routing
-effect. Sol xhigh is commissioned for the first executable slice; native/authority
-and usable end-to-end results are the parent review checkpoints. Selection of that
-plan is not a claim that its implementation or performance checks have completed.
+effect. The [first native/authority slice](implementation1.sol61x.md) is implemented
+and parent-reviewed through a callable N1 seam with required-CoW evidence. The
+conditional-routing effect and coordinated CLI replacement remain in progress;
+usable end-to-end results are the subsequent parent checkpoint. Selection of the
+plan is not a claim that the full implementation or performance checks have completed.
 
 Three boundaries are fundamental:
 

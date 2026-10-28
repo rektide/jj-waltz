@@ -7,11 +7,13 @@ status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Integrated architecture and reviewed foundation; parent reviews Astra xhigh's native/authority plan and commissions Sol xhigh for the first working reseed slice
+    title: Integrated architecture and foundation, selected Astra's plan, reviewed Sol's implemented native/authority checkpoint and commissioned the upstream conditional-routing effect
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
     title: Completed Astra xhigh implementation plan, selected by the parent for construction with native/authority and end-to-end review checkpoints
   - resource: "opencode://ses_e7be6b24fffeDISpWdV1xNbqhD"
-    title: Sol xhigh commissioned to implement the real N1 native transition, pure source-qualified policy and selected transfer before the first parent review
+    title: Sol xhigh implements and verifies native N1 and pure source-qualified transfer, then receives the conditional-routing implementation commission
+  - resource: /design/coordinated-refill/implementation1.sol61x.md
+    title: Parent-reviewed callable N1 implementation, native command ledger, required-CoW tests and remaining missing-route limitation
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
     title: Approved crate shape, dependency rules and structural implementation commission
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
@@ -48,6 +50,16 @@ sources:
 - [Initial assessment](assessment0.gpt6a.md): retained source/API findings and
   caller-loop example. Its compatibility-led lifecycle and sequencing plan is
   superseded by the revised direction.
+
+## Implementation checkpoints
+
+- [Native and authority slice](implementation1.sol61x.md): committed through
+  `ec7fe09f`, parent source-reviewed. Strict full-S installation, source-state
+  adoption and native conformance, immutable ignore rules, source-qualified
+  transfer and forward link finish work through a callable N1 seam. Nine native
+  cases passed with required CoW. The current native profile is JJ 0.45.1; the
+  normal CLI still uses the old driver. Missing unselected routing directories
+  refuse until the commissioned conditional-routing effect is implemented.
 
 ## Independent evidence
 
