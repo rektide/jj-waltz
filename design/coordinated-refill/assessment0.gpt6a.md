@@ -1,13 +1,25 @@
 ---
 type: DesignAssessment
-title: Seed the integration, then make reseed a coordinated refill
+title: Prove the seed adapter, then make reseed a coordinated refill
 description: A staged jj-waltz adoption of diff-dirs coordinated synchronization, emphasizing understandable ownership, repeated-reseed value, native lifecycle boundaries and discriminating evidence.
 resource: /design/coordinated-refill/assessment0.gpt6a.md
 status: proposed
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human requests assessment and plan for returning the revamped diff-dirs design to jj-waltz; parent evaluates ownership, sequence and evidence with two independent G analysts
+    title: Human commissions coordinated-refill assessment; parent integrates two independent reports and bounded tests, narrows seed-first to API proof and prioritizes native reseed adoption
+  - resource: /design/coordinated-refill/current0.gpt6a.md
+    revision: 57b96821
+    title: Independent current implementation census, creation rollback distinction and source-derived 1+8N native verification count
+  - resource: /design/coordinated-refill/library0.gpt6a.md
+    revision: a3087936
+    title: Independent current API assessment, six production-consumer tests, sixteen shared-inspection tests and stable compilation
+  - resource: /src/reseed/engine.rs
+    title: Parent reviews shared desired-tree duplication, native phase boundaries, source validation calls and existing lane-local execution failures
+  - resource: /src/lifecycle.rs
+    title: Parent reviews creation batch rollback and publication ordering
+  - resource: "file:///home/rektide/src/diff-dirs/transfer/sync/src/coordinated/mod.rs"
+    title: Parent reviews actual next_group, pending, apply, drive and report semantics
   - resource: /docs/reseed.md
     title: Current reseed, preparation, auxiliary-selection, failure and preparation-only locking contracts
   - resource: /docs/architecture.md
@@ -32,12 +44,13 @@ sources:
     title: Bounded evidence that truthful donor tree-state adoption can change retained-local membership
 ---
 
-# Seed the integration, then make reseed a coordinated refill
+# Prove the seed adapter, then make reseed a coordinated refill
 
 ## Recommendation
 
-**Use one small seed integration to establish the new library boundary, then
-concentrate the redesign and measurement on reseed.** Make the command read as:
+**Use a small seed exercise to establish the library boundary, then implement
+coordinated reseed first.** The exercise has now passed; full creation has more
+lifecycle complexity than its copying policy suggests. Make the command read as:
 
 ```text
 capture donor and target intent
@@ -57,10 +70,41 @@ than first inventing another command. A library's missing-only `seed` operation,
 JW's tracked-leaf prefill, and the complete workspace-creation workflow have
 different meanings. Name those distinctions in the implementation.
 
+The independent research changes the initial seed-first proposal: current creation
+rolls back its owned batch after failure, whereas reseed retains completed peers.
+Creation also owns sparse inheritance, checkout fallback and switch publication.
+Use the tiny seed proof now, then reuse the new transfer adapter in creation after
+reseed delivers value. Do not make restructuring all of `add` the prerequisite.
+
 The first useful landing retains the current transfer outcome. The broader
 ordinary-content policy remains a meaningful follow-on design choice; the prior
 [correction](../sync-scope/implementation0.gpt6a.md#correction-the-jw-policy-and-state-transition-are-not-settled)
 explicitly records that neither whole-root mirror nor broad update was selected.
+
+## What this assessment established
+
+- **Current build blocker reproduced:** JW still references the old library
+  packages/paths. Cargo fails at missing `../diff-dirs/sync/Cargo.toml`, before
+  application compilation. The library root is now a virtual workspace.
+- **Concrete consumer fit verified:** six small external tests passed with real
+  production cursor/runtime, mixed seed/mirror policies, required reflinks,
+  private writes, clean repeats, binding refusal, pruning and lane-local failure.
+  Sixteen selected upstream source-sharing tests also passed. Explicit stable
+  compilation passed; runtime tests used the harness's active nightly.
+- **Native redundant work identified:** successful plain reseed statically calls
+  `verify_disk` **1 + 8N times** for N targets. Desired-tree inventory, S→D diff and
+  equal-path clone selection are also rebuilt per target even though D is shared.
+  This is source-derived accounting, not a measurement of hashes or elapsed time.
+- **No end-to-end speedup established yet:** the current JW manifest cannot load
+  the new dependency layout. The probes establish library/API behavior, not native
+  JJ integration or representative throughput.
+
+The [current-code census](current0.gpt6a.md) and
+[library assessment/test record](library0.gpt6a.md) own the detailed evidence.
+Both were dispatched through G, but the harness ran them as Astra; their native
+session records and filenames use that actual attribution. Parent review checked
+the consequential native phase and cursor-application seams, without rerunning
+the agents' passing tests.
 
 ## What the new library actually buys
 
@@ -208,6 +252,35 @@ and records accepted results. Visitors read frozen facts and supplied observatio
 they never run JJ, print, update progress or mutate filesystem state. The library
 owns paired recursion and opaque one-sided recursion in their existing places.
 
+The actual API already provides this loop. A minimal process-local consumption
+shape, with targets built from per-workspace `Applier`s, is:
+
+```rust,ignore
+let runtime = SyncRuntime::new(targets);
+let mut cursor = SyncCursor::new(&runtime, Execution::Sequential)?;
+let outcome = cursor.drive(&runtime, Limits {
+    groups: u64::MAX,
+    applications: u64::MAX,
+})?;
+let reports = cursor.reports();
+// Surface outcome.failures; Stop::Done includes failed terminal lanes.
+// Only reports with satisfied == true are eligible for native finish.
+```
+
+For progress, use `next_group` → inspect lane errors → `pending`/`apply` →
+`settle`, then repeat. Each `apply` consumes the cursor's own selected plan and
+accepts the actual returned result. **Apply every pending lane, including clean or
+zero-immediate-work groups:** a retained target-only container can still have
+recursively removable children. The consumer probe verifies that case. Avoid a
+blanket `?` on lane-local failure that would suppress healthy peers.
+
+Use one concrete visitor type with target-specific frozen values. `Rc`/`RefCell`
+ignore-oracle state stays on the serial native side; parallel visitors receive
+frozen decisions. If enabling the existing command pool, install the coordinated
+inspection/application sequence into that pool; this cursor has no borrowed-pool
+constructor or J/K arguments. Obtain cloned cumulative reports at useful progress
+boundaries, not per entry.
+
 For example, at `node_modules/pkg` with two existing receivers:
 
 1. Inspect the source directory once and each receiver's directory separately.
@@ -216,8 +289,8 @@ For example, at `node_modules/pkg` with two existing receivers:
 3. Accept A's no-op application and reflink the changed leaf into B.
 4. Advance the shared traversal to the next admitted child with its lane membership.
 
-If B instead lacks the whole `pkg` directory, B's current application recursively
-copies that subtree. A's paired descent remains the frontier's responsibility.
+If B instead lacks the whole `pkg` directory, the application at its parent
+recursively copies that subtree for B. A's paired descent remains the frontier's responsibility.
 The two source visits in that mixed case are a real limit of today's sharing,
 not something an application-side loop should conceal or try to fix by recursing
 over the same edges itself.
@@ -233,10 +306,11 @@ Apply configured links and complete the native tree/parent/identity checks.
 Creation records its lifecycle result; reseed preserves the existing lifecycle
 identity. A completed transfer is necessary but not sufficient for a successful
 workspace operation. Report failures at their actual phase, and preserve successful
-peer outcomes when other lanes fail. Any failure makes the overall command fail.
+reseed peer outcomes when other lanes fail. Creation retains its distinct owned
+batch-rollback contract. Any failure makes the overall command fail.
 
-Recommend allowing healthy peers to finish after a returned lane-local failure;
-state that behavior deliberately in the command tests and result format. A shared
+Preserve reseed's existing ability to finish healthy peers after a returned
+lane-local failure; verify it through the new group driver. A shared
 source/binding failure may affect many lanes and must retain that provenance.
 
 ### Results that explain what happened
@@ -272,17 +346,19 @@ comparisons isolate coordination from package/API repair.
 
 **Gate:** one reproducible baseline and a complete call-site/dependency map.
 
-### B. Seed one vertical slice
+### B. Establish the adapter and one-target native seam
 
-Add the thin batch-transfer adapter using the production cursor/runtime. Exercise
-it through newly created receivers with N=1 and N=2, including the actual native
-finish and per-target creation failure/cleanup behavior. Keep discovery, links and
-registration with their owners. Reuse the listed-leaf installer for tracked files.
+The seed API proving slice is already done in the six consumer tests. Add the
+thin production batch-transfer adapter and split reseed into native tracked prefix,
+auxiliary transfer and native finish, initially with its current checks. Exercise
+one native receiver and the existing two-lane tiny library cases. Hoist the common
+D inventory, S→D diff and clone list out of target planning; retain target-specific
+old trees, effective ignore inputs and ownership facts.
 
 **Gate:** explain the new source→group→lane-application loop in one short function;
 prove exact tracked result, private copied payload, exclusions and collision
-behavior. Stop expanding seed once this shared seam is established. Deep first-copy
-fanout optimization is a separate library opportunity, not this stage's payoff.
+behavior. Reuse the existing create-only listed-leaf installer for tracked work.
+Deep first-copy fanout is a separate library opportunity, not this stage's payoff.
 
 ### C. Make reseed consume the same batch adapter
 
@@ -301,8 +377,16 @@ exhaustion alone.
 
 ### D. Remove redundant orchestration and prove the gain
 
-Hoist equivalent source facts/proofs out of target loops; retain genuinely
-target-specific checks. Remove superseded paired-loop plumbing and duplicate
+Reduce the repeated donor verification schedule under the good-donor/quiescence
+contract: one initial capture, cheap phase-appropriate identity/revision checks,
+and one final shared check. Retain the four existing target checks per destination
+initially. That changes the static `verify_disk` count from **1+8N to 2+4N** on
+the ordinary successful path, before any separately justified target-check cuts.
+If the final donor check fails, retain completed work and mark affected outcomes
+unverified; the check cannot retroactively prove atomic donor contents.
+
+Land that changed detection schedule separately from phase extraction, with
+failure-timing coverage. Remove superseded paired-loop plumbing and duplicate
 policy construction once the coordinated route is verified. Preserve the reason
 for each remaining native check beside its phase. A code-size reduction without
 fewer concepts or repeated operations is insufficient.
@@ -319,7 +403,26 @@ If coordinated overhead or lost inter-directory parallelism loses on an importan
 shape, choose the execution strategy within this adapter from evidence rather than
 forking the policy/native lifecycle implementation.
 
-### E. Select the next simplification from the remaining cost
+### E. Reuse the adapter for creation
+
+Start with creation's auxiliary copy using the same adapter and its existing
+`new_targets_only` refusal semantics. Generic `Seed` silently retaining occupied
+names is a different policy. Then assess whether full multi-target `add` batching
+is worth its orchestration change; missing subtree recursion still runs per target.
+
+If batching creation, enroll every newly initialized receiver in owned rollback
+tracking immediately, before any later copy/adoption/publication can fail. Retain
+sparse inheritance, visible tracked-checkout fallback, required auxiliary reflinks,
+bookmark/metadata/link ordering and switch-state failure cleanup. Existing
+`PendingWorkspace` is returned only after setup, so simply moving the payload loop
+outward is insufficient. Test a later target failure after earlier initialization
+and successful payload copying.
+
+**Gate:** the shared adapter reduces implementation duplication and all owned
+new-workspace cleanup cases still hold. This stage adds creation reuse without
+requiring a source-to-many listed-leaf API that the library does not yet provide.
+
+### F. Select the next simplification from the remaining cost
 
 There are two substantial independent choices after the useful integration:
 
@@ -393,6 +496,8 @@ to fewer source stats without that breakdown.
   and preview support as consumer needs only where the integration actually shows
   their value.
 
-**First implementation commission:** A→B→C, with review after the seed slice and
-after the actual reseed cohort works. The target is one understandable refill
-pipeline and evidence of repeated-reseed value, followed by measured simplification.
+**First implementation commission:** A→B→C→D, with review after the one-target
+native seam and after the actual reseed cohort works. E then brings creation onto
+the proven adapter; F selects the larger policy/native-protocol simplification.
+The immediate target is one understandable refill pipeline and evidence of
+repeated-reseed value.

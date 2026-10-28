@@ -68,7 +68,7 @@ native JJ identity/cache state.
 
 The [coordinated-refill assessment](../design/coordinated-refill/README.md)
 plans adoption of diff-dirs' newer source-to-many synchronization: a small seed
-integration followed by batched reseed, with native setup/finish remaining JW's
+API proof followed by batched reseed, with native setup/finish remaining JW's
 responsibility. It is a proposed redesign, separate from the delivered pipeline
 described below.
 

@@ -7,7 +7,7 @@ status: proposed
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Commissioned two independent G assessments and developed the coordinated-refill adoption plan
+    title: Integrated two independent assessments and bounded tests, prioritizing coordinated reseed after the small seed API proof
   - resource: /design/coordinated-refill/assessment0.gpt6a.md
     title: Parent ownership assessment, concrete command structure and staged implementation plan
 ---
@@ -16,9 +16,22 @@ sources:
 
 ## Start here
 
-- [Assessment and plan](assessment0.gpt6a.md): use seed as a small integration
-  slice, make existing-workspace reseed the main coordinated consumer, then prove
-  shared-source value and simplify remaining orchestration.
+- [Assessment and plan](assessment0.gpt6a.md): the small seed API proof passes;
+  implement coordinated reseed first, remove repeated native work, then reuse the
+  adapter in creation. Includes the actual cursor loop and review gates.
+
+## Independent evidence
+
+- [Current JJ-waltz census](current0.gpt6a.md): native creation/reseed phases,
+  different failure contracts, shared-fact opportunities and `1+8N` verification
+  calls; the dependency-layout failure was reproduced.
+- [Library fit and bounded tests](library0.gpt6a.md): actual production APIs,
+  sharing and application boundaries, six consumer tests and sixteen upstream
+  shared-inspection tests passing, plus explicit stable compilation.
+
+Both jobs were dispatched through G but ran as Astra according to their native
+session records; filenames and provenance reflect the actual model. These are
+independent assessments, followed by the parent's integrated recommendation.
 
 ## Existing contracts and prior inquiry
 
