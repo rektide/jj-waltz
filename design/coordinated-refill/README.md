@@ -3,11 +3,15 @@ type: Index
 title: Coordinated seed and reseed
 description: Assessment and evidence for adopting diff-dirs source-to-many synchronization in jj-waltz.
 resource: /design/coordinated-refill/README.md
-status: proposed
+status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Integrated architecture and lifecycle direction, then commissioned and reviewed the six-crate foundation through correction commits and required-CoW native checks
+    title: Integrated architecture and reviewed foundation; parent reviews Astra xhigh's native/authority plan and commissions Sol xhigh for the first working reseed slice
+  - resource: /design/coordinated-refill/implementation0.gpt6ax.md
+    title: Completed Astra xhigh implementation plan, selected by the parent for construction with native/authority and end-to-end review checkpoints
+  - resource: "opencode://ses_e7be6b24fffeDISpWdV1xNbqhD"
+    title: Sol xhigh commissioned to implement the real N1 native transition, pure source-qualified policy and selected transfer before the first parent review
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
     title: Approved crate shape, dependency rules and structural implementation commission
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
@@ -22,6 +26,12 @@ sources:
 
 ## Start here
 
+- [Implementation plan](implementation0.gpt6ax.md): Astra xhigh's exact native
+  sequence, pure source-qualified authority, conditional-routing library gap and
+  four build slices. Parent reviewed the plan and native probe and selected this
+  scope for Sol xhigh; source-qualified copying retains the existing ordinary
+  namespace outcomes. First return is the working native/authority checkpoint,
+  followed by missing-route support, coordinated N2 CLI replacement and evidence.
 - [Approved crate foundation](foundation0.gpt6a.md): six real production crates,
   their dependency direction, completed implementation commission and parent review,
   including three required-CoW native checks before the behavior rewrite.

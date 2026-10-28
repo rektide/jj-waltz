@@ -7,7 +7,9 @@ status: proposed-architecture
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human commissions streaming reseed architecture and approves its crate foundation; parent defines phases and pass accounting, then connects reviewed structural implementation and relocated source owners
+    title: Human commissions architecture and approves foundation, then requests Astra xhigh planning followed by Sol xhigh implementation; parent connects reviewed construction plan and phased implementation
+  - resource: /design/coordinated-refill/implementation0.gpt6ax.md
+    title: Parent-reviewed implementation plan selecting strict full-source native adoption, pure source-qualified authority and the narrow conditional-routing effect
   - resource: /design/coordinated-refill/foundation0.gpt6a.md
     title: Approved and parent-reviewed six-crate foundation, with implementation and focused native verification
   - resource: /design/coordinated-refill/assessment1.gpt6a.md
@@ -60,6 +62,13 @@ human's lifecycle direction and supersedes the earlier assessments' ambiguous
 now provides the native, state, lifecycle, transfer, refill and application owners.
 It retains the current operational routes; the streaming/lifecycle changes below
 remain the next implementation.
+
+**Construction plan selected:** [Astra xhigh's implementation plan](implementation0.gpt6ax.md)
+supplies the concrete native sequence and pass ledger, preserving source-qualified
+ordinary authority through a pure frozen matcher and a narrow conditional-routing
+effect. Sol xhigh is commissioned for the first executable slice; native/authority
+and usable end-to-end results are the parent review checkpoints. Selection of that
+plan is not a claim that its implementation or performance checks have completed.
 
 Three boundaries are fundamental:
 
