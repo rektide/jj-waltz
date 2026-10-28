@@ -7,7 +7,9 @@ status: proposed
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Integrated independent evidence and lifecycle corrections, then authored the technical architecture separating root decisions, native pass costs and streaming transfer
+    title: Integrated evidence and lifecycle corrections, authored the streaming architecture, and commissioned the human-approved six-crate foundation
+  - resource: /design/coordinated-refill/foundation0.gpt6a.md
+    title: Approved crate shape, dependency rules and structural implementation commission
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
     title: Current technical architecture, actual cursor loop, streaming authority and explicit traversal accounting
   - resource: /design/coordinated-refill/assessment1.gpt6a.md
@@ -20,6 +22,9 @@ sources:
 
 ## Start here
 
+- [Approved crate foundation](foundation0.gpt6a.md): six real production crates,
+  their dependency direction and G's structural implementation commission before
+  the behavior rewrite.
 - [Technical architecture](architecture0.gpt6a.md): root-level route selection,
   explicitly costed native snapshots and repository enumeration, streaming path
   authority, the actual coordinated loop, and forward failure. Defines what each
