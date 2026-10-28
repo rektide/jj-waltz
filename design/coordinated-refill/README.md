@@ -23,8 +23,11 @@ sources:
 ## Start here
 
 - [Approved crate foundation](foundation0.gpt6a.md): six real production crates,
-  their dependency direction and G's structural implementation commission before
+  their dependency direction, implementation commission and parent review before
   the behavior rewrite.
+- [G's foundation implementation](foundation0.glm53m.md): extraction, test ownership,
+  dependency repair and verification; the parent review tracks final integration
+  corrections separately.
 - [Technical architecture](architecture0.gpt6a.md): root-level route selection,
   explicitly costed native snapshots and repository enumeration, streaming path
   authority, the actual coordinated loop, and forward failure. Defines what each

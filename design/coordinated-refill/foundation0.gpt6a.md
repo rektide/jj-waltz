@@ -3,13 +3,15 @@ type: ImplementationBrief
 title: Approved domain-grouped crate foundation
 description: Human-approved six-crate decomposition, dependency boundaries and foundation commission preceding the streaming reseed implementation.
 resource: /design/coordinated-refill/foundation0.gpt6a.md
-status: approved-shape-implementation-commissioned
+status: implemented-foundation-under-review
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Parent proposes source-informed six-crate decomposition; human approves; parent commissions regular GLM 5.3 max to implement the foundation
+    title: Human approves six-crate decomposition; parent commissions GLM 5.3 max, reviews the delivered interfaces and identifies integration corrections before acceptance
   - resource: "opencode://ses_e7c479171ffeGjjWpkruJHEmUO"
-    title: Commissioned foundation implementation session; selected and reported model verified as zai-coding-plan/glm-5.3#max
+    title: GLM 5.3 max implements the extraction and receives the parent's focused configuration, build-input and relocation corrections
+  - resource: /design/coordinated-refill/foundation0.glm53m.md
+    title: Builder's implementation account and reported verification, followed by the parent review recorded here
   - resource: /design/coordinated-refill/architecture0.gpt6a.md
     title: Streaming reseed architecture the foundation must enable
   - resource: /design/coordinated-refill/current0.gpt6a.md
@@ -150,3 +152,33 @@ Review the actual crate graph and public APIs, especially:
 Trust reported passing checks; additional verification should answer a concrete
 review concern. Material changes to the approved decomposition return for decision.
 The subsequent streaming/lifecycle rewrite remains a separate implementation step.
+
+## Initial implementation review
+
+The builder delivered dependency repair (`61fe94d6`), the crate extraction
+(`abb0451b`) and moved-path/documentation changes (`bc0a88f5`). Parent source review
+accepts the overall dependency direction and the inventory/mutation separation.
+The builder's broad compilation, lint, test and release checks are attributed in
+[its report](foundation0.glm53m.md), not rerun merely for confirmation.
+
+Review found specific incomplete integration work and commissioned a correction
+pass in the same G session:
+
+- Restore lazy global-config loading when transfer settings are inherited; explicit
+  or disabled settings must retain their previous ability to bypass that read.
+- Move the remaining local copy-policy configuration reader out of transfer.
+- Update performance-build provenance inputs for both relocated repositories,
+  rather than counting successful compilation of the tool as workflow verification.
+- Correct the terminal harness's repository-root calculation and installation
+  commands for the virtual workspace.
+- Keep the Unix-only performance tool out of default production builds while
+  retaining production library tests in the default member set.
+- Make claimed exact internal dependency pins genuinely exact.
+
+The metadata helpers exposed for cross-crate test setup are acceptable for this
+internal pre-alpha extraction; a separate testing framework is not warranted.
+The existing colocation/removal test failure was reported reproduced on the repaired
+pre-extraction baseline and is outside these structural corrections.
+
+Acceptance awaits the focused correction return. This review does not reopen the
+approved crate layout or commission new lifecycle behavior.
