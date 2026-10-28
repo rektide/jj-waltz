@@ -1,9 +1,7 @@
-//! Frozen native ignore rules over an isolated tree of pinned .gitignore files.
-//!
-//! Git's own parser runs as a persistent oracle subprocess inside a temporary
-//! repository seeded from the frozen desired tree plus copies of JJ's
-//! backend/global excludes. No target revision is changed, and answers are
-//! memoized per (path, directory) pair.
+//! Frozen native ignore inputs. Streaming refill compiles immutable in-process
+//! gix-ignore searches from pinned .gitignore files and backend/global excludes.
+//! The legacy creation/reseed adapter retains its persistent Git oracle over an
+//! isolated frozen tree; tests also use that oracle for differential evidence.
 use crate::tracked::{Entry, file_bytes};
 use anyhow::{Context, Result, bail};
 use std::cell::RefCell;

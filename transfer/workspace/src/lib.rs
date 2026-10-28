@@ -11,10 +11,13 @@
 //! pool over diffdirs; listed tracked prefills use diffdirs' strict create-only
 //! installer. `ignored` owns the ignored-payload path policy and pattern
 //! selection, receiving resolved pattern layers rather than loading application
-//! global configuration. `frozen` owns the frozen-ignore oracle adapter;
+//! global configuration. `frozen` owns immutable ignore matching and the legacy
+//! oracle adapter; `streaming` owns source-qualified production cursor policy;
 //! `tracked` owns native tracked-leaf queries and path-safety primitives;
-//! `topology` owns the Linux mount guard. Reseed performs real required clones,
-//! without a preliminary clone probe or fallback. Lifecycle validation/cleanup
+//! `topology` owns the Linux mount guard. The replacement refill selects required
+//! CoW with a small root-level probe, then installs native leaves strictly. The
+//! legacy CLI route still performs required clones without that probe. Neither
+//! route downgrades a failed required clone. Lifecycle validation/cleanup
 //! additionally uses `probe_between`, `validate_tree`, `validate_same_mount` and
 //! `remove_path`. Standalone validation detects kernel mount IDs, so same-device
 //! bind mounts are rejected too.
