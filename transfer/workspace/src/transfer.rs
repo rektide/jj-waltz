@@ -206,7 +206,12 @@ mod tests {
     }
     impl Fixture {
         fn new() -> Self {
-            let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.test-agent/visitor-tests");
+            // Canonicalize: the two-level crate manifest path plus `..` components
+            // would otherwise push the fixture's unix-socket path past SUN_LEN.
+            let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../.test-agent/visitor-tests")
+                .canonicalize()
+                .unwrap_or_else(|error| panic!("resolve visitor-tests scratch: {error}"));
             fs::create_dir_all(&scratch).unwrap();
             let temp = tempfile::tempdir_in(scratch).unwrap();
             let source = temp.path().join("source");

@@ -106,7 +106,7 @@ class Terminal:
 
 
 def run():
-    binary = Path(__file__).resolve().parents[1] / "target/debug/jw"
+    binary = Path(__file__).resolve().parents[2] / "target/debug/jw"
     assert binary.is_file(), "run cargo build first"
     with tempfile.TemporaryDirectory(prefix="jw-terminal-") as temporary:
         root = Path(temporary)

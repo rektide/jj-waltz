@@ -99,7 +99,7 @@ CLI cleanup, native-app ownership, and preservation options.
 ## Development verification
 
 On Unix, build with `cargo build --locked`, then run
-`uv run --with pyte tests/terminal_ui.py` for real terminal interaction, shell
+`uv run --with pyte app/cli/tests/terminal_ui.py` for real terminal interaction, shell
 switching, terminal restoration, and a 50-workspace responsiveness check. The
 terminal checks use disposable repositories. See [contributing](../CONTRIBUTING.md)
 for the root and separate Herdr workspace checks.

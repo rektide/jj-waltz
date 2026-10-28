@@ -1,18 +1,23 @@
-//! Copy-on-write cloning of checkout files into a new workspace.
+//! JW-specific transfer mechanisms over CoW and diff-dirs.
 //!
-//! A clone shares storage with its source until either copy changes: APFS
-//! `clonefile(2)` on macOS and `FICLONE` reflinks on Linux filesystems such as
-//! Btrfs and XFS. JJ still owns the checkout. The workspace adapter creates the
-//! workspace with empty sparse patterns, clones the source's tracked files into
-//! it, and lets JJ reconcile them against the creation base.
+//! The crate root owns copy-on-write cloning of checkout files into a new
+//! workspace. A clone shares storage with its source until either copy changes:
+//! APFS `clonefile(2)` on macOS and `FICLONE` reflinks on Linux filesystems such
+//! as Btrfs and XFS. JJ still owns the checkout. The workspace adapter creates
+//! the workspace with empty sparse patterns, clones the source's tracked files
+//! into it, and lets JJ reconcile them against the creation base.
 //!
-//! `transfer` owns the root-bound early/late visitor and shared command pool;
-//! listed tracked prefills use diffdirs' strict create-only installer. Reseed
-//! performs real required clones, without a preliminary clone probe or fallback.
-//! Lifecycle validation/cleanup additionally uses `probe_between`, `validate_tree`,
-//! `validate_same_mount` and `remove_path`. Linux traversal uses a command-local
-//! mountinfo front guard; standalone validation detects kernel mount IDs, so
-//! same-device bind mounts are rejected too.
+//! Modules: `transfer` owns the root-bound early/late visitor and shared command
+//! pool over diffdirs; listed tracked prefills use diffdirs' strict create-only
+//! installer. `ignored` owns the ignored-payload path policy and pattern
+//! selection, receiving resolved pattern layers rather than loading application
+//! global configuration. `frozen` owns the frozen-ignore oracle adapter;
+//! `tracked` owns native tracked-leaf queries and path-safety primitives;
+//! `topology` owns the Linux mount guard. Reseed performs real required clones,
+//! without a preliminary clone probe or fallback. Lifecycle validation/cleanup
+//! additionally uses `probe_between`, `validate_tree`, `validate_same_mount` and
+//! `remove_path`. Standalone validation detects kernel mount IDs, so same-device
+//! bind mounts are rejected too.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};

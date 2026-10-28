@@ -497,7 +497,7 @@ The explicit `--prepare` / preparation-only lock checkpoint covered 266 library,
 preparation, reseed, and bookmark cases with real CoW required on native JJ
 `0.45.1-33d3a595`. All passed across the main run and a focused rerun correcting
 missing-store fixture assumptions and test-environment path/shim constraints.
-The [preparation tests](../tests/prepare.rs) check contention, lock release before
+The [preparation tests](../app/cli/tests/prepare.rs) check contention, lock release before
 refill and after errors, single preparation, prospective previews, and source/policy
 propagation. Formatting, all-target/all-feature Clippy (`-D warnings`), and maintained
 document checks passed. Build verification used byte-identical source in scratch

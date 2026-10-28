@@ -393,12 +393,12 @@ See the [operator guide](reseed.md) and
 
 ### Shared ignored-copy policy and selection
 
-[`cow::ignored`](../src/cow/ignored.rs) is command-independent. `Policy::load`
-resolves optional CLI/local lists and root global `copy_ignored`, preserving
-missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
-replace in CLI > local > global order. Global config is read only when inherited,
-and never written. Current command exposure includes add/s creation,
-reseed, and prepare payload verification.
+[`transfer::ignored`](../transfer/workspace/src/ignored.rs) is command-independent. `Policy::resolve`
+resolves optional CLI/local lists and the caller-supplied global `copy_ignored` layer,
+preserving missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
+replace in CLI > local > global order. The transfer crate never loads application
+global config itself; callers that have one pass its layer explicitly. Current
+command exposure includes add/s creation, reseed, and prepare payload verification.
 
 `Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
 unsupported syntax, deduplicates equivalent selectors, and compiles components.
@@ -467,7 +467,7 @@ still has its distinct validate-before-removal contract; it is not reseed's clea
 
 ### Creation ignored payload
 
-[`lifecycle::ignored`](../src/lifecycle/ignored.rs) prepares a single frozen plan
+[`lifecycle::ignored`](../workspace/lifecycle/src/ignored.rs) prepares a single frozen plan
 only when at least one workspace will be created. `WorkspaceInventory` identifies
 the policy owner by the real JJ repository directory, independently of a workspace
 named `default`. Creation reads only `copy_ignored` from that owner's existing
@@ -512,7 +512,7 @@ overlap, unchanged JJ operation IDs on rejection, and no-copy/no-match success.
 
 ### Local freshening commands and recovery
 
-The existing [`reseed::prepare`](../src/reseed/prepare.rs) engine now accepts local
+The existing [`refill prepare`](../refill/engine/src/engine/prepare.rs) engine now accepts local
 `[freshen]` policy with either one `command` argv or ordered `commands` argv arrays.
 Presence of both is invalid even when empty; no global command policy exists.
 The local loader retains `[prepare]` as a deprecated, warned alias and rejects
@@ -538,7 +538,7 @@ source proof; `reseed --freshen` and both commands' `--resume` flags are removed
 
 ### Native freshening source foundation
 
-[`SourceSelection`](../src/freshen/source.rs) implements native upstream selection
+[`SourceSelection`](../refill/engine/src/freshen/source.rs) implements native upstream selection
 for the `prepare` workflow, called by the shared coordinator before fetching.
 
 The caller snapshots real source work, verifies filesystem bytes, and supplies one
@@ -620,7 +620,7 @@ Once the fetched goal is frozen, recovery must use it rather than selecting or
 fetching again. There is no permanent following state, operation-log inference,
 default-branch heuristic, or automatic bookmark movement.
 
-[`tests/freshen_source.rs`](../tests/freshen_source.rs) exercises these boundaries
+[`tests/freshen_source.rs`](../refill/engine/tests/freshen_source.rs) exercises these boundaries
 using disposable local Git remotes, including the exact-main/advanced-dev
 ambiguity, untracked remote with unrelated local dev, unpublished empty-parent
 history, conflicts, old-remote rewind, and native immutable-checkout normalization.
