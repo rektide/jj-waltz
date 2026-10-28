@@ -34,7 +34,7 @@ jobs:
           cargo fmt --manifest-path plugins/herdr/Cargo.toml --all --check
       - name: Clippy
         run: |
-          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo clippy --locked --manifest-path plugins/herdr/Cargo.toml --all-targets --all-features -- -D warnings
 
   test:

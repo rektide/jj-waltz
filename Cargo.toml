@@ -16,7 +16,6 @@ default-members = [
     "transfer/workspace",
     "refill/engine",
     "app/cli",
-    "tools/performance",
 ]
 
 [workspace.package]
