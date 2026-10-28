@@ -89,7 +89,7 @@ impl CreationPolicy {
         let local = if self.no_copy_ignored || self.copy_ignored.is_some() {
             None
         } else {
-            cow::ignored::Policy::local_patterns(inventory.primary_policy_root()?)?
+            jj_waltz_workspace_state::config::local_copy_ignored(inventory.primary_policy_root()?)?
         };
         Ok(cow::ignored::Policy::resolve(
             self.copy_ignored.as_deref(),

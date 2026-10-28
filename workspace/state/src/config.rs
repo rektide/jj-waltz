@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const CONFIG_DIR: &str = "jj-waltz";
 const CONFIG_FILE: &str = "config.toml";
@@ -146,6 +146,26 @@ impl From<RawConfig> for Config {
 
 pub fn bookmark_from_template(template: &str, workspace: &str) -> String {
     template.replace("{workspace}", workspace)
+}
+
+/// Local `copy_ignored` list recorded in a workspace's `.jwreseed.local.toml`.
+///
+/// Creation shares only the copy list, not reseed's source/freshening settings,
+/// so this reads one field rather than the refill engine's full local config.
+/// An absent file is `None`; an unreadable or invalid one is an error.
+pub fn local_copy_ignored(primary_root: &Path) -> Result<Option<Vec<String>>> {
+    #[derive(Deserialize)]
+    struct CopyPolicy {
+        copy_ignored: Option<Vec<String>>,
+    }
+    let path = primary_root.join(".jwreseed.local.toml");
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(toml::from_str::<CopyPolicy>(&text)
+            .with_context(|| format!("invalid {}", path.display()))?
+            .copy_ignored),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
+    }
 }
 
 fn config_path() -> Result<Option<PathBuf>> {
