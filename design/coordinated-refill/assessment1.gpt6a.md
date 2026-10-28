@@ -7,7 +7,7 @@ status: revised-direction-with-proposed-contract-details
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human redirects scope toward frequent reseed, deliberate lifecycle simplification, upfront fallback assessment, ordinary failure and README-visible hazards; parent revises the implementation ambition
+    title: Human redirects lifecycle scope and challenges hidden iteration in preparation; parent records revised direction and develops its technical architecture with explicit native pass accounting
   - resource: /design/coordinated-refill/assessment0.gpt6a.md
     title: Prior compatibility-led plan and verified API findings; lifecycle-preservation and sequencing recommendations superseded here
   - resource: /design/coordinated-refill/current0.gpt6a.md
@@ -29,6 +29,12 @@ sources:
 ---
 
 # Reseed-first lifecycle redesign
+
+The subsequent [technical architecture](architecture0.gpt6a.md) makes this direction
+concrete and refines its “capture” language: root-level decisions perform no all-file
+inventory, while native snapshots and any route-required repository enumeration are
+explicitly costed execution. It also specifies streaming authority and the actual
+fail-fast cursor loop. This document retains the lifecycle direction and its rationale.
 
 ## Direction
 

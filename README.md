@@ -9,7 +9,7 @@ updated:
   at: 2026-10-28
 sources:
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Human requests right-sized lifecycle guarantees and visible hazards; parent groups current operating limits and links the proposed reseed-first redesign
+    title: Human requests right-sized lifecycle guarantees and challenges pre-iteration; parent documents operating hazards and the technical architecture for root decisions, explicit native costs and streaming reseed
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Added explicit reseed preparation, preparation-only locking, and prospective preview semantics
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
@@ -464,9 +464,10 @@ See [recovery details](docs/reseed.md#safety-and-recovery).
   the donor environment. A different `--at` revision may require its own install
   or build even when its tracked tree was materialized correctly.
 
-**Redesign direction:** the [reseed-first lifecycle plan](design/coordinated-refill/assessment1.gpt6a.md)
-prioritizes the frequent refill workflow, chooses native/transfer routes up front,
-and proposes fail-fast partial progress instead of inherited rollback and ongoing
+**Redesign direction:** the [streaming reseed architecture](design/coordinated-refill/architecture0.gpt6a.md)
+prioritizes frequent refill, makes root-level route choices up front, accounts for
+native JJ passes explicitly, and discovers ordinary file work during transfer.
+It proposes fail-fast partial progress instead of inherited rollback and ongoing
 fallback guarantees. These are proposed changes; the command behavior documented
 above describes the current implementation.
 
