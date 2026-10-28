@@ -463,13 +463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "diff-dirs"
-version = "0.1.0"
-dependencies = [
- "rayon",
-]
-
-[[package]]
 name = "diff-dirs-perf-runner"
 version = "0.0.0"
 dependencies = [
@@ -482,15 +475,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "diff-dirs-sync"
+name = "diff-dirs-transfer-sync"
 version = "0.1.0"
 dependencies = [
- "diff-dirs",
+ "diff-dirs-tree-compare",
+ "diff-dirs-tree-inspect",
  "rayon",
  "reflink-copy",
  "rustix",
  "tempfile",
 ]
+
+[[package]]
+name = "diff-dirs-tree-api"
+version = "0.1.0"
+dependencies = [
+ "diff-dirs-tree-compare",
+ "diff-dirs-tree-inspect",
+ "rayon",
+]
+
+[[package]]
+name = "diff-dirs-tree-compare"
+version = "0.1.0"
+dependencies = [
+ "diff-dirs-tree-inspect",
+ "rayon",
+]
+
+[[package]]
+name = "diff-dirs-tree-inspect"
+version = "0.1.0"
+dependencies = [
+ "diff-dirs-tree-observe",
+ "rayon",
+]
+
+[[package]]
+name = "diff-dirs-tree-observe"
+version = "0.1.0"
 
 [[package]]
 name = "difflib"
@@ -810,8 +833,8 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_complete",
- "diff-dirs",
- "diff-dirs-sync",
+ "diff-dirs-transfer-sync",
+ "diff-dirs-tree-api",
  "fs2",
  "libc",
  "predicates",
