@@ -9,6 +9,53 @@ pub enum Variant {
     PayloadParallel,
 }
 
+/// Real source inputs of an application build: the virtual workspace's pins
+/// (root manifest, lockfile, toolchain file that selects the compiler) plus
+/// every production crate the `jj-waltz` binary compiles from. The dev-only
+/// tools/performance crate is not a binary input, and target/ or scratch
+/// directories are never selected.
+pub fn application_paths() -> &'static [&'static str] {
+    &[
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "native/jj/Cargo.toml",
+        "native/jj/src",
+        "workspace/state/Cargo.toml",
+        "workspace/state/src",
+        "workspace/lifecycle/Cargo.toml",
+        "workspace/lifecycle/src",
+        "transfer/workspace/Cargo.toml",
+        "transfer/workspace/src",
+        "refill/engine/Cargo.toml",
+        "refill/engine/src",
+        "app/cli/Cargo.toml",
+        "app/cli/src",
+    ]
+}
+
+/// Real source inputs of the library build: the diff-dirs workspace pins plus
+/// the exact path-dependency closure of `diff-dirs-tree-api` and
+/// `diff-dirs-transfer-sync` (observation -> inspection -> comparison -> api,
+/// and the transfer sync kernel). Other diff-dirs packages (apps, examples,
+/// perf tooling, the retired root src/) are not inputs to a JW build.
+pub fn library_paths() -> &'static [&'static str] {
+    &[
+        "Cargo.toml",
+        "Cargo.lock",
+        "tree/observe/Cargo.toml",
+        "tree/observe/src",
+        "tree/inspect/Cargo.toml",
+        "tree/inspect/src",
+        "tree/compare/Cargo.toml",
+        "tree/compare/src",
+        "tree/api/Cargo.toml",
+        "tree/api/src",
+        "transfer/sync/Cargo.toml",
+        "transfer/sync/src",
+    ]
+}
+
 fn command(mut command: Command, stem: &Path) -> Result<String> {
     let result = process::run(&mut command, stem, Duration::from_secs(1800))?;
     if result.code != Some(0) || result.timed_out {
@@ -31,20 +78,16 @@ fn pin(repo: &Path, requested: Option<&str>, jj: &Path, stem: &Path) -> Result<S
     }
     Ok(revision)
 }
-fn inputs(repo: &Path, revision: &str, library: bool, stem: &Path) -> Result<serde_json::Value> {
-    let paths = if library {
-        vec!["Cargo.toml", "Cargo.lock", "src", "sync/Cargo.toml", "sync/src"]
-    } else {
-        vec!["Cargo.toml", "Cargo.lock", "src"]
-    };
-    let mut git = Command::new("/usr/bin/git");
-    git.arg("-C").arg(repo).args(["diff", "--exit-code", revision, "--"]).args(&paths);
-    command(git, stem)?;
+
+/// Hash one selected input: directories as streaming tree fingerprints, files
+/// as SHA-256. The same list feeds the clean-tree guard and the provenance
+/// sidecar, so provenance cannot claim inputs the guard never checked.
+fn hash_inputs(repo: &Path, paths: &[&str]) -> Result<serde_json::Value> {
     let mut hashes = serde_json::Map::new();
     for path in paths {
         let full = repo.join(path);
         hashes.insert(
-            path.into(),
+            (*path).into(),
             serde_json::json!(if full.is_dir() {
                 fixture::tree(&full, true, false)?
             } else {
@@ -53,6 +96,14 @@ fn inputs(repo: &Path, revision: &str, library: bool, stem: &Path) -> Result<ser
         );
     }
     Ok(hashes.into())
+}
+
+fn inputs(repo: &Path, revision: &str, library: bool, stem: &Path) -> Result<serde_json::Value> {
+    let paths = if library { library_paths() } else { application_paths() };
+    let mut git = Command::new("/usr/bin/git");
+    git.arg("-C").arg(repo).args(["diff", "--exit-code", revision, "--"]).args(paths);
+    command(git, stem)?;
+    hash_inputs(repo, paths)
 }
 
 pub fn build(
@@ -122,4 +173,66 @@ pub fn build(
     )?;
     println!("{}", output.join("provenance.json").display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repository() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// Every selected input must exist in the real workspaces: a stale list
+    /// would silently narrow provenance instead of failing loudly.
+    #[test]
+    fn selected_inputs_exist_for_application_and_library_workspaces() {
+        for path in application_paths() {
+            assert!(
+                repository().join(path).exists(),
+                "application input {path} is missing from the jj-waltz workspace"
+            );
+        }
+        assert!(application_paths().contains(&"rust-toolchain.toml"), "toolchain selection is a build input");
+
+        let library = repository().join("../diff-dirs");
+        for path in library_paths() {
+            assert!(library.join(path).exists(), "library input {path} is missing from the diff-dirs workspace");
+        }
+    }
+
+    /// Provenance must react to changes inside selected inputs and stay
+    /// invariant to unselected files (build artifacts, scratch, design notes).
+    #[test]
+    fn input_hashes_track_selected_source_and_ignore_unselected_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "version = 3\n").unwrap();
+        fs::create_dir_all(root.join("app/cli/src")).unwrap();
+        fs::write(root.join("app/cli/Cargo.toml"), "[package]\n").unwrap();
+        fs::write(root.join("app/cli/src/main.rs"), "fn main() {}\n").unwrap();
+        let selected = ["Cargo.toml", "Cargo.lock", "app/cli/Cargo.toml", "app/cli/src"];
+
+        let before = hash_inputs(root, &selected).unwrap();
+
+        // Unselected noise: build output and scratch at unselected locations.
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::write(root.join("target/debug/artifact"), "junk").unwrap();
+        fs::create_dir_all(root.join(".test-agent")).unwrap();
+        fs::write(root.join(".test-agent/scratch"), "junk").unwrap();
+        fs::create_dir_all(root.join("design")).unwrap();
+        fs::write(root.join("design/note.md"), "junk").unwrap();
+        assert_eq!(hash_inputs(root, &selected).unwrap(), before);
+
+        // A selected manifest change is detected.
+        fs::write(root.join("Cargo.toml"), "[workspace]\n# changed\n").unwrap();
+        let after_manifest = hash_inputs(root, &selected).unwrap();
+        assert_ne!(after_manifest["Cargo.toml"], before["Cargo.toml"]);
+
+        // A selected source-tree change is detected.
+        fs::write(root.join("app/cli/src/main.rs"), "fn main() { changed() }\n").unwrap();
+        let after_source = hash_inputs(root, &selected).unwrap();
+        assert_ne!(after_source["app/cli/src"], before["app/cli/src"]);
+    }
 }
