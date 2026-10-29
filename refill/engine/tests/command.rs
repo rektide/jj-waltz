@@ -153,7 +153,7 @@ impl Fixture {
 
 struct NoOrdinary;
 impl OrdinaryTransfer for NoOrdinary {
-    fn admit(&self, _receivers: usize, enabled: bool) -> anyhow::Result<()> {
+    fn admit(&mut self, _receivers: usize, enabled: bool) -> anyhow::Result<()> {
         anyhow::ensure!(!enabled, "fixture has no ordinary adapter");
         Ok(())
     }

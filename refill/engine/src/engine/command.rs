@@ -57,7 +57,7 @@ pub struct ResolvedCommand {
 /// update actual lane outcomes before returning a failure. No native-only inputs
 /// (O membership or reusable cache bytes) cross this interface.
 pub trait OrdinaryTransfer {
-    fn admit(&self, receivers: usize, enabled: bool) -> Result<()>;
+    fn admit(&mut self, receivers: usize, enabled: bool) -> Result<()>;
     fn transfer(
         &mut self,
         cohort: &OrdinaryCohort,

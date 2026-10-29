@@ -48,6 +48,17 @@ impl Execution {
         }
         applier.run()
     }
+
+    /// Borrow the command's one optional pool for a whole joined cohort, not
+    /// once per root or receiver. The runtime choice is deliberately absent from
+    /// policy identity and saved semantic state. Native commands stay outside.
+    pub fn scope<R: Send>(&self, run: impl FnOnce(diff_dirs::Execution) -> R + Send) -> R {
+        #[cfg(feature = "payload-parallel")]
+        if let Some(pool) = &self.pool {
+            return pool.install(|| run(diff_dirs::Execution::Parallel));
+        }
+        run(diff_dirs::Execution::Sequential)
+    }
 }
 
 /// Frozen native/target-owned boundaries, not a discovered entry/operation map.
@@ -194,6 +205,29 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn command_execution_admission_is_bounded_and_disabled_work_creates_no_pool() {
+        let disabled = Execution::new(false).unwrap();
+        #[cfg(feature = "payload-parallel")]
+        assert!(disabled.pool.is_none());
+        disabled.scope(|mode| assert_eq!(mode, diff_dirs::Execution::Sequential));
+        let enabled = Execution::new(true).unwrap();
+        #[cfg(feature = "payload-parallel")]
+        {
+            let pool = enabled.pool.as_ref().unwrap();
+            assert_eq!(pool.current_num_threads(), std::thread::available_parallelism().unwrap().get().min(4));
+            for _ in 0..2 {
+                enabled.scope(|mode| {
+                    assert_eq!(mode, diff_dirs::Execution::Parallel);
+                    assert!(rayon::current_thread_index().is_some());
+                    assert!(std::thread::current().name().unwrap().starts_with("jw-payload-"));
+                });
+            }
+        }
+        #[cfg(not(feature = "payload-parallel"))]
+        enabled.scope(|mode| assert_eq!(mode, diff_dirs::Execution::Sequential));
+    }
 
     struct Fixture {
         _temp: tempfile::TempDir,

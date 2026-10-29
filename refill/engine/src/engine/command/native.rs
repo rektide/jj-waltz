@@ -142,7 +142,9 @@ pub(super) fn establish(
         let client = binding.client();
         // A preceding native receiver may rewrite history. Never silently repin
         // an O captured by the preservation barrier.
-        let old = measured(report, Phase::NativeSetup, |_| {
+        // This is the per-receiver guard portion of Capture, not another
+        // membership extraction or an additional public wire phase.
+        let old = measured(report, Phase::Capture, |_| {
             let operation = client.operation_id()?;
             source.binding.verify_at(&operation)?;
             ensure!(

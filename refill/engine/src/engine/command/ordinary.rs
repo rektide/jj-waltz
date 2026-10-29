@@ -1,15 +1,18 @@
 //! Downward adapter: command-owned bindings become transfer-owned policy inputs.
 //! Transfer does not depend on the engine's command/report types.
 use super::*;
-use cow::streaming::{CohortLane, OrdinarySource, SourceQualified, sync_cohort};
+use cow::streaming::{CohortLane, OrdinarySource, SourceQualified, sync_cohort_with_execution};
 
 #[derive(Default)]
 pub struct ContextualOrdinary {
     pub resources: diff_dirs::ObservationResources,
+    execution: Option<cow::transfer::Execution>,
 }
+
 impl OrdinaryTransfer for ContextualOrdinary {
-    fn admit(&self, receivers: usize, _enabled: bool) -> Result<()> {
+    fn admit(&mut self, receivers: usize, enabled: bool) -> Result<()> {
         ensure!(receivers != 0, "ordinary cohort requires receivers");
+        self.execution = Some(cow::transfer::Execution::new(enabled)?);
         Ok(())
     }
     fn transfer(
@@ -40,7 +43,12 @@ impl OrdinaryTransfer for ContextualOrdinary {
                 ),
             })
             .collect();
-        let result = sync_cohort(&cohort.source.root, lanes, self.resources.clone());
+        let execution = self.execution.as_ref().ok_or_else(|| OrdinaryFailure {
+            lane: None,
+            diagnostics: None,
+            source: anyhow::anyhow!("ordinary execution resources were not admitted before native work"),
+        })?;
+        let result = sync_cohort_with_execution(&cohort.source.root, lanes, self.resources.clone(), execution);
         let reports = match &result {
             Ok(report) => &report.reports,
             Err(failure) => &failure.reports,
@@ -59,5 +67,32 @@ impl OrdinaryTransfer for ContextualOrdinary {
             diagnostics: failure.diagnostics,
             source: failure.source,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mutable_admission_owns_execution_before_native_work_and_disabled_is_serial() {
+        let mut ordinary = ContextualOrdinary::default();
+        assert!(ordinary.execution.is_none());
+        ordinary.admit(2, true).unwrap();
+        ordinary.execution.as_ref().unwrap().scope(|mode| {
+            #[cfg(feature = "payload-parallel")]
+            {
+                assert_eq!(mode, diff_dirs::Execution::Parallel);
+                assert!(std::thread::current().name().unwrap().starts_with("jw-payload-"));
+            }
+            #[cfg(not(feature = "payload-parallel"))]
+            assert_eq!(mode, diff_dirs::Execution::Sequential);
+        });
+        ordinary.admit(2, false).unwrap();
+        ordinary
+            .execution
+            .as_ref()
+            .unwrap()
+            .scope(|mode| assert_eq!(mode, diff_dirs::Execution::Sequential));
     }
 }

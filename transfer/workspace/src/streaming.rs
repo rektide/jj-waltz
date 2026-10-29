@@ -379,6 +379,14 @@ impl Policy for SourceQualified {
     fn select(&self, _: &OrdinaryRegion, batch: &mut Choices<'_, OrdinaryRegion>) -> Result<(), CheckError> {
         #[cfg(test)]
         let parent = batch.info().relative.to_owned();
+        #[cfg(all(test, feature = "payload-parallel"))]
+        self.trace
+            .lock()
+            .unwrap()
+            .workers
+            .entry(parent.clone())
+            .or_default()
+            .insert((std::thread::current().name().unwrap_or("unnamed").to_owned(), rayon::current_thread_index()));
         for entry in batch.entries_mut() {
             if entry.is_terminal() {
                 continue;
@@ -413,6 +421,8 @@ struct Trace {
     source_attributes: BTreeMap<PathBuf, usize>,
     hints: Vec<(PathBuf, Option<FileKind>)>,
     shapes: Vec<PathBuf>,
+    #[cfg(feature = "payload-parallel")]
+    workers: BTreeMap<PathBuf, BTreeSet<(String, Option<usize>)>>,
 }
 
 pub struct CohortLane {
@@ -450,9 +460,30 @@ impl std::error::Error for CohortFailure {
 /// Inputs are canonical, already bound workspace roots. An all-empty selection
 /// returns without runtime construction or source/target I/O.
 pub fn sync_cohort(source: &Path, lanes: Vec<CohortLane>, resources: diff_dirs::ObservationResources) -> std::result::Result<CohortReport, CohortFailure> {
+    sync_cohort_with_execution(source, lanes, resources, &crate::transfer::Execution::default())
+}
+
+/// The command admits its execution resource before native mutations and lends
+/// it here once. Joined inspection and effects run in that pool; peer application
+/// order is still the explicit fail-fast loop below. No pool is constructed here.
+pub fn sync_cohort_with_execution(
+    source: &Path,
+    lanes: Vec<CohortLane>,
+    resources: diff_dirs::ObservationResources,
+    execution: &crate::transfer::Execution,
+) -> std::result::Result<CohortReport, CohortFailure> {
     if lanes.iter().all(|lane| lane.policy.source.patterns.is_empty()) {
         return Ok(CohortReport::default());
     }
+    execution.scope(|mode| sync_cohort_in(source, lanes, resources, mode))
+}
+
+fn sync_cohort_in(
+    source: &Path,
+    lanes: Vec<CohortLane>,
+    resources: diff_dirs::ObservationResources,
+    execution: diff_dirs::Execution,
+) -> std::result::Result<CohortReport, CohortFailure> {
     use diff_dirs::Comparator;
     use diff_dirs::coordinated::{Bindings, Parts, TargetBinding, TargetId};
     use diff_dirs_sync::coordinated::{SyncCursor, SyncParts, SyncRuntime, SyncTarget};
@@ -486,7 +517,7 @@ pub fn sync_cohort(source: &Path, lanes: Vec<CohortLane>, resources: diff_dirs::
             lanes: vec![Default::default(); lanes.len()],
             current: None,
         },
-        diff_dirs::Execution::Sequential,
+        execution,
     )
     .map_err(|source| CohortFailure {
         lane: None,
@@ -614,6 +645,78 @@ mod tests {
         fn run(&self, patterns: &[&str]) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
             sync_one(&self.source, &self.target, "test", self.visitor(patterns, &[], &[]))
         }
+    }
+
+    #[test]
+    fn borrowed_execution_scope_runs_one_real_paired_and_opaque_cohort_and_empty_never_binds() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir_all(b.join("cache")).unwrap();
+        for i in 0..16 {
+            fs::create_dir_all(f.source.join(format!("cache/branch-{i}"))).unwrap();
+            fs::write(f.source.join(format!("cache/branch-{i}/file")), "bounded payload\n").unwrap();
+        }
+        fs::write(b.join("cache/stale"), "obsolete\n").unwrap();
+        let a_policy = f.visitor(&["cache"], &[], &[]);
+        let b_policy = f.visitor(&["cache"], &[], &[]);
+        #[cfg(feature = "payload-parallel")]
+        let traces = [Arc::clone(&a_policy.trace), Arc::clone(&b_policy.trace)];
+        let execution = crate::transfer::Execution::new(true).unwrap();
+        let report = sync_cohort_with_execution(
+            &f.source,
+            vec![
+                CohortLane {
+                    name: "a".into(),
+                    target: f.target.clone(),
+                    policy: a_policy,
+                },
+                CohortLane {
+                    name: "b".into(),
+                    target: b.clone(),
+                    policy: b_policy,
+                },
+            ],
+            Default::default(),
+            &execution,
+        )
+        .unwrap();
+        assert!(report.reports.iter().all(|r| r.satisfied && r.totals.completed.files_reflinked == 16));
+        assert_eq!(report.reports[1].totals.completed.files_removed, 1);
+        let diagnostics = report.diagnostics.unwrap();
+        assert!(diagnostics.paired.listings > 0 && diagnostics.opaque.listings > 0);
+        assert_eq!(diagnostics.active_batches, 0);
+        #[cfg(feature = "payload-parallel")]
+        for trace in traces {
+            let trace = trace.lock().unwrap();
+            assert!(trace.workers.contains_key(Path::new("")), "joined root inspection ran in the borrowed pool");
+            assert!(
+                trace.workers.keys().any(|p| p.starts_with("cache") && p != Path::new("cache")),
+                "recursive application inspected payload descendants"
+            );
+            assert!(
+                trace
+                    .workers
+                    .values()
+                    .flatten()
+                    .all(|(name, index)| name.starts_with("jw-payload-") && index.is_some()),
+                "actual worker callbacks, not merely feature compilation"
+            );
+        }
+        let empty_policy = f.visitor(&[], &[], &[]);
+        fs::rename(&f.source, f._temp.path().join("gone")).unwrap();
+        let empty_execution = crate::transfer::Execution::new(false).unwrap();
+        let report = sync_cohort_with_execution(
+            &f.source,
+            vec![CohortLane {
+                name: "empty".into(),
+                target: f.target.clone(),
+                policy: empty_policy,
+            }],
+            Default::default(),
+            &empty_execution,
+        )
+        .unwrap();
+        assert!(report.reports.is_empty() && report.diagnostics.is_none());
     }
 
     #[test]
@@ -1116,13 +1219,15 @@ mod tests {
         fs::create_dir(&b).unwrap();
         file(f.source.join("cache/a-visible"), "visible before refusal");
         fs::create_dir_all(f.source.join("cache/z/.git")).unwrap();
-        let failure = sync_cohort(
+        let execution = crate::transfer::Execution::new(true).unwrap();
+        let failure = sync_cohort_with_execution(
             &f.source,
             vec![
                 lane("z-first", &f.target, f.visitor(&["cache"], &[], &[])),
                 lane("a-second", &b, f.visitor(&["cache"], &[], &[])),
             ],
             Default::default(),
+            &execution,
         )
         .unwrap_err();
         assert_eq!(failure.lane, Some(0));
@@ -1131,6 +1236,9 @@ mod tests {
         assert_eq!(failure.reports[1].totals.completed, Default::default());
         assert!(!b.join("cache").exists());
         assert!(f.target.join("cache/a-visible").is_file());
+        let diagnostics = failure.diagnostics.unwrap();
+        assert!(diagnostics.opaque.listings > 0);
+        assert_eq!(diagnostics.active_batches, 0);
     }
 
     #[test]
