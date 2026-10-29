@@ -7,6 +7,8 @@ status: maintained-rust-only
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
 updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-29 }
 sources:
+  - resource: "opencode://ses_e77662b15ffe213doiBhCq3TnF"
+    title: Binds the actual schema-one parser and explicit live-asserted-source profile, verifies fail-closed numeric and completion rules, and runs bounded public-command evidence
   - resource: "opencode://ses_e79d11c23ffeYmXANCjX2wAB34"
     title: Builds the bounded retained-fixture renewal adapter, checks literal process contracts and reset safety, and records the deliberately pending public-report extraction gate
   - resource: "opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu"
@@ -19,8 +21,12 @@ sources:
     title: Historical strict GNU cp baseline
   - resource: "opencode://ses_eb8947cfaffeQ1jxia03URCymY"
     title: Original performance harness, fixtures, subprocess counts and compatibility checks
-  - resource: /refill/engine/src/engine/prepare.rs
-    title: Current source-only preparation owner; replaces the retired /src/reseed/prepare.rs navigation
+  - resource: /refill/engine/src/engine/command/source.rs
+    title: Current source-only preparation and explicit live source assertion owner
+  - resource: /app/cli/src/refill_report.rs
+    title: Actual schema-one projection with decimal counters, nullable measurements and lossless Unix paths
+  - resource: /docs/schema/refill-v1.schema.json
+    title: Public outcome field vocabulary and completion requirements
   - resource: /app/cli/tests/prepare.rs
     title: Current isolated local remote and configuration precedent; replaces retired /tests/prepare.rs navigation
   - resource: /design/up-performance/handoff0.glm53m.md
@@ -45,17 +51,30 @@ comparison. It creates **one owned donor and two receiver roots once**, then
 reuses them sequentially. It imports no donor, creates no remote, and never copies
 `.jj`, uses `jj edit`, sets blanket `TMPDIR`, or runs a builder.
 
-**Infrastructure is ready; public report extraction is deliberately blocked.**
-`renewal accept` first checks actual `reseed --help` for the reviewed selector and
-JSON interface. Legacy dispatch is not a route result. Its final
-[`report_evidence`](src/renewal/mod.rs) integration seam currently refuses every
-report instead of guessing the unfinished CLI envelope. Successful process exit
-is not semantic acceptance, and missing phase fields are not zeros. Implement
-that seam against the reviewed public command before running the recipe below.
-The detailed [verification handoff](/design/coordinated-refill/verification1.sol61x.md)
-lists the required fields and the broader parent-owned acceptance gates.
+**The adapter consumes the actual public schema 1.** `renewal accept` checks
+`reseed --help`, then validates each real JSON outcome through
+[`report_evidence`](src/renewal/report.rs): reseed/execute/complete/error-null,
+exact route/native profile, ordered cohort/roots, S/D and child parent, full eight-leaf
+manifest with retirement/adoption, seven actual regular clones plus one literal
+link per receiver, no byte-copy fallback and completed finish. Clean ordinary
+work must return actual zero effects. A process exit alone is not acceptance.
 
-After the public command, its semantic tests and report binding are complete:
+Canonical decimal strings are checked as `u128`, never coerced through JSON
+numbers. Required missing/null facts refuse. Explicit optional timing/diagnostic
+nulls remain null; no comparison can treat missing instrumentation as zero.
+Native/ordinary source diagnostics and deviation/retention remain separate in the
+retained outcome. Raw stdout/stderr and process status are saved before parsing;
+a nonzero command's original exit/cause is not masked by JSON parsing.
+
+The initialized fixture, acceptance binding, workload and command records name
+**`live-asserted-source`**. The retained exact `--source-at` assertion must report
+`live_assertion`, succeeded and exact S. Its named donor diff/snapshot work is
+**inside measured command time**. These are not plain prepared-source latencies;
+do not subtract source proof time or change the public no-implicit-snapshot default.
+Broader authority/failure/native evidence remains in the
+[public cutover handoff](/design/coordinated-refill/execution3.sol61x.md).
+
+Build and bind before running the bounded recipe:
 
 ```sh
 cargo build --locked -p jj-waltz-perf

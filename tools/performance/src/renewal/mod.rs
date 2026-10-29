@@ -1,5 +1,6 @@
 //! Deliberately small two-route adapter. This is not the fresh-per-sample campaign.
 mod fixture;
+mod report;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +24,8 @@ use std::{
 };
 
 use fixture::{Fixture, Start};
+
+const PROFILE: &str = "live-asserted-source";
 
 #[derive(Subcommand)]
 pub enum Action {
@@ -262,15 +265,7 @@ fn capability(help: &str) -> Result<()> {
     Ok(())
 }
 
-/// Single deliberate integration seam: the public report is not settled yet.
-/// Do NOT infer a route from argv/help or replace unavailable fields with zero.
-/// Implement against the reviewed CLI envelope, checking actual route, S/D,
-/// complete rows/coverage, required-clone successes/zero copies, clean ordinary
-/// zero writes, paired acquisition vs opaque work, and retaining optional phases.
-/// Failure process status is handled first, independently of JSON parsing.
-fn report_evidence(_raw: &Value, _fixture: &Fixture, _case: Case, _route: Route) -> Result<Value> {
-    Err("public command report extraction pending reviewed CLI fields; raw output retained; semantic acceptance and timing are blocked".into())
-}
+use report::evidence as report_evidence;
 
 fn invoke(ctx: &mut Context, control: &Control, fixture: &Fixture, case: Case, route: Route, timing: Timing, stem: &Path) -> Result<Value> {
     let guard = Instant::now();
@@ -290,7 +285,7 @@ fn invoke(ctx: &mut Context, control: &Control, fixture: &Fixture, case: Case, r
     // Preserve status and raw paths BEFORE parsing. Nonzero stdout may not be JSON.
     let observation = json!({"argv":args,"process":outcome,"stdout":stdout,"stderr":stdout.with_extension("stderr"),"artifact_guard_ns":guard_ns,
         "timing":timing,"trace":if timing == Timing::Instrumented { Some(&trace) } else { None },
-        "reported_fields":"unavailable until reviewed public report extraction"});
+        "measurement_profile":PROFILE,"reported_fields":"schema 1; validated separately after process success"});
     write_json(&stem.with_extension("command.json"), &observation)?;
     if outcome.code != Some(0) || outcome.timed_out {
         return Err(format!(
@@ -345,9 +340,11 @@ fn accept(root: &Path, output: &Path) -> Result<()> {
 }
 
 fn binding(fixture: &Fixture) -> Result<Value> {
-    Ok(json!({"fixture_sha256":artifacts::sha256(&fixture.root.join("fixture.json"))?,
+    Ok(
+        json!({"measurement_profile":PROFILE,"fixture_sha256":artifacts::sha256(&fixture.root.join("fixture.json"))?,
         "candidate_sha256":fixture.control.sha256,"provenance_sha256":fixture.control.provenance_sha256,
-        "adapter_sha256":artifacts::sha256(&std::env::current_exe()?)?,"jj":instrumentation::identity(&fixture.jj)?,"git":instrumentation::identity(&fixture.git)?}))
+        "adapter_sha256":artifacts::sha256(&std::env::current_exe()?)?,"jj":instrumentation::identity(&fixture.jj)?,"git":instrumentation::identity(&fixture.git)?}),
+    )
 }
 fn check_acceptance(fixture: &Fixture, path: &Path) -> Result<()> {
     let value: Value = serde_json::from_slice(&fs::read(path)?)?;
@@ -400,7 +397,7 @@ impl Renewal {
         outside_fixture(&self.fixture, output)?;
         let mut ctx = context(output, &self.fixture.jj, &self.fixture.git)?;
         self.fixture.verify(&mut ctx)?;
-        let value = json!({"binding":binding(&self.fixture)?,"case":self.case,"timing":self.timing,"S":self.fixture.s,
+        let value = json!({"binding":binding(&self.fixture)?,"measurement_profile":PROFILE,"case":self.case,"timing":self.timing,"S":self.fixture.s,
             "D":self.fixture.desired(self.case),"native_residency":"one donor, two reused receiver roots; no import, remote or administration copy",
             "scope":"whole public command; reset, hashes and external verification excluded; reported phases optional, never zero-filled"});
         self.ctx = Some(ctx);

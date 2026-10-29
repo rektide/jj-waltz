@@ -83,6 +83,7 @@ impl Binding {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Fixture {
     pub root: PathBuf,
+    measurement_profile: String,
     pub control: Control,
     pub jj: PathBuf,
     pub git: PathBuf,
@@ -116,11 +117,17 @@ impl Fixture {
     pub fn source(&self) -> PathBuf {
         self.root.join("trees/source")
     }
-    fn worker(&self, index: usize) -> PathBuf {
+    pub fn worker(&self, index: usize) -> PathBuf {
         self.root.join(if index == 0 { "trees/worker-a" } else { "trees/worker-b" })
     }
     pub fn desired(&self, case: Case) -> &str {
         if case == Case::DesiredN2 { &self.d } else { &self.s }
+    }
+    pub fn check_profile(&self) -> Result<()> {
+        if self.measurement_profile != super::PROFILE {
+            return Err("fixture measurement profile is not live-asserted-source".into());
+        }
+        Ok(())
     }
 
     pub fn create(root: &Path, control: Control, ctx: &mut Context) -> Result<Self> {
@@ -188,6 +195,7 @@ impl Fixture {
         let source_tree = tracked_signature(&donor);
         let f = Self {
             root: root.into(),
+            measurement_profile: super::PROFILE.into(),
             control,
             jj: ctx.jj.clone(),
             git: ctx.git.clone(),
@@ -216,6 +224,7 @@ impl Fixture {
             return Err("not an owned renewal fixture".into());
         }
         let f: Self = serde_json::from_slice(&fs::read(root.join("fixture.json"))?)?;
+        f.check_profile()?;
         if f.root != root {
             return Err("fixture moved; native roots are bound to their original locations".into());
         }
@@ -415,6 +424,7 @@ impl Fixture {
     pub(super) fn fake(root: &Path, control: Control) -> Self {
         Self {
             root: root.into(),
+            measurement_profile: super::PROFILE.into(),
             control,
             jj: "/usr/bin/true".into(),
             git: "/usr/bin/true".into(),

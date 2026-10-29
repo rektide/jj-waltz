@@ -110,7 +110,7 @@ fn legacy_help_and_missing_report_are_never_route_acceptance() {
     let f = Fixture::fake(own.path(), control(own.path(), Path::new("/usr/bin/true")));
     for raw in [json!({}), json!({"native_ms":0,"status":"success"}), json!({"fake":true})] {
         let error = report_evidence(&raw, &f, Case::CleanN1, Route::ReplaceAuthorized).unwrap_err().to_string();
-        assert!(error.contains("pending reviewed CLI fields"));
+        assert!(error.contains("schema_version"));
     }
 }
 
@@ -164,10 +164,7 @@ fn candidate_provenance_and_semantic_acceptance_bind_the_exact_artifact() {
     )
     .unwrap();
     assert!(
-        check_acceptance(&f, &acceptance)
-            .unwrap_err()
-            .to_string()
-            .contains("pending reviewed CLI fields"),
+        check_acceptance(&f, &acceptance).unwrap_err().to_string().contains("schema_version"),
         "a flag in a receipt cannot bypass real public report extraction"
     );
 }
