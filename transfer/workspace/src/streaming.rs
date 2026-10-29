@@ -425,7 +425,7 @@ pub struct CohortFailure {
     pub lane: Option<usize>,
     pub reports: Vec<diff_dirs_sync::coordinated::LaneReport>,
     /// Snapshot of the one ordinary source session, including failure work.
-    pub diagnostics: Option<diff_dirs_inspect::SourceDiagnostics>,
+    pub diagnostics: Option<Box<diff_dirs_inspect::SourceDiagnostics>>,
     pub source: anyhow::Error,
 }
 #[derive(Debug, Default)]
@@ -551,7 +551,7 @@ pub fn sync_cohort(source: &Path, lanes: Vec<CohortLane>, resources: diff_dirs::
         Err(source) => Err(CohortFailure {
             lane: failed_lane,
             reports,
-            diagnostics,
+            diagnostics: diagnostics.map(Box::new),
             source,
         }),
     }

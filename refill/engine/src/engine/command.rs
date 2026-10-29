@@ -67,7 +67,7 @@ pub trait OrdinaryTransfer {
 #[derive(Debug)]
 pub struct OrdinaryFailure {
     pub lane: Option<usize>,
-    pub diagnostics: Option<diff_dirs_inspect::SourceDiagnostics>,
+    pub diagnostics: Option<Box<diff_dirs_inspect::SourceDiagnostics>>,
     pub source: anyhow::Error,
 }
 pub struct OrdinaryCohort {
@@ -461,7 +461,7 @@ impl ResolvedCommand {
                 match result {
                     Ok(diagnostics) => report.ordinary_source = diagnostics,
                     Err(failure) => {
-                        report.ordinary_source = failure.diagnostics;
+                        report.ordinary_source = failure.diagnostics.map(|snapshot| *snapshot);
                         lane = failure.lane;
                         return Err(failure.source);
                     }

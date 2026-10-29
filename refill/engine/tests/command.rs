@@ -243,7 +243,8 @@ fn execute_command_child() {
         Ok(match command.execute(&mut ContextualOrdinary::default(), &mut diagnostic) {
             Ok(r) => json!({"ok": true, "report": report_value(&r)}),
             Err(e) => json!({"ok": false, "error": format!("{e:#}"), "phase": e.location.phase.to_string(), "receiver": e.location.receiver,
-                "native_cause": e.source.downcast_ref::<jj_waltz_native_jj::jj::JjCommandError>().is_some(),
+                 "native_cause": e.source.downcast_ref::<jj_waltz_native_jj::jj::JjCommandError>().is_some(),
+                 "listed_cause": e.source.downcast_ref::<diff_dirs_sync::Failure>().is_some(),
                 "ordinary_cause": e.source.downcast_ref::<diff_dirs_sync::coordinated::Error>().is_some(), "report": report_value(&e.report)}),
         })
     };
@@ -632,33 +633,37 @@ fn preservation_barrier_refuses_donor_rewrite_without_implicit_resnapshot() {
 
 #[test]
 fn later_finish_failure_keeps_earlier_complete_receiver_and_actual_link_count() {
-    let f = Fixture::new();
-    let a = f.receiver("a");
-    let b = f.receiver("b");
-    fs::create_dir(a.join("cache")).unwrap();
-    fs::write(a.join("cache/tool"), "local tool\n").unwrap();
-    fs::create_dir(f.source.join("build")).unwrap();
-    fs::write(f.source.join("build/payload"), "ordinary before finish\n").unwrap();
-    fs::write(f.source.join(".jwlinks.toml"), "[[link]]\nsource='.env'\ntarget='cache/tool'\nrequired=true\n").unwrap();
-    let mut request = f.request(&["a", "b"]);
-    request.copy_ignored = Some(vec!["build".into()]);
-    let (value, _) = f.run("execute", &request, None);
-    assert_eq!(value["ok"], false, "{value:#}");
-    assert_eq!(value["receiver"], "b", "{value:#}");
-    assert_eq!(value["phase"], "loaded link finish", "{value:#}");
-    assert_eq!(value["report"]["receivers"][0]["status"], "Complete");
-    assert_eq!(value["report"]["receivers"][0]["links_created"], 1);
-    assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
-    assert_eq!(value["report"]["receivers"][1]["native"], "Established");
-    assert_eq!(value["report"]["receivers"][1]["links_created"], 0);
-    for (i, root) in [&a, &b].into_iter().enumerate() {
-        assert_eq!(value["report"]["receivers"][i]["ordinary_satisfied"], true);
-        assert_eq!(value["report"]["receivers"][i]["ordinary_clones"], 1);
-        assert_eq!(fs::read(root.join("build/payload")).unwrap(), b"ordinary before finish\n");
+    for mode in ["execute", "replace"] {
+        let f = Fixture::new();
+        let a = f.receiver("a");
+        let b = f.receiver("b");
+        fs::create_dir(a.join("cache")).unwrap();
+        fs::write(a.join("cache/tool"), "local tool\n").unwrap();
+        fs::create_dir(f.source.join("build")).unwrap();
+        fs::write(f.source.join("build/payload"), "ordinary before finish\n").unwrap();
+        fs::write(f.source.join(".jwlinks.toml"), "[[link]]\nsource='.env'\ntarget='cache/tool'\nrequired=true\n").unwrap();
+        let mut request = f.request(&["a", "b"]);
+        request.copy_ignored = Some(vec!["build".into()]);
+        let (value, _) = f.run(mode, &request, None);
+        assert_eq!(value["ok"], false, "{value:#}");
+        assert_eq!(value["receiver"], "b", "{value:#}");
+        assert_eq!(value["phase"], "loaded link finish", "{value:#}");
+        assert_eq!(value["report"]["receivers"][0]["status"], "Complete");
+        assert_eq!(value["report"]["receivers"][0]["links_created"], 1);
+        assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
+        assert_eq!(value["report"]["receivers"][1]["native"], "Established");
+        assert_eq!(value["report"]["receivers"][1]["links_created"], 0);
+        for (i, root) in [&a, &b].into_iter().enumerate() {
+            assert_eq!(value["report"]["receivers"][i]["ordinary_satisfied"], true);
+            assert_eq!(value["report"]["receivers"][i]["ordinary_clones"], 1);
+            assert_eq!(fs::read(root.join("build/payload")).unwrap(), b"ordinary before finish\n");
+        }
+        assert!(fs::symlink_metadata(a.join(".env")).unwrap().is_symlink());
+        assert_eq!(fs::read(a.join(".env")).unwrap(), b"local tool\n");
+        assert!(!b.join(".env").exists());
+        assert!(value["report"]["receivers"][0]["finish_ns"].as_u64().unwrap() > 0);
+        assert!(value["report"]["receivers"][1]["finish_ns"].as_u64().unwrap() > 0);
     }
-    assert!(fs::symlink_metadata(a.join(".env")).unwrap().is_symlink());
-    assert_eq!(fs::read(a.join(".env")).unwrap(), b"local tool\n");
-    assert!(!b.join(".env").exists());
 }
 
 #[test]
@@ -692,6 +697,10 @@ fn real_command_mixed_n2_ordinary_cohort_then_loaded_finish_and_clean_repeat() {
             );
             assert!(value["report"]["tracked_source"]["declared"]["facts"].as_u64().unwrap() >= 3);
             assert_eq!(value["report"]["ordinary_source"]["active"], 0);
+            assert!(value["report"]["ordinary_source"]["paired"]["listings"].as_u64().unwrap() > 0);
+            if !repeat {
+                assert!(value["report"]["ordinary_source"]["opaque"]["listings"].as_u64().unwrap() > 0);
+            }
             for (i, root) in [&a, &b].into_iter().enumerate() {
                 let r = &value["report"]["receivers"][i];
                 assert_eq!(r["status"], "Complete");
@@ -894,39 +903,247 @@ fn production_both_native_routes_exact_s_and_distinct_d_preserve_history_identit
 
 #[test]
 fn real_command_ordinary_failure_keeps_actual_both_lane_work_and_stops_finish() {
+    for mode in ["execute", "replace"] {
+        let f = Fixture::new();
+        let a = f.receiver("a");
+        let b = f.receiver("b");
+        fs::create_dir_all(f.source.join("cache")).unwrap();
+        fs::write(f.source.join("cache/a-visible"), "visible\n").unwrap();
+        fs::create_dir_all(b.join("cache/z-stale/deep/.git")).unwrap();
+        fs::write(b.join("cache/z-stale/deep/.git/keep"), "veto\n").unwrap();
+        fs::write(
+            f.source.join(".jwlinks.toml"),
+            "[[link]]\nsource='.env'\ntarget='cache/a-visible'\nrequired=true\n",
+        )
+        .unwrap();
+        let mut request = f.request(&["a", "b"]);
+        request.copy_ignored = Some(vec!["cache".into()]);
+        let (value, _) = f.run(mode, &request, None);
+        assert_eq!(value["ok"], false, "{value:#}");
+        assert_eq!(value["receiver"], "b");
+        assert_eq!(value["phase"], "ordinary coordinated transfer");
+        assert_eq!(
+            value["ordinary_cause"], true,
+            "original typed provider application failure survives command wrapping"
+        );
+        for (i, root) in [&a, &b].into_iter().enumerate() {
+            let r = &value["report"]["receivers"][i];
+            assert_eq!(r["native"], "Established");
+            assert_eq!(r["ordinary_report"], true);
+            assert_eq!(r["ordinary_clones"], 1);
+            assert_eq!(r["finish"], false);
+            assert_eq!(fs::read(root.join("cache/a-visible")).unwrap(), b"visible\n");
+            assert!(!root.join(".env").exists(), "no finish after ordinary failure");
+        }
+        assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
+        assert!(b.join("cache/z-stale/deep/.git/keep").exists());
+        assert_eq!(value["report"]["ordinary_source"]["active"], 0);
+        assert!(value["report"]["ordinary_source"]["paired"]["listings"].as_u64().unwrap() > 0);
+    }
+}
+
+#[test]
+fn both_routes_missing_wrong_kind_and_wrong_executable_source_refuse_without_adoption_or_fallback() {
+    for mode in ["execute", "replace"] {
+        for damage in ["missing", "kind", "executable"] {
+            let f = Fixture::new();
+            let a = f.receiver("a");
+            match damage {
+                "missing" => fs::remove_file(f.source.join("zz")).unwrap(),
+                "kind" => {
+                    fs::remove_file(f.source.join("zz")).unwrap();
+                    std::os::unix::fs::symlink("a", f.source.join("zz")).unwrap();
+                }
+                _ => fs::set_permissions(f.source.join("zz"), fs::Permissions::from_mode(0o755)).unwrap(),
+            }
+            let (value, _) = f.run(mode, &f.request(&["a"]), None);
+            assert_eq!(value["ok"], false, "{mode} {damage}: {value:#}");
+            assert_eq!(value["listed_cause"], true);
+            let r = &value["report"]["receivers"][0];
+            assert_eq!(r["phase"], "full-S tracked installation");
+            assert_eq!(r["manifest"], false);
+            assert_eq!(r["installed"], 0);
+            assert_eq!(r["clones"], 0);
+            assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
+            assert!(!r["attempted"].as_array().unwrap().contains(&json!("Reparent")));
+            assert_eq!(r["attempted"].as_array().unwrap().contains(&json!("NativeClear")), mode == "execute");
+            assert!(r["finish_ns"].is_null());
+            assert!(value["report"]["ordinary_source"].is_null());
+            assert_eq!(value["report"]["tracked_source"]["active"], 0);
+            if mode == "replace" {
+                assert_eq!(fs::read(a.join("zz")).unwrap(), b"last leaf\n");
+            }
+        }
+    }
+}
+
+#[test]
+fn both_routes_late_manifest_failure_preserves_returned_visible_progress_and_original_cause() {
+    for mode in ["execute", "replace"] {
+        let mut f = Fixture::new();
+        fs::create_dir(f.source.join("zdir")).unwrap();
+        fs::write(f.source.join("zdir/missing"), "recorded obligation\n").unwrap();
+        f.capture_source();
+        let a = f.receiver("a");
+        fs::remove_file(f.source.join("zdir/missing")).unwrap();
+        let (value, _) = f.run(mode, &f.request(&["a"]), None);
+        assert_eq!(value["ok"], false, "{value:#}");
+        assert_eq!(value["listed_cause"], true);
+        let r = &value["report"]["receivers"][0];
+        assert_eq!(r["clones"], 3);
+        assert_eq!(r["installed"], 3);
+        assert_eq!(r["desired_leaves"], 4);
+        assert_eq!(r["manifest"], false);
+        assert_eq!(r["native"], "InProgress");
+        assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
+        assert_eq!(fs::read(a.join("a")).unwrap(), b"baseline\n");
+        assert_eq!(value["report"]["tracked_source"]["active"], 0);
+        assert!(r["timings"].as_array().unwrap().iter().any(|t| t["phase"] == "Install" && t["ok"] == false));
+    }
+}
+
+#[test]
+fn both_routes_matching_s_only_and_d_only_locals_are_obstructions_even_when_equal() {
+    for mode in ["execute", "replace"] {
+        for desired_only in [false, true] {
+            let mut f = Fixture::new();
+            let desired = if desired_only {
+                let s = f.s.clone();
+                f.jj(&f.source, &["new", &commit_id_revset(&s).unwrap()]);
+                fs::write(f.source.join("d-only"), "equal local\n").unwrap();
+                f.capture_source();
+                let d = f.s.clone();
+                f.jj(&f.source, &["new", &commit_id_revset(&s).unwrap()]);
+                f.capture_source();
+                Some(d)
+            } else {
+                None
+            };
+            let a = f.receiver("a");
+            if !desired_only {
+                fs::remove_file(a.join("zz")).unwrap();
+                f.jj(&a, &["status"]);
+            }
+            f.jj(&f.source, &["config", "set", "--repo", "snapshot.auto-track", "none()"]);
+            let local = a.join(if desired_only { "d-only" } else { "zz" });
+            if desired_only {
+                fs::write(&local, "equal local\n").unwrap();
+            } else {
+                fs::copy(f.source.join("zz"), &local).unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(&local)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(fs::metadata(f.source.join("zz")).unwrap().modified().unwrap()))
+                    .unwrap();
+            }
+            let identity = fs::metadata(&local).unwrap().ino();
+            let contents = fs::read(&local).unwrap();
+            let mut request = f.request(&["a"]);
+            request.at = desired.as_ref().map(|d| commit_id_revset(d).unwrap());
+            let (value, _) = f.run(mode, &request, None);
+            assert_eq!(value["ok"], false, "{mode} D-only={desired_only}: {value:#}");
+            let r = &value["report"]["receivers"][0];
+            assert_eq!(
+                r["phase"],
+                if desired_only {
+                    "D-addition namespace admission"
+                } else {
+                    "full-S tracked installation"
+                }
+            );
+            assert_eq!(r["manifest"], desired_only);
+            assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
+            assert_eq!(fs::metadata(&local).unwrap().ino(), identity);
+            assert_eq!(fs::read(&local).unwrap(), contents);
+        }
+    }
+}
+
+#[test]
+fn authorized_collapse_retains_unknown_file_and_unknown_empty_directory_intact() {
+    for empty_directory in [false, true] {
+        let mut f = Fixture::new();
+        fs::write(f.source.join("collapse"), "desired leaf\n").unwrap();
+        f.capture_source();
+        let a = f.receiver("a");
+        fs::remove_file(a.join("collapse")).unwrap();
+        fs::create_dir(a.join("collapse")).unwrap();
+        fs::write(a.join("collapse/owned"), "owned old child\n").unwrap();
+        f.jj(&a, &["status"]);
+        if empty_directory {
+            fs::create_dir(a.join("collapse/.env")).unwrap();
+        } else {
+            fs::write(a.join("collapse/.env"), "retained local\n").unwrap();
+        }
+        let owned_inode = fs::metadata(a.join("collapse/owned")).unwrap().ino();
+        let local_inode = fs::metadata(a.join("collapse/.env")).unwrap().ino();
+        let (value, _) = f.run("replace", &f.request(&["a"]), None);
+        assert_eq!(value["ok"], false, "{value:#}");
+        let r = &value["report"]["receivers"][0];
+        assert_eq!(r["manifest"], false);
+        assert_eq!(r["retired"], 0, "no flat O-minus-S deletion before coupled veto");
+        assert_eq!(r["removed_files"], 0);
+        assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
+        assert_eq!(fs::metadata(a.join("collapse/owned")).unwrap().ino(), owned_inode);
+        assert_eq!(fs::metadata(a.join("collapse/.env")).unwrap().ino(), local_inode);
+        assert_eq!(fs::read(a.join("collapse/owned")).unwrap(), b"owned old child\n");
+        if empty_directory {
+            assert_eq!(fs::read_dir(a.join("collapse/.env")).unwrap().count(), 0);
+        } else {
+            assert_eq!(fs::read(a.join("collapse/.env")).unwrap(), b"retained local\n");
+        }
+    }
+}
+
+#[test]
+fn authorized_native_reparent_failure_keeps_both_tracked_results_and_starts_no_ordinary_or_finish() {
     let f = Fixture::new();
     let a = f.receiver("a");
     let b = f.receiver("b");
-    fs::create_dir_all(f.source.join("cache")).unwrap();
-    fs::write(f.source.join("cache/a-visible"), "visible\n").unwrap();
-    fs::create_dir_all(b.join("cache/z-stale/deep/.git")).unwrap();
-    fs::write(b.join("cache/z-stale/deep/.git/keep"), "veto\n").unwrap();
-    fs::write(
-        f.source.join(".jwlinks.toml"),
-        "[[link]]\nsource='.env'\ntarget='cache/a-visible'\nrequired=true\n",
-    )
-    .unwrap();
-    let mut request = f.request(&["a", "b"]);
-    request.copy_ignored = Some(vec!["cache".into()]);
-    let (value, _) = f.run("execute", &request, None);
+    let (value, calls) = f.run("replace-fail-reparent", &f.request(&["a", "b"]), Some(&b));
     assert_eq!(value["ok"], false, "{value:#}");
+    assert_eq!(value["native_cause"], true);
     assert_eq!(value["receiver"], "b");
-    assert_eq!(value["phase"], "ordinary coordinated transfer");
-    assert_eq!(
-        value["ordinary_cause"], true,
-        "original typed provider application failure survives command wrapping"
-    );
+    assert_eq!(value["phase"], "reparent new receiving change");
     for (i, root) in [&a, &b].into_iter().enumerate() {
         let r = &value["report"]["receivers"][i];
-        assert_eq!(r["native"], "Established");
-        assert_eq!(r["ordinary_report"], true);
-        assert_eq!(r["ordinary_clones"], 1);
+        assert_eq!(r["route"], "ReplaceAuthorized");
+        assert_eq!(r["manifest"], true);
+        assert_eq!(r["clones"], 3);
+        assert_eq!(r["ordinary"], "Unstarted");
         assert_eq!(r["finish"], false);
-        assert_eq!(fs::read(root.join("cache/a-visible")).unwrap(), b"visible\n");
-        assert!(!root.join(".env").exists(), "no finish after ordinary failure");
+        assert!(r["finish_ns"].is_null());
+        assert!(!r["attempted"].as_array().unwrap().contains(&json!("NativeClear")));
+        assert_eq!(fs::read(root.join("a")).unwrap(), b"baseline\n");
     }
+    assert_eq!(value["report"]["receivers"][0]["native"], "Established");
+    assert_eq!(value["report"]["receivers"][1]["native"], "InProgress");
     assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
-    assert!(b.join("cache/z-stale/deep/.git/keep").exists());
+    assert_eq!(value["report"]["owned_manifests"], 1);
+    assert!(value["report"]["ordinary_ns"].is_null());
+    assert!(calls_named(&calls, "sparse").iter().all(|c| !c.iter().any(|a| a == "--clear")));
+}
+
+#[test]
+fn explicit_broad_clear_keeps_selected_replacement_route_but_uses_strict_create() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    fs::write(a.join(".env"), "explicitly cleared local\n").unwrap();
+    let mut request = f.request(&["a"]);
+    request.replace_content = true;
+    let (value, _) = f.run("replace", &request, None);
+    assert_eq!(value["ok"], true, "{value:#}");
+    let r = &value["report"]["receivers"][0];
+    assert_eq!(r["route"], "ReplaceAuthorized");
+    assert_eq!(value["report"]["owned_manifests"], 0);
+    assert_eq!(r["obsolete"], 0);
+    assert_eq!(r["manifest"], true);
+    assert_eq!(r["clones"], 3);
+    assert!(r["attempted"].as_array().unwrap().contains(&json!("ExplicitClear")));
+    assert!(r["attempted"].as_array().unwrap().contains(&json!("Reparent")));
+    assert!(!r["attempted"].as_array().unwrap().contains(&json!("NativeClear")));
+    assert!(!a.join(".env").exists());
 }
 
 #[test]

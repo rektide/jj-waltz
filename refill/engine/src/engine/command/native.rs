@@ -142,10 +142,8 @@ pub(super) fn establish(
             "donor coordinate changed before native transition"
         );
         binding.verify_at(&operation)?;
-        ensure!(
-            client.resolve_one_at(&operation, "@")?.commit_id == saved.old_commit,
-            "saved receiver O moved before native transition"
-        );
+        let old = client.resolve_one_at(&operation, "@")?;
+        ensure!(old.commit_id == saved.old_commit, "saved receiver O moved before native transition");
         bookmarks::verify_batch(&client, [&saved.guard])?;
         report.native.temporary_source_installation = source.report.commit != desired;
         if report.route == RenewalRoute::ClearThenPopulate {
@@ -158,7 +156,8 @@ pub(super) fn establish(
                 refuse_residual(&binding.root, &input.old_trees[&saved.old_commit].leaves)
             })?;
         }
-        let parent = if report.route == RenewalRoute::ClearThenPopulate {
+        let route = report.route;
+        let parent = if route == RenewalRoute::ClearThenPopulate {
             desired
         } else {
             &saved.old_commit
@@ -171,10 +170,15 @@ pub(super) fn establish(
                 child.parents == [parent] && child.ordinary_empty_child(),
                 "new child does not have its exact native parent"
             );
-            ensure!(
-                client.resolve_one_at(&operation, &commit_id_revset(&saved.old_commit)?)?.commit_id == saved.old_commit,
-                "saved O changed during child creation"
-            );
+            if route == RenewalRoute::ReplaceAuthorized {
+                ensure!(
+                    client
+                        .resolve_one_at(&operation, format!("change_id({})", serde_json::to_string(&old.change_id)?))?
+                        .commit_id
+                        == saved.old_commit,
+                    "saved O was rewritten during same-tree child creation"
+                );
+            }
             binding.verify_at(&operation)?;
             Ok(child)
         })?;

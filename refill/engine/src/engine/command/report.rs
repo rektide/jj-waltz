@@ -83,6 +83,8 @@ pub struct NativeOutcome {
     /// Actual provider coverage, retained even on an unsuccessful lane. None
     /// means no lane returned coverage, not an empty complete manifest.
     pub manifest: Option<diff_dirs_sync::ManifestCoverage>,
+    /// Actual distinct provider deviation/retention outcomes, not syscall counts.
+    pub policy: Option<diff_dirs_sync::Policy>,
     /// Whether S is only a temporary installation before native D convergence.
     pub temporary_source_installation: bool,
     pub state: Establishment,

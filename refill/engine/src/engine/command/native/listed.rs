@@ -93,20 +93,31 @@ impl TrackedPhase {
             }],
         )?;
         let lane = result.outcomes.pop().context("provider returned no native lane")?;
-        report.native.manifest = Some(lane.coverage);
-        match lane.outcome {
-            Ok(done) => report.native.completed = done.completed,
-            Err(failure) => {
-                report.native.completed = failure.completed.clone();
-                return Err(failure.into());
-            }
-        }
-        ensure!(
-            lane.coverage.complete,
-            "provider native lane succeeded without complete manifest coverage; S adoption refused"
-        );
-        Ok(())
+        accept_lane(lane, &mut report.native)
     }
+}
+
+/// Shared success/failure projection and the adoption gate. Coverage is copied
+/// before inspecting the lane result; neither outer Ok nor installation counts
+/// can hide cleanup failure. No post-failure filesystem census is performed.
+fn accept_lane(lane: diff_dirs_sync::ListedOutcome, native: &mut NativeOutcome) -> Result<()> {
+    native.manifest = Some(lane.coverage);
+    match lane.outcome {
+        Ok(done) => {
+            native.completed = done.completed;
+            native.policy = Some(done.policy);
+        }
+        Err(failure) => {
+            native.completed = failure.completed.clone();
+            native.policy = Some(*failure.policy.clone());
+            return Err(failure.into());
+        }
+    }
+    ensure!(
+        lane.coverage.complete,
+        "provider native lane succeeded without complete manifest coverage; S adoption refused"
+    );
+    Ok(())
 }
 
 struct NativeGuard {
@@ -167,6 +178,15 @@ impl ListedGuard for NativeGuard {
                 return Err("unsupported native physical kind".into());
             }
             let metadata = fact.attributes.known().ok_or("native guard requires actual side attributes")?;
+            let supported = match fact.kind {
+                Kind::Directory => metadata.is_dir(),
+                Kind::File => metadata.is_file(),
+                Kind::Symlink => metadata.is_symlink(),
+                Kind::Other => false,
+            };
+            if !supported {
+                return Err("native physical attributes disagree with supported kind".into());
+            }
             if metadata.dev() != identity.0 {
                 return Err("native manifest crossed a device boundary".into());
             }
@@ -185,4 +205,139 @@ fn safe(path: &Path) -> Result<(), CheckError> {
         return Err("native manifest reached administration or abnormal coordinate".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diff_dirs::{BatchInfo, Coordinate, Shape, SourceObservation};
+    use diff_dirs_inspect::{DeclaredEntryCandidate, DeclaredRouteCandidate};
+    use diff_dirs_sync::{ListedMode, ListedRelation, ManifestCoverage, Progress};
+
+    fn candidate(observed: DeclaredCandidate<'_>) -> ListedCandidate<'_> {
+        ListedCandidate {
+            observed,
+            intent: ListedIntent::RenewOwned,
+            mode: ListedMode::Declared,
+            relation: ListedRelation::default(),
+        }
+    }
+    #[test]
+    fn native_guard_requests_only_actual_route_side_and_never_o_only_source_facts() {
+        let guard = NativeGuard {
+            source: "/s".into(),
+            target: "/t".into(),
+            source_identity: (1, 2),
+            target_identity: (1, 3),
+        };
+        let info = BatchInfo {
+            source_root: Path::new("/s"),
+            target_root: Path::new("/t"),
+            relative: Path::new(""),
+            structural_root: false,
+            purpose: diff_dirs::Purpose::Copy,
+        };
+        for side in [Side::Original, Side::Target] {
+            let demand = guard.demand(candidate(DeclaredCandidate::Route(DeclaredRouteCandidate {
+                info,
+                side,
+                relative: Path::new(""),
+                kind: Kind::Directory,
+            })));
+            assert_eq!(demand.source.attributes, side == Side::Original);
+            assert_eq!(demand.target.attributes, side == Side::Target);
+            assert!(!demand.source.literal_link && !demand.target.literal_link);
+        }
+        for source in [
+            SourceObservation::NotRequested,
+            SourceObservation::Absent,
+            SourceObservation::Present(Kind::File),
+        ] {
+            let demand = guard.demand(candidate(DeclaredCandidate::Entry(DeclaredEntryCandidate {
+                info,
+                domain: diff_dirs::SelectionDomain::PhysicalUnion,
+                coordinate: Coordinate {
+                    parent: Path::new(""),
+                    name: std::ffi::OsStr::new("old"),
+                    structural_root: false,
+                },
+                desired: None,
+                shape: Shape {
+                    source,
+                    target: Some(Kind::File),
+                },
+            })));
+            assert_eq!(demand.source.attributes, source.kind().is_some());
+            assert!(demand.target.attributes);
+        }
+        assert!(safe(Path::new("route/.jj/leaf")).is_err());
+        assert!(safe(Path::new(".git")).is_err());
+        assert!(safe(Path::new("/absolute")).is_err());
+        assert!(safe(Path::new("")).is_ok(), "root route is valid");
+    }
+
+    #[test]
+    fn incomplete_success_and_completed_installations_with_cleanup_failure_never_pass_adoption_gate() {
+        let coverage = ManifestCoverage {
+            desired: 3,
+            installed: 3,
+            owned_obsolete: 1,
+            owned_retired: 1,
+            complete: false,
+        };
+        let progress = Progress {
+            files_reflinked: 3,
+            files_removed: 1,
+            directory_permissions_set: 2,
+            ..Default::default()
+        };
+        let mut native = NativeOutcome::default();
+        let error = accept_lane(
+            diff_dirs_sync::ListedOutcome {
+                id: "target".into(),
+                coverage,
+                outcome: Ok(diff_dirs_sync::Report {
+                    planned: 4,
+                    completed: progress.clone(),
+                    policy: Default::default(),
+                    observed: None,
+                }),
+            },
+            &mut native,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("without complete manifest coverage"));
+        assert_eq!(native.manifest, Some(coverage));
+        assert_eq!(native.completed, progress);
+        let error = accept_lane(
+            diff_dirs_sync::ListedOutcome {
+                id: "target".into(),
+                coverage,
+                outcome: Err(diff_dirs_sync::Failure {
+                    planned: 4,
+                    policy: Box::default(),
+                    primary: Box::new(diff_dirs_sync::Issue {
+                        operation: "restore directory permissions",
+                        path: "/target".into(),
+                        cause: Box::new(std::io::Error::new(ErrorKind::PermissionDenied, "cleanup failed after all installs")),
+                    }),
+                    secondary: Box::default(),
+                    completed: progress.clone(),
+                    observed: None,
+                }),
+            },
+            &mut native,
+        )
+        .unwrap_err();
+        assert_eq!(error.downcast_ref::<diff_dirs_sync::Failure>().unwrap().completed, progress);
+        assert!(
+            error
+                .chain()
+                .any(|e| e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == ErrorKind::PermissionDenied))
+        );
+        assert_eq!(native.manifest, Some(coverage));
+        assert_eq!(native.completed, progress);
+        assert!(native.attempted.is_empty());
+        assert_eq!(native.state, Establishment::Unstarted);
+    }
 }
