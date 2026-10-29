@@ -7,6 +7,10 @@ status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
+  - resource: "opencode://ses_e7a559acfffeNLFScKfuc7htqW"
+    title: Connects the assessment commissioned to integrate trajectory1 and local architectural steering into present construction
+  - resource: "file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md"
+    title: Proposed interleaved delivery with shared inputs, lighter selected state, inherited region context and comparison composition
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
     title: Connects the check-in and staged architecture discussion, then organizes native delivery and library improvements into an actionable work map and tickets
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
@@ -43,6 +47,12 @@ sources:
 
 ## Start here
 
+- **[Architectural integration assessment](file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md):**
+  latest response to the human's request to anneal the architecture during the next
+  build. Read with trajectory1 and the work map: it proposes bringing inherited
+  region context and comparison/selection contracts into the integration sequence,
+  with concrete frontier, recursive-policy and persistence implications. Proposed
+  scope, with the whole-command destination retained.
 - **[Actionable work map](work-map0.gpt6ax.md):** start here to choose work. It
   separates the known JW command-delivery chain, a bounded persisted-engine
   efficiency change and the optional dirent experiment from later architectural
