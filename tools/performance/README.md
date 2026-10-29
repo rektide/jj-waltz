@@ -8,7 +8,9 @@ generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
 updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-29 }
 sources:
   - resource: "opencode://ses_e77662b15ffe213doiBhCq3TnF"
-    title: Binds the actual schema-one parser and explicit live-asserted-source profile, verifies fail-closed numeric and completion rules, and runs bounded public-command evidence
+    title: Binds actual schema one and live-asserted-source, corrects native reset/oracle assumptions with explicit rebind receipts, and completes eight acceptance cases, twelve native samples and six separate probes
+  - resource: /design/coordinated-refill/evidence0.sol61x.md
+    title: Completed bounded public command acceptance, preserved artifacts, timing/call/source-work/effect tables and limits
   - resource: "opencode://ses_e79d11c23ffeYmXANCjX2wAB34"
     title: Builds the bounded retained-fixture renewal adapter, checks literal process contracts and reset safety, and records the deliberately pending public-report extraction gate
   - resource: "opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu"
@@ -146,6 +148,13 @@ mirrored scheduler for exactly **four A/B/B/A commands (or the seeded mirror)**.
 Instrumented mode is a separate **two-command count probe**, never native latency.
 The first failed sample stops all later resets/commands; remaining scheduled
 slots only record refusal. No fallback, automatic retry or recovery occurs.
+
+The [completed bounded evidence](/design/coordinated-refill/evidence0.sol61x.md)
+passes eight acceptance cases, twelve native samples and six separate probes on
+one retained fixture/candidate. Its two adapter-invalid acceptance attempts and
+explicit rebinds remain preserved. Replacement was slower in both mirrored blocks
+of each tiny timed shape; these are controls, not representative speed results.
+Clear-first remains default; no additional campaign follows automatically.
 
 The command vector is literal, with independently pinned exact commit revsets:
 
