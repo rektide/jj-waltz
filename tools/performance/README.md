@@ -1,12 +1,14 @@
 ---
 type: ToolGuide
 title: Rust-owned preparation and reseed performance controls
-description: Checked-in native fixtures, balanced variants, single-reseed samples, Rust JJ/Git process counting and retained correctness evidence.
+description: Native performance primitives, a bounded reused-fixture two-renewal-route adapter, Rust JJ/Git process counting and retained correctness evidence.
 resource: /tools/performance/README.md
 status: maintained-rust-only
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
-updated: { by: "model:openai/gpt-6.1-sol#medium", at: 2026-10-18 }
+updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-29 }
 sources:
+  - resource: "opencode://ses_e79d11c23ffeYmXANCjX2wAB34"
+    title: Builds the bounded retained-fixture renewal adapter, checks literal process contracts and reset safety, and records the deliberately pending public-report extraction gate
   - resource: "opencode://ses_eb2165cc8ffe4vOmOvDBe7aXQu"
     title: Replaced supported performance commands with native Rust, diagnosed the old feature fixture expectation and proved native/counting cases against preserved BEFORE
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -17,10 +19,10 @@ sources:
     title: Historical strict GNU cp baseline
   - resource: "opencode://ses_eb8947cfaffeQ1jxia03URCymY"
     title: Original performance harness, fixtures, subprocess counts and compatibility checks
-  - resource: /src/reseed/prepare.rs
-    title: Source-only preparation contract measured by native phases
-  - resource: /tests/prepare.rs
-    title: Isolated local remote and configuration precedent
+  - resource: /refill/engine/src/engine/prepare.rs
+    title: Current source-only preparation owner; replaces the retired /src/reseed/prepare.rs navigation
+  - resource: /app/cli/tests/prepare.rs
+    title: Current isolated local remote and configuration precedent; replaces retired /tests/prepare.rs navigation
   - resource: /design/up-performance/handoff0.glm53m.md
     title: Historical motivation for per-file process-count regression controls
 ---
@@ -35,6 +37,98 @@ GNU cp and a required-reflink filesystem are needed. Use configured Rust 1.101
 nightly; this does not change JW's production compiler policy or release profile.
 
 ## Run
+
+### Bounded two-route adapter
+
+Use **`renewal`**, not the older `run` campaign, for the coordinated-renewal
+comparison. It creates **one owned donor and two receiver roots once**, then
+reuses them sequentially. It imports no donor, creates no remote, and never copies
+`.jj`, uses `jj edit`, sets blanket `TMPDIR`, or runs a builder.
+
+**Infrastructure is ready; public report extraction is deliberately blocked.**
+`renewal accept` first checks actual `reseed --help` for the reviewed selector and
+JSON interface. Legacy dispatch is not a route result. Its final
+[`report_evidence`](src/renewal/mod.rs) integration seam currently refuses every
+report instead of guessing the unfinished CLI envelope. Successful process exit
+is not semantic acceptance, and missing phase fields are not zeros. Implement
+that seam against the reviewed public command before running the recipe below.
+The detailed [verification handoff](/design/coordinated-refill/verification1.sol61x.md)
+lists the required fields and the broader parent-owned acceptance gates.
+
+After the public command, its semantic tests and report binding are complete:
+
+```sh
+cargo build --locked -p jj-waltz-perf
+target/debug/jw-perf build . .test-agent/renewal-candidate-NEW \
+  --library ../diff-dirs --variant serial
+target/debug/jw-perf renewal init .test-agent/renewal-fixture-NEW \
+  --candidate .test-agent/renewal-candidate-NEW/jw \
+  --candidate-provenance .test-agent/renewal-candidate-NEW/provenance.json
+target/debug/jw-perf renewal accept .test-agent/renewal-fixture-NEW \
+  .test-agent/renewal-accept-NEW
+target/debug/jw-perf renewal sample .test-agent/renewal-fixture-NEW \
+  .test-agent/renewal-native-NEW --case mixed-n2 \
+  --acceptance .test-agent/renewal-accept-NEW/acceptance.json
+target/debug/jw-perf renewal sample .test-agent/renewal-fixture-NEW \
+  .test-agent/renewal-counts-NEW --case mixed-n2 --timing instrumented \
+  --acceptance .test-agent/renewal-accept-NEW/acceptance.json
+```
+
+All created roots/outputs must be NEW. The existing `build` guard is unchanged:
+production source/manifests must match immutable committed inputs before/after
+building. `init` preserves its one candidate and byte-identical build sidecar;
+both routes execute **that same binary path**, compiler/features and source inputs.
+Per-label artifact copies in native output are archival, not distinct build variants.
+
+`accept` resets and checks each of these four tiny shapes for both routes:
+
+| Shape | Discriminator |
+| --- | --- |
+| `clean-n1` | O has S's tree; Q is stat-equal and keeps all ordinary file inodes/mtimes. Tracked renewal must still report every successful S clone. |
+| `paired-n2` | Two paired Q regions with different named changes and stale leaves. |
+| `mixed-n2` | A lacks Q; B has paired Q and stale content. Separate opaque work from shared paired facts in actual instrumentation. |
+| `desired-n2` | Independently pinned D≠S: modified/added/removed leaves, directory↔file, literal-link and executable-mode changes. No claim that final D-only/native-restored leaves share donor extents. |
+
+All cases retain unrelated `.env` and target `vanished/keep` while the qualifying
+source root is absent. Root/`.jj`/repository identities, registrations, pinned
+history, exact D, full sparse, conflict-free empty-child state, private file
+objects and a bounded write-isolation probe are checked outside timing. Resets
+use named native `new`/`status`/bookmark operations and strict required-reflink Q
+copies with small named deltas. Unexpected Q contents or route kinds refuse
+before reset deletion. No recursive catch-all cleanup or native-state restoration.
+
+Ordinary residency is inventoried under the three checkout roots, excluding
+native administration and external artifacts. A conservative reserve of two full
+donor-content copies covers staging; the aggregate ceiling is **256 entries /
+1 MiB**. The setup smoke observed a bound of **84 entries / 1,018 bytes** including
+that reserve, not an observed production staging maximum or a performance result.
+
+`sample` requires eight successful, unique case/route acceptance rows bound to
+the exact fixture, candidate/build-sidecar, native tool and adapter hashes; it
+rechecks raw report evidence before creating output. Native mode uses the shared
+mirrored scheduler for exactly **four A/B/B/A commands (or the seeded mirror)**.
+Instrumented mode is a separate **two-command count probe**, never native latency.
+The first failed sample stops all later resets/commands; remaining scheduled
+slots only record refusal. No fallback, automatic retry or recovery occurs.
+
+The command vector is literal, with independently pinned exact commit revsets:
+
+```text
+JW reseed worker-a [worker-b] --from OWNED_SOURCE \
+  --source-at 'commit_id("S")' --at 'commit_id("D")' \
+  --renewal-route=clear-then-populate|replace-authorized --format=json
+```
+
+Every actual argv/cwd, stdout, stderr, process wall/CPU/RSS/status, environment and
+wrapper trace is retained. The outer process wall timer includes the whole public
+command; setup/reset/hash/verification remain separate. Failures retain their
+original stderr even when stdout is not JSON. Use `jw-perf count TRACE` to
+summarize a retained wrapper trace independently. Wrapper limitations below apply.
+
+### Older independent-build campaign
+
+The following `run` recipe is still the earlier fresh-donor-per-sample adapter;
+it fixes D=S and is **not** the two-renewal-route evidence harness.
 
 ```sh
 cargo build --locked --release -p jj-waltz-perf
@@ -210,8 +304,11 @@ cargo clippy -p jj-waltz-perf --all-targets -- -D warnings
 cargo fmt -p jj-waltz-perf -- --check
 ```
 
-Seven default tests cover literal Rust exec-wrapper argv, command classification, native
-count requirements, exact feature dimension refusal and streaming inode order.
+Focused package/exec-wrapper tests cover literal argv, command classification,
+native count requirements, exact feature dimension refusal, streaming inode order,
+and the bounded renewal adapter's CLI, lifetime, staging/provenance gates and fake
+process contract. The separate native fixture setup/reset smoke is opt-in and
+does not invoke a renewal route.
 The explicit retained integration test runs with:
 `cargo nextest run --locked -p jj-waltz-perf --test import --run-ignored ignored-only --no-capture`.
 It requires the preserved BEFORE artifact, so is opt-in on fresh checkouts.
