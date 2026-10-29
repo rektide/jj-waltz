@@ -1,220 +1,505 @@
 //! Source-qualified ordinary authority, evaluated during production inspection.
 //! No realized-root set, payload census, native commands or mutable admission map.
-use crate::frozen::FrozenIgnore;
-use crate::ignored::Patterns;
-use anyhow::{Context, Result, bail};
-use diff_dirs::{Action, CheckError, Container, FileKind, Names, Operations, Visitor};
-use std::collections::BTreeSet;
+use crate::frozen::{FrozenIgnore, IgnoreState};
+use crate::ignored::{Patterns, Prefix};
+use anyhow::{Result, ensure};
+use diff_dirs::{
+    Action, CheckError, Choices, Container, ContextSite, Demand, FileKind, Interior, InteriorInput, InteriorRole, Kind, Names, Policy, SemanticId,
+    ShapeChoices, SideDemands, SourceObservation, StatKey,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+#[derive(Debug, Default)]
+struct Node {
+    children: BTreeMap<OsString, usize>,
+    leaf: bool,
+}
+#[derive(Debug)]
+struct PathIndex(Vec<Node>);
+impl PathIndex {
+    fn new(paths: &BTreeSet<PathBuf>) -> Self {
+        let mut nodes = vec![Node::default()];
+        for path in paths {
+            let mut at = 0;
+            for part in path.components() {
+                let name = part.as_os_str();
+                at = match nodes[at].children.get(name) {
+                    Some(i) => *i,
+                    None => {
+                        let i = nodes.len();
+                        nodes.push(Node::default());
+                        nodes[at].children.insert(name.to_owned(), i);
+                        i
+                    }
+                };
+            }
+            nodes[at].leaf = true;
+        }
+        Self(nodes)
+    }
+    fn descend(&self, at: Option<usize>, name: &std::ffi::OsStr) -> Option<usize> {
+        at.and_then(|i| self.0[i].children.get(name).copied())
+    }
+}
+
+/// Shared immutable selector/native index. Lane excludes and active links do
+/// not enter this shared owner.
+#[derive(Debug)]
+pub struct OrdinarySource {
+    patterns: Arc<Patterns>,
+    native: PathIndex,
+    identity: [u8; 32],
+}
+impl OrdinarySource {
+    pub fn new(patterns: Arc<Patterns>, native: &BTreeSet<PathBuf>) -> Self {
+        let mut hash = Sha256::new();
+        for p in patterns.declarations() {
+            frame(&mut hash, p.as_bytes());
+        }
+        frame(&mut hash, b"native");
+        for p in native {
+            frame(&mut hash, p.as_os_str().as_encoded_bytes());
+        }
+        Self {
+            patterns,
+            native: PathIndex::new(native),
+            identity: hash.finalize().into(),
+        }
+    }
+}
+fn frame(hash: &mut Sha256, bytes: &[u8]) {
+    hash.update((bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
 
 #[derive(Debug)]
 pub struct SourceQualified {
-    pub patterns: Arc<Patterns>,
-    pub source_ignore: Arc<FrozenIgnore>,
-    pub desired_ignore: Arc<FrozenIgnore>,
-    /// Whole S/D native leaf names; ancestors are structural, not exclusions.
-    pub native: Arc<BTreeSet<PathBuf>>,
-    /// Active links only. A source==target private-directory rule is not a link.
-    pub links: BTreeSet<PathBuf>,
-    pub devices: (u64, u64),
+    source: Arc<OrdinarySource>,
+    source_ignore: Arc<FrozenIgnore>,
+    desired_ignore: Arc<FrozenIgnore>,
+    links: PathIndex,
+    devices: (u64, u64),
+    identity: SemanticId,
+    #[cfg(test)]
+    trace: Arc<std::sync::Mutex<Trace>>,
 }
-
-#[derive(Debug, PartialEq, Eq)]
-enum Disposition {
-    Preserve,
-    Observe,
-    Mirror,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchState {
+    at: PathBuf,
+    selector: Prefix,
+    source_ignore: IgnoreState,
+    desired_ignore: IgnoreState,
+    native: Option<usize>,
+    links: Option<usize>,
+    seal: [u8; 32],
 }
-
-fn overlaps(paths: &BTreeSet<PathBuf>, path: &Path) -> bool {
-    path.ancestors().any(|p| paths.contains(p)) || paths.range(path.to_path_buf()..).next().is_some_and(|p| p.starts_with(path))
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OrdinaryRegion {
+    Initial,
+    Search(SearchState),
+    SelectedMirror { root: PathBuf, admission: [u8; 32] },
 }
+static SCHEMA: LazyLock<SemanticId> = LazyLock::new(|| SemanticId::new("jw.ordinary-region", 1, vec![]));
 
 impl SourceQualified {
-    fn candidate(&self, path: &Path) -> Result<Option<PathBuf>> {
-        let mut current = PathBuf::new();
-        for part in path.components() {
-            current.push(part);
-            if self.patterns.matches(&current)? && self.source_ignore.ignored(&current, true) {
-                return Ok(Some(current));
-            }
+    pub fn new(
+        source: Arc<OrdinarySource>,
+        source_ignore: Arc<FrozenIgnore>,
+        desired_ignore: Arc<FrozenIgnore>,
+        links: &BTreeSet<PathBuf>,
+        devices: (u64, u64),
+    ) -> Self {
+        let mut hash = Sha256::new();
+        hash.update(source.identity);
+        hash.update(source_ignore.identity());
+        hash.update(desired_ignore.identity());
+        hash.update(devices.0.to_le_bytes());
+        hash.update(devices.1.to_le_bytes());
+        for p in links {
+            frame(&mut hash, p.as_os_str().as_encoded_bytes());
         }
-        Ok(None)
+        Self {
+            source,
+            source_ignore,
+            desired_ignore,
+            links: PathIndex::new(links),
+            devices,
+            identity: SemanticId::new("jw.source-qualified", 3, hash.finalize().to_vec()),
+            #[cfg(test)]
+            trace: Default::default(),
+        }
     }
-
-    /// Unknown means genuinely present but not yet typed. Never use it as
-    /// absence, or suppress a possible selected/native conflict before late.
-    fn disposition(&self, path: &Path, source: Option<FileKind>) -> Result<Disposition> {
-        // Ancestor authority is independent of this entry's source presence or
-        // kind. Do not decode the final name as a selection directory yet.
-        let inside = self.candidate(path.parent().unwrap_or_else(|| Path::new("")))?.is_some();
-        let admin = path.file_name().is_some_and(|n| n == ".jj" || n == ".git");
-        if admin {
-            if inside {
-                bail!("administrative entry inside selected ordinary root");
-            }
-            return Ok(Disposition::Preserve);
-        }
-        // Reachability invariant: only a real source directory can admit its Q
-        // boundary. Target-only candidates and source links stop at that name.
-        // Thus a visited descendant of Q already has source-qualified authority,
-        // including during opaque source-copy and target-removal recursion.
-        if inside {
-            return Ok(Disposition::Mirror);
-        }
-        let Some(kind) = source else { return Ok(Disposition::Preserve) };
-        if !matches!(kind, FileKind::Unknown | FileKind::Directory) {
-            return Ok(Disposition::Preserve);
-        }
-        // A listing without a kind hint may still describe an unrelated byte-
-        // named leaf. Let late facts distinguish it from a routing directory;
-        // that directory retains the selector's existing UTF-8 requirement.
-        if kind == FileKind::Unknown && path.file_name().is_some_and(|name| name.to_str().is_none()) {
-            return Ok(Disposition::Observe);
-        }
-        if self.patterns.matches(path)? && self.source_ignore.ignored(path, true) {
-            if kind == FileKind::Unknown {
-                return Ok(Disposition::Observe);
-            }
-            if overlaps(&self.native, path) {
-                bail!("selected ordinary root overlaps native tracked leaf");
-            }
-            if overlaps(&self.links, path) {
-                bail!("selected ordinary root overlaps active link");
-            }
-            if !self.desired_ignore.ignored(path, true) {
-                bail!("selected ordinary root is not ignored under frozen desired rules");
-            }
-            return Ok(Disposition::Mirror);
-        }
-        // A declared link owns this whole name even if a broad wildcard could
-        // otherwise search below it. Only an actual Q boundary above conflicts.
-        if self.links.contains(path) {
-            return Ok(Disposition::Preserve);
-        }
-        if !self.patterns.may_match_below(path)? {
-            return Ok(Disposition::Preserve);
-        }
-        if self.native.contains(path) {
-            if kind == FileKind::Unknown {
-                return Ok(Disposition::Observe);
-            }
-            bail!("native leaf or active link blocks ordinary selection route");
-        }
-        Ok(Disposition::Observe)
+    fn root(&self) -> SearchState {
+        self.seal(SearchState {
+            at: PathBuf::new(),
+            selector: self.source.patterns.root(),
+            source_ignore: self.source_ignore.root(),
+            desired_ignore: self.desired_ignore.root(),
+            native: Some(0),
+            links: Some(0),
+            seal: [0; 32],
+        })
+    }
+    fn advance(&self, state: &SearchState, name: &std::ffi::OsStr) -> Result<SearchState> {
+        let at = state.at.join(name);
+        Ok(self.seal(SearchState {
+            selector: self.source.patterns.descend(&state.selector, name)?,
+            source_ignore: self.source_ignore.descend(&state.source_ignore, &at),
+            desired_ignore: self.desired_ignore.descend(&state.desired_ignore, &at),
+            native: self.source.native.descend(state.native, name),
+            links: self.links.descend(state.links, name),
+            at,
+            seal: [0; 32],
+        }))
+    }
+    fn seal(&self, mut state: SearchState) -> SearchState {
+        state.seal = [0; 32];
+        let mut hash = Sha256::new();
+        hash.update(&self.identity.parameters);
+        hash.update(serde_json::to_vec(&state).expect("UTF-8 search coordinates"));
+        state.seal = hash.finalize().into();
+        state
+    }
+    fn admission(&self, root: &Path) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(&self.identity.parameters);
+        frame(&mut hash, root.as_os_str().as_encoded_bytes());
+        hash.finalize().into()
     }
 }
-
-impl Visitor for SourceQualified {
-    fn early(&self, names: &mut Names) -> Result<(), CheckError> {
+impl Policy for SourceQualified {
+    type Context = OrdinaryRegion;
+    fn identity(&self) -> &SemanticId {
+        &self.identity
+    }
+    fn context_schema(&self) -> &SemanticId {
+        &SCHEMA
+    }
+    fn initial_context(&self) -> OrdinaryRegion {
+        OrdinaryRegion::Initial
+    }
+    fn validate_context(&self, site: ContextSite<'_>, context: &OrdinaryRegion) -> Result<(), CheckError> {
+        let result = (|| {
+            ensure!(
+                site.relative.components().all(|c| matches!(c, std::path::Component::Normal(_))),
+                "invalid ordinary coordinate"
+            );
+            match context {
+                OrdinaryRegion::Initial => ensure!(
+                    site.structural_root && site.role.is_none() && site.relative.as_os_str().is_empty(),
+                    "initial ordinary context outside root admission"
+                ),
+                OrdinaryRegion::Search(state) => {
+                    ensure!(state.at == site.relative, "search context coordinate differs");
+                    ensure!(state.at.to_str().is_some(), "non-UTF-8 search coordinate");
+                    // Frozen-value integrity, not selector/ignore/ownership replay.
+                    ensure!(state == &self.seal(state.clone()), "search context differs from frozen inputs");
+                }
+                OrdinaryRegion::SelectedMirror { root, admission } => {
+                    ensure!(
+                        !root.as_os_str().is_empty() && site.relative.starts_with(root),
+                        "selected region does not contain coordinate"
+                    );
+                    ensure!(
+                        root.components()
+                            .all(|c| matches!(c, std::path::Component::Normal(n) if n != ".jj" && n != ".git")),
+                        "invalid selected root"
+                    );
+                    ensure!(*admission == self.admission(root), "selected admission differs from frozen inputs");
+                }
+            }
+            Ok(())
+        })();
+        result.map_err(|e: anyhow::Error| e.to_string().into())
+    }
+    fn names(&self, context: &OrdinaryRegion, names: &mut Names) -> Result<(), CheckError> {
         if names.is_root() {
             return Ok(());
         }
         for name in names.entries_mut() {
-            match self.disposition(name.relative_path(), name.source().map(|f| f.kind())) {
-                Ok(Disposition::Preserve) => name.preserve_tree(),
-                Ok(_) => {}
-                Err(e) => return Err(name.refuse(e.to_string())),
+            if name.name() == ".jj" || name.name() == ".git" {
+                if matches!(context, OrdinaryRegion::SelectedMirror { .. }) {
+                    return Err(name.refuse("administrative entry inside selected ordinary root"));
+                }
+                name.preserve_tree();
+            } else if matches!(context, OrdinaryRegion::Search(_)) && !matches!(name.source().map(|f| f.kind()), Some(FileKind::Unknown | FileKind::Directory))
+            {
+                name.preserve_tree();
             }
         }
         Ok(())
     }
-
-    fn late(&self, batch: &mut Operations) -> Result<(), CheckError> {
-        let root = batch.is_root();
-        for entry in batch.entries_mut() {
-            if root {
-                entry.set_action(Action::Directory {
-                    container: Container::Keep,
-                    descend: true,
-                });
-                continue;
-            }
-            let source = entry.source().map(|f| {
-                let m = f.metadata();
-                if m.is_dir() {
-                    FileKind::Directory
-                } else if m.is_file() {
-                    FileKind::RegularFile
-                } else if m.is_symlink() {
-                    FileKind::Symlink
+    fn shape(&self, context: &OrdinaryRegion, batch: &mut ShapeChoices<'_, OrdinaryRegion>) -> Result<(), CheckError> {
+        let root = batch.info().structural_root;
+        for mut entry in batch.entries_mut() {
+            let shape = entry.shape();
+            let mut routing = false;
+            let next = if root {
+                routing = true;
+                OrdinaryRegion::Search(self.root())
+            } else if let OrdinaryRegion::Search(state) = context {
+                if shape.source != SourceObservation::Present(Kind::Directory) {
+                    entry.preserve_tree();
+                    continue;
+                }
+                let next = self.advance(state, entry.name()).map_err(|e| CheckError::from(e.to_string()))?;
+                #[cfg(test)]
+                {
+                    self.trace.lock().unwrap().search_steps += 1;
+                }
+                if self.source.patterns.matched(&next.selector) && next.source_ignore.ignored() {
+                    if next.native.is_some() {
+                        return Err("selected ordinary root overlaps native tracked leaf".into());
+                    }
+                    if next.links.is_some() {
+                        return Err("selected ordinary root overlaps active link".into());
+                    }
+                    if !next.desired_ignore.ignored() {
+                        return Err("selected ordinary root is not ignored under frozen desired rules".into());
+                    }
+                    #[cfg(test)]
+                    {
+                        self.trace.lock().unwrap().admissions.push(next.at.clone());
+                    }
+                    OrdinaryRegion::SelectedMirror {
+                        admission: self.admission(&next.at),
+                        root: next.at,
+                    }
                 } else {
-                    FileKind::Other
-                }
-            });
-            let disposition = self.disposition(entry.relative_path(), source).map_err(|e| entry.refuse(e.to_string()))?;
-            if disposition == Disposition::Preserve {
-                entry.preserve_tree();
-                continue;
-            }
-            for (fact, device) in [(entry.source(), self.devices.0), (entry.target(), self.devices.1)] {
-                if let Some(fact) = fact {
-                    let m = fact.metadata();
-                    if m.dev() != device {
-                        return Err(entry.refuse("mounted filesystem boundary"));
+                    if next.links.is_some_and(|i| self.links.0[i].leaf) || !self.source.patterns.can_descend(&next.selector) {
+                        entry.preserve_tree();
+                        continue;
                     }
-                    if !(m.is_dir() || m.is_file() || m.is_symlink()) {
-                        return Err(entry.refuse("unsupported special entry"));
+                    if next.native.is_some_and(|i| self.source.native.0[i].leaf) {
+                        return Err("native leaf blocks ordinary selection route".into());
                     }
+                    routing = true;
+                    OrdinaryRegion::Search(next)
                 }
+            } else {
+                context.clone()
+            };
+            if !shape.supported() {
+                return Err("unsupported special entry".into());
             }
-            if disposition == Disposition::Observe {
-                if entry.target().is_some_and(|f| !f.metadata().is_dir()) {
-                    return Err(entry.refuse("ordinary routing ancestor is not a real target directory"));
+            if routing {
+                if shape.target.is_some_and(|k| k != Kind::Directory) {
+                    return Err("ordinary routing ancestor is not a real target directory".into());
                 }
                 entry.set_action(Action::Directory {
-                    container: if entry.target().is_some() {
-                        Container::Keep
-                    } else {
-                        Container::CreateIfNeeded
-                    },
+                    container: if shape.target.is_some() { Container::Keep } else { Container::CreateIfNeeded },
                     descend: true,
                 });
+            }
+            entry.request(SideDemands {
+                source: Demand {
+                    attributes: true,
+                    literal_link: false,
+                },
+                target: Demand {
+                    attributes: true,
+                    literal_link: false,
+                },
+            });
+            let role = match (shape.source, shape.target) {
+                (SourceObservation::Present(Kind::Directory), Some(Kind::Directory)) => Some(InteriorRole::Paired),
+                (SourceObservation::Present(Kind::Directory), None) => Some(InteriorRole::SourceOnly),
+                (SourceObservation::Present(Kind::Directory), Some(_)) => Some(InteriorRole::PrepareReplacement),
+                (SourceObservation::Absent, Some(Kind::Directory)) => Some(InteriorRole::TargetOnly),
+                (_, Some(Kind::Directory)) => Some(InteriorRole::RemoveForReplacement),
+                _ => None,
+            };
+            if let Some(role) = role {
+                entry.set_interior(Interior {
+                    role,
+                    context: next,
+                    input: InteriorInput::PhysicalDirectory,
+                });
+            }
+        }
+        Ok(())
+    }
+    fn select(&self, _: &OrdinaryRegion, batch: &mut Choices<'_, OrdinaryRegion>) -> Result<(), CheckError> {
+        #[cfg(test)]
+        let parent = batch.info().relative.to_owned();
+        for entry in batch.entries_mut() {
+            if entry.is_terminal() {
+                continue;
+            }
+            let facts = entry.facts();
+            for (fact, device) in [(facts.source, self.devices.0), (facts.target, self.devices.1)] {
+                if let Some(fact) = fact {
+                    let metadata = fact.attributes.known().ok_or("device guard attributes unavailable")?;
+                    if metadata.dev() != device {
+                        return Err("mounted filesystem boundary".into());
+                    }
+                }
+            }
+            #[cfg(test)]
+            if let Some(fact) = facts.source {
+                self.trace
+                    .lock()
+                    .unwrap()
+                    .source_attributes
+                    .insert(parent.join(entry.name()), fact.attributes.known().unwrap() as *const _ as usize);
             }
         }
         Ok(())
     }
 }
 
-/// First vertical seam: real one-lane coordinated application at workspace
-/// roots. Fail immediately; never use drive's healthy-peer continuation policy.
-/// Empty selection does not even construct/bind a runtime.
-pub fn sync_one(source: &Path, target: &Path, name: &str, visitor: SourceQualified) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
-    use diff_dirs::coordinated::TargetId;
-    use diff_dirs_sync::coordinated::{SyncCursor, SyncRuntime, SyncTarget};
-    if visitor.patterns.is_empty() {
-        return Ok(None);
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct Trace {
+    search_steps: usize,
+    admissions: Vec<PathBuf>,
+    source_attributes: BTreeMap<PathBuf, usize>,
+}
+
+pub struct CohortLane {
+    pub name: String,
+    pub target: PathBuf,
+    pub policy: SourceQualified,
+}
+#[derive(Debug)]
+pub struct CohortFailure {
+    pub lane: Option<usize>,
+    pub reports: Vec<diff_dirs_sync::coordinated::LaneReport>,
+    pub source: anyhow::Error,
+}
+impl std::fmt::Display for CohortFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(f)
     }
-    let runtime = SyncRuntime::new(vec![SyncTarget {
-        id: TargetId(name.to_owned()),
-        // Fresh, process-local runtime only; never reconstructed with a changed
-        // policy. Do not serialize the whole native index into a descriptor.
-        descriptor: "jw-source-qualified-v2;frozen-process-local-n1".into(),
-        applier: diff_dirs_sync::Applier::new(source, target, diff_dirs_sync::CopyPolicy::ReflinkRequired)?.visitor(visitor),
-    }]);
-    let mut cursor = SyncCursor::new(&runtime, diff_dirs::Execution::Sequential)?;
+}
+impl std::error::Error for CohortFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// One physical-union machine for N1 and N2. Inspect every lane before applying
+/// any of the group; apply in stable target order and stop at first returned error.
+pub fn sync_cohort(
+    source: &Path,
+    lanes: Vec<CohortLane>,
+    resources: diff_dirs::ObservationResources,
+) -> std::result::Result<Vec<diff_dirs_sync::coordinated::LaneReport>, CohortFailure> {
+    use diff_dirs::Comparator;
+    use diff_dirs::coordinated::{Bindings, Parts, TargetBinding, TargetId};
+    use diff_dirs_sync::coordinated::{SyncCursor, SyncParts, SyncRuntime, SyncTarget};
+    let bindings = Bindings {
+        source: source.to_owned(),
+        targets: lanes
+            .iter()
+            .map(|lane| TargetBinding {
+                id: TargetId(lane.name.clone()),
+                root: lane.target.clone(),
+                policy: "jw-contextual-ordinary-v3".into(),
+                policy_id: lane.policy.identity().clone(),
+                context_schema: lane.policy.context_schema().clone(),
+                comparator: StatKey.identity().clone(),
+                initial_context: lane.policy.initial_context(),
+            })
+            .collect(),
+    };
+    let comparison = Parts::fresh(bindings).map_err(|source| CohortFailure {
+        lane: None,
+        reports: vec![],
+        source: source.into(),
+    })?;
+    let mut cursor = SyncCursor::from_parts(
+        SyncParts {
+            version: 2,
+            comparison,
+            copy_policies: vec![diff_dirs_sync::CopyPolicy::ReflinkRequired; lanes.len()],
+            lanes: vec![Default::default(); lanes.len()],
+            current: None,
+        },
+        diff_dirs::Execution::Sequential,
+    )
+    .map_err(|source| CohortFailure {
+        lane: None,
+        reports: vec![],
+        source: source.into(),
+    })?;
+    let mut failed_lane = None;
+    let runtime = (|| {
+        let mut targets = Vec::new();
+        for (i, lane) in lanes.into_iter().enumerate() {
+            failed_lane = Some(i);
+            targets.push(SyncTarget {
+                id: TargetId(lane.name),
+                descriptor: "jw-contextual-ordinary-v3".into(),
+                applier: diff_dirs_sync::Applier::new_policy(source, lane.target, diff_dirs_sync::CopyPolicy::ReflinkRequired, lane.policy, StatKey)?,
+            });
+        }
+        Ok::<_, anyhow::Error>(SyncRuntime::new(targets))
+    })()
+    .map_err(|source| CohortFailure {
+        lane: failed_lane,
+        reports: cursor.reports(),
+        source,
+    })?;
+    failed_lane = None;
+    let session = Arc::new(diff_dirs::SourceSession::with_resources(source, resources));
     let result = (|| {
+        cursor.bind_with_source(&runtime, session)?;
         while let Some(group) = cursor.next_group(&runtime)? {
-            for lane in &group.outcomes {
-                if let Err(error) = &lane.outcome {
-                    return Err(anyhow::Error::new(Arc::clone(error)).context("ordinary inspection"));
+            let mut first = None;
+            for outcome in &group.outcomes {
+                if let Err(error) = &outcome.outcome {
+                    if first.is_none() {
+                        failed_lane = cursor.reports().iter().position(|r| r.target == outcome.target);
+                        first = Some(anyhow::Error::new(Arc::clone(error)));
+                    }
                 }
             }
+            if let Some(error) = first {
+                return Err(error);
+            }
             for target in cursor.pending() {
+                failed_lane = cursor.reports().iter().position(|r| r.target == target);
                 cursor.apply(&runtime, &group.token, &target)?;
             }
+            failed_lane = None;
             cursor.settle()?;
         }
+        ensure!(cursor.reports().iter().all(|r| r.satisfied), "ordinary cohort did not satisfy all lanes");
         Ok::<_, anyhow::Error>(())
     })();
-    result.with_context(|| format!("ordinary transfer partial reports: {:?}", cursor.reports()))?;
-    let report = cursor.reports().pop().context("missing ordinary lane report")?;
-    if !report.satisfied {
-        bail!("ordinary lane did not satisfy policy: {report:?}");
+    let reports = cursor.reports();
+    match result {
+        Ok(()) => Ok(reports),
+        Err(source) => Err(CohortFailure {
+            lane: failed_lane,
+            reports,
+            source,
+        }),
     }
-    Ok(Some(report))
+}
+
+/// Compatibility projection; command execution uses sync_cohort directly.
+pub fn sync_one(source: &Path, target: &Path, name: &str, policy: SourceQualified) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
+    if policy.source.patterns.is_empty() {
+        return Ok(None);
+    }
+    Ok(sync_cohort(
+        source,
+        vec![CohortLane {
+            name: name.into(),
+            target: target.into(),
+            policy,
+        }],
+        Default::default(),
+    )?
+    .pop())
 }
 
 #[cfg(test)]
@@ -242,14 +527,16 @@ mod tests {
             Self { _temp: temp, source, target }
         }
         fn visitor(&self, patterns: &[&str], native: &[&str], links: &[&str]) -> SourceQualified {
-            SourceQualified {
-                patterns: Arc::new(Patterns::compile(&patterns.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()),
-                source_ignore: Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
-                desired_ignore: Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
-                native: Arc::new(native.iter().map(PathBuf::from).collect()),
-                links: links.iter().map(PathBuf::from).collect(),
-                devices: (fs::metadata(&self.source).unwrap().dev(), fs::metadata(&self.target).unwrap().dev()),
-            }
+            SourceQualified::new(
+                Arc::new(OrdinarySource::new(
+                    Arc::new(Patterns::compile(&patterns.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()),
+                    &native.iter().map(PathBuf::from).collect(),
+                )),
+                Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
+                Arc::new(FrozenIgnore::test_rules(b"cache/\n**/node_modules/\nforced/\n")),
+                &links.iter().map(PathBuf::from).collect(),
+                (fs::metadata(&self.source).unwrap().dev(), fs::metadata(&self.target).unwrap().dev()),
+            )
         }
         fn run(&self, patterns: &[&str]) -> Result<Option<diff_dirs_sync::coordinated::LaneReport>> {
             sync_one(&self.source, &self.target, "test", self.visitor(patterns, &[], &[]))
@@ -257,57 +544,27 @@ mod tests {
     }
 
     #[test]
-    fn pure_known_unknown_and_overlap_ordering() {
-        let f = Fixture::new();
-        let v = f.visitor(&["**/node_modules", "forced"], &["forced/file", "blocked"], &["linked"]);
-        for owned in ["forced", "blocked"] {
-            assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Unknown)).unwrap(), Disposition::Observe);
-            assert!(v.disposition(Path::new(owned), Some(FileKind::Directory)).is_err(), "{owned}");
-            assert_eq!(v.disposition(Path::new(owned), Some(FileKind::Symlink)).unwrap(), Disposition::Preserve);
-        }
-        assert_eq!(v.disposition(Path::new("linked"), Some(FileKind::Unknown)).unwrap(), Disposition::Preserve);
-        assert_eq!(v.disposition(Path::new("node_modules"), None).unwrap(), Disposition::Preserve);
-        assert_eq!(v.disposition(Path::new("node_modules/old"), None).unwrap(), Disposition::Mirror);
-        assert!(v.disposition(Path::new("node_modules/.git"), None).is_err());
-        let v = f.visitor(&["forced"], &[], &["forced"]);
-        assert!(v.disposition(Path::new("forced"), Some(FileKind::Directory)).is_err());
-        let mut v = f.visitor(&["cache"], &[], &[]);
-        v.desired_ignore = Arc::new(FrozenIgnore::default());
-        assert!(
-            v.disposition(Path::new("cache"), Some(FileKind::Directory))
-                .unwrap_err()
-                .to_string()
-                .contains("not ignored")
-        );
-    }
-
-    #[test]
-    fn non_utf8_leaf_classification_defers_unknown_without_losing_ancestor_authority() {
+    fn frozen_context_validation_is_value_based_and_does_not_read_source_or_readmit() {
         let f = Fixture::new();
         let v = f.visitor(&["cache"], &[], &[]);
-        let name = PathBuf::from(OsString::from_vec(vec![0xff]));
-        for kind in [None, Some(FileKind::RegularFile), Some(FileKind::Symlink), Some(FileKind::Other)] {
-            assert_eq!(v.disposition(&name, kind).unwrap(), Disposition::Preserve, "{kind:?}");
-        }
-        assert_eq!(v.disposition(&name, Some(FileKind::Unknown)).unwrap(), Disposition::Observe);
-        assert!(
-            v.disposition(&name, Some(FileKind::Directory))
-                .unwrap_err()
-                .to_string()
-                .contains("directory selection entry not UTF-8")
-        );
-        // Once Q was admitted, even absent sources (including opaque removal
-        // interiors) retain mirror authority without decoding their byte names.
-        let inside = Path::new("cache").join(&name).join(&name);
-        for kind in [
-            None,
-            Some(FileKind::Unknown),
-            Some(FileKind::Directory),
-            Some(FileKind::RegularFile),
-            Some(FileKind::Symlink),
-        ] {
-            assert_eq!(v.disposition(&inside, kind).unwrap(), Disposition::Mirror, "{kind:?}");
-        }
+        let search = OrdinaryRegion::Search(v.advance(&v.root(), std::ffi::OsStr::new("cache")).unwrap());
+        let selected = OrdinaryRegion::SelectedMirror {
+            root: "cache".into(),
+            admission: v.admission(Path::new("cache")),
+        };
+        let restored: OrdinaryRegion = serde_json::from_slice(&serde_json::to_vec(&selected).unwrap()).unwrap();
+        let independent = f.visitor(&["cache"], &[], &[]);
+        let changed = f.visitor(&["forced"], &[], &[]);
+        fs::rename(&f.source, f._temp.path().join("gone")).unwrap();
+        let site = ContextSite {
+            relative: Path::new("cache"),
+            structural_root: false,
+            role: Some(InteriorRole::Paired),
+        };
+        independent.validate_context(site, &search).unwrap();
+        independent.validate_context(site, &restored).unwrap();
+        assert!(changed.validate_context(site, &restored).is_err());
+        assert!(v.trace.lock().unwrap().admissions.is_empty());
     }
 
     #[test]

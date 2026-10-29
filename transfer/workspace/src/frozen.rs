@@ -4,6 +4,8 @@
 //! isolated frozen tree; tests also use that oracle for differential evidence.
 use crate::tracked::{Entry, file_bytes};
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
@@ -55,13 +57,63 @@ impl FrozenRules {
 
 /// Immutable Git-compatible matching over captured control-file bytes. No live
 /// ignore files, subprocesses, answer cache or filesystem calls during matching.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FrozenIgnore {
     base: gix_ignore::Search,
     directories: BTreeMap<PathBuf, gix_ignore::Search>,
+    identity: [u8; 32],
+}
+
+/// Serializable active rule chain and sticky ancestor exclusion. No live paths
+/// or matcher pointers: indexes are interpreted only against frozen input bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IgnoreState {
+    chain: Vec<PathBuf>,
+    ignored: bool,
+}
+impl IgnoreState {
+    pub fn ignored(&self) -> bool {
+        self.ignored
+    }
+}
+impl Default for FrozenIgnore {
+    fn default() -> Self {
+        Self::build(&BTreeMap::new(), &Excludes { global: vec![], info: vec![] }).expect("empty ignore inputs")
+    }
 }
 
 impl FrozenIgnore {
+    pub fn identity(&self) -> [u8; 32] {
+        self.identity
+    }
+    pub fn root(&self) -> IgnoreState {
+        IgnoreState {
+            chain: self.directories.contains_key(Path::new("")).then(PathBuf::new).into_iter().collect(),
+            ignored: false,
+        }
+    }
+    /// Advance exactly one real source-directory component. Ignored parents
+    /// cannot be reopened, including by control files inside the ignored parent.
+    pub fn descend(&self, state: &IgnoreState, path: &Path) -> IgnoreState {
+        let mut next = state.clone();
+        if !next.ignored {
+            let case = gix_ignore::glob::pattern::Case::Sensitive;
+            let matched = state.chain.iter().rev().find_map(|parent| {
+                let relative = path.strip_prefix(parent).expect("active ignore ancestor");
+                self.directories[parent].pattern_matching_relative_path(relative.as_os_str().as_encoded_bytes().into(), Some(true), case)
+            });
+            next.ignored = matched
+                .or_else(|| {
+                    self.base
+                        .pattern_matching_relative_path(path.as_os_str().as_encoded_bytes().into(), Some(true), case)
+                })
+                .is_some_and(|m| !m.pattern.is_negative());
+            if !next.ignored && self.directories.contains_key(path) {
+                next.chain.push(path.to_owned());
+            }
+        }
+        next
+    }
     #[cfg(test)]
     pub(crate) fn test_rules(bytes: &[u8]) -> Self {
         Self::build(
@@ -71,6 +123,19 @@ impl FrozenIgnore {
         .unwrap()
     }
     fn build(files: &BTreeMap<PathBuf, Vec<u8>>, excludes: &Excludes) -> Result<Self> {
+        let mut hash = Sha256::new();
+        for bytes in [&excludes.global, &excludes.info] {
+            hash.update((bytes.len() as u64).to_le_bytes());
+            hash.update(bytes);
+        }
+        for (path, bytes) in files {
+            let path = path.as_os_str().as_encoded_bytes();
+            hash.update((path.len() as u64).to_le_bytes());
+            hash.update(path);
+            hash.update((bytes.len() as u64).to_le_bytes());
+            hash.update(bytes);
+        }
+        let identity = hash.finalize().into();
         let parse = gix_ignore::search::Ignore { support_precious: false };
         let mut base = gix_ignore::Search::default();
         base.add_patterns_buffer(&excludes.global, "global-excludes", None, parse)?;
@@ -85,7 +150,7 @@ impl FrozenIgnore {
                 Ok((path.parent().unwrap_or(Path::new("")).to_path_buf(), matcher))
             })
             .collect::<Result<_>>()?;
-        Ok(Self { base, directories })
+        Ok(Self { base, directories, identity })
     }
 
     /// Native membership is independent of ignoredness. Callers must still

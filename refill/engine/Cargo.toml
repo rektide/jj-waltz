@@ -17,11 +17,12 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 shlex = "2.0.1"
 toml = "1.1.2"
-diff-dirs = { package = "diff-dirs-tree-api", version = "=0.3.0", path = "../../../diff-dirs/tree/api" }
-diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.3.0", path = "../../../diff-dirs/transfer/sync" }
+diff-dirs = { package = "diff-dirs-tree-api", version = "=0.5.0", path = "../../../diff-dirs/tree/api" }
+diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.5.0", path = "../../../diff-dirs/transfer/sync" }
 
 [dev-dependencies]
 tempfile = "3.19.1"
 
 [features]
+native-dirent = ["jj-waltz-transfer-workspace/native-dirent"]
 payload-parallel = ["jj-waltz-transfer-workspace/payload-parallel"]

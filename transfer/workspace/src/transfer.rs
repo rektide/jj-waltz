@@ -3,7 +3,7 @@
 //! The legacy constructor is deliberately bounded: an empty selection authorizes
 //! no auxiliary writes. It does not select a future broad-transfer default.
 use anyhow::{Result, bail};
-use diff_dirs::{Action, Check, CheckError, Container, Names, Operations, Visitor};
+use diff_dirs::{Action, CheckError, Container, Names, Operations, Visitor};
 use diff_dirs_sync::{Applier, CopyPolicy};
 use std::collections::BTreeSet;
 use std::os::unix::fs::MetadataExt;
@@ -40,10 +40,7 @@ impl Execution {
         }
     }
 
-    pub fn run<C: Check, V: Visitor>(
-        &self,
-        applier: &Applier<C, diff_dirs::NoScope, diff_dirs_sync::RemoveAll, V>,
-    ) -> Result<diff_dirs_sync::Report, diff_dirs_sync::Failure> {
+    pub fn run<P: diff_dirs::Policy, M: diff_dirs::Comparator>(&self, applier: &Applier<P, M>) -> Result<diff_dirs_sync::Report, diff_dirs_sync::Failure> {
         #[cfg(feature = "payload-parallel")]
         if let Some(pool) = &self.pool {
             let jobs = std::num::NonZeroUsize::new(pool.current_num_threads()).expect("pool has workers");
@@ -188,7 +185,7 @@ pub fn applier<'a>(
     source: &Path,
     target: &Path,
     visitor: &'a Auxiliary,
-) -> Result<Applier<diff_dirs::NoCheck, diff_dirs::NoScope, diff_dirs_sync::RemoveAll, diff_dirs::VisitorRef<'a, Auxiliary>>> {
+) -> Result<Applier<diff_dirs_sync::FullPolicy<diff_dirs::NoCheck, diff_dirs::NoScope, diff_dirs_sync::RemoveAll, diff_dirs::VisitorRef<'a, Auxiliary>>>> {
     Ok(Applier::new(source, target, CopyPolicy::ReflinkRequired)?.visitor(visitor.borrowed()))
 }
 

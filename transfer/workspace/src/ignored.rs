@@ -7,6 +7,7 @@
 //! Policy layers are resolved by the caller: this crate receives CLI, local,
 //! and global pattern sets explicitly and never loads application configuration.
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Bound;
@@ -81,7 +82,7 @@ pub struct Selection {
 }
 
 /// Active pattern prefixes at one directory, carried by the caller's iteration.
-#[derive(Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prefix(Vec<State>);
 
 impl Prefix {
@@ -162,13 +163,32 @@ pub fn require_untracked(path: &Path, tracked: &BTreeSet<&Path>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 struct State {
     pattern: usize,
     offset: usize,
 }
 
 impl Patterns {
+    pub fn declarations(&self) -> Vec<&str> {
+        self.patterns.iter().map(|p| p.display.as_str()).collect()
+    }
+
+    pub fn root(&self) -> Prefix {
+        Prefix(self.close(self.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 })))
+    }
+
+    pub fn descend(&self, prefix: &Prefix, name: &std::ffi::OsStr) -> Result<Prefix> {
+        Ok(Prefix(self.advance(&prefix.0, name.to_str().context("directory selection entry not UTF-8")?)))
+    }
+
+    pub fn matched(&self, prefix: &Prefix) -> bool {
+        prefix.0.iter().any(|s| s.offset == self.patterns[s.pattern].segments.len())
+    }
+
+    pub fn can_descend(&self, prefix: &Prefix) -> bool {
+        prefix.0.iter().any(|state| state.offset < self.patterns[state.pattern].segments.len())
+    }
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -301,10 +321,6 @@ impl Patterns {
             }),
             _ => None,
         }))
-    }
-
-    fn can_descend(&self, prefix: &Prefix) -> bool {
-        prefix.0.iter().any(|state| state.offset < self.patterns[state.pattern].segments.len())
     }
 }
 

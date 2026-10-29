@@ -12,9 +12,10 @@ jj-waltz-native-jj = { version = "=0.8.0", path = "../../native/jj" }
 anyhow = "1.0.100"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-diff-dirs = { package = "diff-dirs-tree-api", version = "=0.3.0", path = "../../../diff-dirs/tree/api" }
-diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.3.0", path = "../../../diff-dirs/transfer/sync" }
+diff-dirs = { package = "diff-dirs-tree-api", version = "=0.5.0", path = "../../../diff-dirs/tree/api" }
+diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.5.0", path = "../../../diff-dirs/transfer/sync" }
 rayon = { version = "1.12.0", optional = true }
+sha2 = "0.11.1"
 
 [target.'cfg(unix)'.dependencies]
 gix-ignore = "0.24.0"
@@ -28,4 +29,5 @@ libc = "0.2.190"
 tempfile = "3.19.1"
 
 [features]
+native-dirent = ["diff-dirs/native-dirent", "diff-dirs-sync/native-dirent"]
 payload-parallel = ["dep:rayon", "diff-dirs/parallel", "diff-dirs-sync/parallel"]

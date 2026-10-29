@@ -30,12 +30,14 @@ use std::{
 
 mod binding;
 mod native;
+mod ordinary;
 mod report;
 mod source;
 use binding::Resolution;
 pub use binding::{BoundWorkspace, RepositoryBinding};
 use native::{Membership, SavedReceiver, native_diff};
 pub use native::{NativePathIndex, NativeTree};
+pub use ordinary::ContextualOrdinary;
 pub use report::*;
 pub use source::*;
 

@@ -4,9 +4,8 @@
 use super::command::*;
 use crate::ReseedRequest;
 use anyhow::{Result, ensure};
-use jj_waltz_transfer_workspace::streaming::{SourceQualified, sync_one};
 use jj_waltz_workspace_state::links;
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct RefillOneReport {
@@ -32,7 +31,7 @@ pub fn refill_one_from(cwd: &Path, request: ReseedRequest, mut diagnostic: impl 
         command.receivers.len() == 1,
         "old integration projection requires one receiver; use the shared command/cohort boundary"
     );
-    let report = command.execute(&mut LegacyOrdinary, &mut diagnostic)?;
+    let report = command.execute(&mut ContextualOrdinary::default(), &mut diagnostic)?;
     let source = report.source.expect("successful command has source");
     let receiver = report.receivers.into_iter().next().expect("one receiver");
     let child = receiver.child.expect("successful receiver has child");
@@ -52,32 +51,4 @@ pub fn refill_one_from(cwd: &Path, request: ReseedRequest, mut diagnostic: impl 
         finish_ms: receiver.finish.elapsed_ms,
         elapsed_ms: report.elapsed_ms,
     })
-}
-
-struct LegacyOrdinary;
-impl OrdinaryTransfer for LegacyOrdinary {
-    fn admit(&self, receivers: usize, enabled: bool) -> Result<()> {
-        ensure!(!enabled || receivers == 1, "contextual cohort adapter has not landed");
-        Ok(())
-    }
-    fn transfer(&mut self, cohort: &OrdinaryCohort, outcomes: &mut [OrdinaryOutcome]) -> std::result::Result<(), OrdinaryFailure> {
-        let lane = &cohort.lanes[0];
-        outcomes[0].state = OrdinaryState::Partial;
-        let visitor = SourceQualified {
-            patterns: Arc::clone(&cohort.patterns),
-            source_ignore: Arc::clone(&lane.source_ignore),
-            desired_ignore: Arc::clone(&lane.desired_ignore),
-            native: Arc::clone(&cohort.native.paths),
-            links: lane.active_links.clone(),
-            devices: (cohort.source.device, lane.binding.device),
-        };
-        match sync_one(&cohort.source.root, &lane.binding.root, &lane.binding.name, visitor) {
-            Ok(done) => {
-                outcomes[0].report = done;
-                outcomes[0].state = OrdinaryState::Satisfied;
-                Ok(())
-            }
-            Err(source) => Err(OrdinaryFailure { lane: Some(0), source }),
-        }
-    }
 }
