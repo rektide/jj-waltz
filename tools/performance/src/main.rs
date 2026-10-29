@@ -46,6 +46,10 @@ enum Action {
         jj: PathBuf,
     },
     Run(Box<RunArgs>),
+    /// Summarize a retained JJ/Git exec-wrapper trace without running a campaign.
+    Count {
+        trace: PathBuf,
+    },
     Check {
         root: PathBuf,
         #[arg(long)]
@@ -171,6 +175,7 @@ fn main() -> Result<()> {
             &instrumentation::native(&jj)?,
         )?,
         Action::Snapshot { donor, output, jj } => snapshot::import(&donor, &output, &instrumentation::native(&jj)?)?,
+        Action::Count { trace } => println!("{}", serde_json::to_string_pretty(&instrumentation::counts(&trace)?)?),
         Action::Install { root } => workload::install(&root)?,
         Action::CopyBaseline { source, output } => diagnostics::copy_baseline(&source, &output)?,
         Action::Check {

@@ -77,7 +77,7 @@ pub fn classify(tool: &str, args: &[String]) -> String {
         return "diff --git".into();
     }
     if tool == "jj"
-        && ["file", "workspace", "git", "bookmark", "config", "operation", "op", "debug"].contains(&first.as_str())
+        && ["file", "workspace", "git", "bookmark", "config", "operation", "op", "debug", "sparse"].contains(&first.as_str())
         && let Some(next) = args.get(i + 1).filter(|s| !s.starts_with('-'))
     {
         return format!("{first} {next}");
@@ -111,5 +111,13 @@ fn classify_respects_global_values_and_argv_boundaries() {
         "file show"
     );
     assert_eq!(classify("jj", &args(&["--ignore-working-copy", "diff", "--git"])), "diff --git");
+    assert_eq!(
+        classify(
+            "jj",
+            &args(&["--repository", "/root with space", "--ignore-working-copy", "sparse", "set", "--clear"])
+        ),
+        "sparse set"
+    );
+    assert_eq!(classify("jj", &args(&["sparse", "list"])), "sparse list");
     assert_eq!(classify("git", &args(&["-C", "/space path", "check-ignore", "-z"])), "check-ignore");
 }
