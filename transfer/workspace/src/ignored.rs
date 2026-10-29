@@ -178,6 +178,40 @@ impl Patterns {
         Prefix(self.close(self.patterns.iter().enumerate().map(|(pattern, _)| State { pattern, offset: 0 })))
     }
 
+    /// Check a restored residual's references and canonical epsilon closure,
+    /// without replaying the components that produced it. This is not proof of
+    /// historical selection; it makes subsequent automaton operations safe.
+    pub(crate) fn validate_prefix(&self, prefix: &Prefix) -> Result<()> {
+        for (index, state) in prefix.0.iter().enumerate() {
+            let pattern = self
+                .patterns
+                .get(state.pattern)
+                .with_context(|| format!("unknown selector pattern index {}", state.pattern))?;
+            anyhow::ensure!(
+                state.offset <= pattern.segments.len(),
+                "selector offset {} outside pattern {} (length {})",
+                state.offset,
+                state.pattern,
+                pattern.segments.len()
+            );
+            anyhow::ensure!(
+                index == 0 || prefix.0[index - 1] < *state,
+                "selector prefix states are not strictly ordered and unique"
+            );
+            if matches!(pattern.segments.get(state.offset), Some(Segment::Recursive)) {
+                anyhow::ensure!(
+                    prefix.0.get(index + 1)
+                        == Some(&State {
+                            pattern: state.pattern,
+                            offset: state.offset + 1,
+                        }),
+                    "selector prefix is missing a recursive epsilon successor"
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn descend(&self, prefix: &Prefix, name: &std::ffi::OsStr) -> Result<Prefix> {
         Ok(Prefix(self.advance(&prefix.0, name.to_str().context("directory selection entry not UTF-8")?)))
     }
@@ -447,6 +481,20 @@ fn component_matches(pattern: &[char], text: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn residual_validation_accepts_recursive_closure_without_replaying_paths() {
+        let patterns = Patterns::compile(&["**/**/cache".into(), "pkg/**/cache".into(), "literal".into()]).unwrap();
+        let mut prefix = patterns.root();
+        patterns.validate_prefix(&prefix).unwrap();
+        for name in ["pkg", "sub", "cache", "deep"] {
+            prefix = patterns.descend(&prefix, name.as_ref()).unwrap();
+            patterns.validate_prefix(&prefix).unwrap();
+        }
+        // Empty is a safe residual too; validation does not assert which path
+        // historically produced an otherwise well-formed set of states.
+        patterns.validate_prefix(&Prefix::default()).unwrap();
+    }
 
     #[test]
     fn pure_queries_share_recursive_and_unicode_component_grammar() {

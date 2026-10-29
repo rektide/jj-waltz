@@ -2,7 +2,7 @@
 //! No realized-root set, payload census, native commands or mutable admission map.
 use crate::frozen::{FrozenIgnore, IgnoreState};
 use crate::ignored::{Patterns, Prefix};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use diff_dirs::{
     Action, CheckError, Choices, Container, ContextSite, Demand, FileKind, Interior, InteriorInput, InteriorRole, Kind, Names, Policy, SemanticId,
     ShapeChoices, SideDemands, SourceObservation, StatKey,
@@ -19,6 +19,9 @@ use std::sync::{Arc, LazyLock};
 struct Node {
     children: BTreeMap<OsString, usize>,
     leaf: bool,
+    // Frozen backedge for reference/coordinate validation, not a second path
+    // index or a root-prefix admission replay. Root's parent is itself.
+    parent: usize,
 }
 #[derive(Debug)]
 struct PathIndex(Vec<Node>);
@@ -33,7 +36,7 @@ impl PathIndex {
                     Some(i) => *i,
                     None => {
                         let i = nodes.len();
-                        nodes.push(Node::default());
+                        nodes.push(Node { parent: at, ..Node::default() });
                         nodes[at].children.insert(name.to_owned(), i);
                         i
                     }
@@ -45,6 +48,21 @@ impl PathIndex {
     }
     fn descend(&self, at: Option<usize>, name: &std::ffi::OsStr) -> Option<usize> {
         at.and_then(|i| self.0[i].children.get(name).copied())
+    }
+    fn validate_reference(&self, at: Option<usize>, relative: &Path) -> Result<()> {
+        let Some(mut index) = at else { return Ok(()) };
+        ensure!(index < self.0.len(), "node index {index} outside frozen index (length {})", self.0.len());
+        for part in relative.components().rev() {
+            ensure!(index != 0, "node reference differs from coordinate {relative:?}");
+            let parent = self.0[index].parent;
+            ensure!(
+                self.0[parent].children.get(part.as_os_str()) == Some(&index),
+                "node reference differs from coordinate {relative:?}"
+            );
+            index = parent;
+        }
+        ensure!(index == 0, "node reference differs from coordinate {relative:?}");
+        Ok(())
     }
 }
 
@@ -164,6 +182,7 @@ impl SourceQualified {
         // A frozen-value checksum, not a secret or an authorization token. The
         // provider already binds the caller's policy interpretation; this detects
         // damaged/mismatched residual values without replaying path admission.
+        // Recomputable integrity does not replace structural/reference checks.
         state.seal = [0; 32];
         let mut hash = Sha256::new();
         hash.update(&self.identity.parameters);
@@ -206,7 +225,21 @@ impl Policy for SourceQualified {
                     ensure!(!site.structural_root || site.role.is_some(), "search context cannot replace initial admission");
                     ensure!(state.at == site.relative, "search context coordinate differs");
                     ensure!(state.at.to_str().is_some(), "non-UTF-8 search coordinate");
-                    // Frozen-value integrity, not selector/ignore/ownership replay.
+                    // Interpret references before hashing or allowing callbacks
+                    // to index them. Neither these checks nor the recomputable
+                    // checksum authenticate the residual's historical authority.
+                    self.source.patterns.validate_prefix(&state.selector).context("invalid selector prefix")?;
+                    self.source_ignore
+                        .validate_state(&state.source_ignore, &state.at)
+                        .context("invalid source ignore state")?;
+                    self.desired_ignore
+                        .validate_state(&state.desired_ignore, &state.at)
+                        .context("invalid desired ignore state")?;
+                    self.source
+                        .native
+                        .validate_reference(state.native, &state.at)
+                        .context("invalid native reference")?;
+                    self.links.validate_reference(state.links, &state.at).context("invalid link reference")?;
                     ensure!(state == &self.seal(state.clone()), "search context differs from frozen inputs");
                 }
                 OrdinaryRegion::SelectedMirror { root, admission } => {
@@ -226,7 +259,7 @@ impl Policy for SourceQualified {
             }
             Ok(())
         })();
-        result.map_err(|e: anyhow::Error| e.to_string().into())
+        result.map_err(anyhow::Error::into_boxed_dyn_error)
     }
     fn names(&self, context: &OrdinaryRegion, names: &mut Names) -> Result<(), CheckError> {
         if names.is_root() {
@@ -266,7 +299,7 @@ impl Policy for SourceQualified {
                     entry.preserve_tree();
                     continue;
                 }
-                let next = self.advance(state, entry.name()).map_err(|e| CheckError::from(e.to_string()))?;
+                let next = self.advance(state, entry.name()).map_err(anyhow::Error::into_boxed_dyn_error)?;
                 #[cfg(test)]
                 {
                     self.trace.lock().unwrap().search_steps += 1;
@@ -597,6 +630,158 @@ mod tests {
         assert!(independent.validate_context(site, &damaged).is_err());
         assert!(changed.validate_context(site, &restored).is_err());
         assert!(v.trace.lock().unwrap().admissions.is_empty());
+    }
+
+    #[test]
+    fn resealed_malformed_search_references_refuse_before_restored_cursor_io() {
+        use diff_dirs::coordinated::{Bindings, Coordinated, Error, TargetBinding, TargetPolicy};
+        use serde_json::{Value, json};
+
+        let f = Fixture::new();
+        for root in [&f.source, &f.target] {
+            fs::create_dir_all(root.join("pkg/sub")).unwrap();
+        }
+        let native = ["elsewhere/native", "pkg/sub/native"].map(PathBuf::from).into_iter().collect();
+        let links = ["elsewhere/link", "pkg/sub/link"].map(PathBuf::from).into_iter().collect();
+        let files = [".gitignore", "pkg/.gitignore", "pkg/sub/.gitignore", "elsewhere/.gitignore"]
+            .map(|p| (PathBuf::from(p), b"cache/\n".to_vec()))
+            .into_iter()
+            .collect();
+        let devices = (fs::metadata(&f.source).unwrap().dev(), fs::metadata(&f.target).unwrap().dev());
+        let policy = || {
+            SourceQualified::new(
+                Arc::new(OrdinarySource::new(
+                    Arc::new(Patterns::compile(&["**/**/cache".into(), "pkg/**/cache".into()]).unwrap()),
+                    &native,
+                )),
+                Arc::new(FrozenIgnore::test_files(&files)),
+                Arc::new(FrozenIgnore::test_files(&files)),
+                &links,
+                devices,
+            )
+        };
+        let original = policy();
+        let independent = policy();
+        assert!(!Arc::ptr_eq(&original.source, &independent.source));
+        assert!(!Arc::ptr_eq(&original.source_ignore, &independent.source_ignore));
+        let binding = TargetBinding::new("lane".into(), f.target.clone(), "context-validation".into(), &original, &StatKey);
+        let bindings = Bindings {
+            source: f.source.clone(),
+            targets: vec![binding],
+        };
+        let loan = |policy| TargetPolicy {
+            target: &bindings.targets[0].id,
+            descriptor: &bindings.targets[0].policy,
+            policy,
+            comparator: StatKey,
+        };
+        let mut cursor = Coordinated::new(bindings.clone(), diff_dirs::Execution::Sequential).unwrap();
+        cursor.bind(&[loan(&original)]).unwrap();
+        cursor.next_group(&[loan(&original)]).unwrap().unwrap();
+        cursor.next_group(&[loan(&original)]).unwrap().unwrap();
+        let parts = cursor.into_parts();
+        let (frame, edge) = parts
+            .frames
+            .iter()
+            .enumerate()
+            .find_map(|(frame, f)| {
+                f.remaining
+                    .iter()
+                    .position(|edge| f.relative.join(&edge.name) == Path::new("pkg/sub"))
+                    .map(|edge| (frame, edge))
+            })
+            .expect("real saved Search edge at pkg/sub");
+        let OrdinaryRegion::Search(valid) = &parts.frames[frame].remaining[edge].members[0].context else {
+            panic!("expected unadmitted search residual")
+        };
+        assert_eq!(valid.at, Path::new("pkg/sub"));
+        let value = serde_json::to_value(valid).unwrap();
+        assert_eq!(value["source_ignore"]["chain"], json!(["", "pkg", "pkg/sub"]));
+        let mut cases = Vec::new();
+        let mut add = |label: &str, reason: &str, field: &str, replacement: Value| {
+            let mut altered = value.clone();
+            altered[field] = replacement;
+            let state = independent.seal(serde_json::from_value(altered).unwrap());
+            assert_eq!(state, independent.seal(state.clone()), "{label}: integrity really is valid");
+            // Exercise a serialized restored value, not just private field edits.
+            let restored = serde_json::from_slice::<OrdinaryRegion>(&serde_json::to_vec(&OrdinaryRegion::Search(state)).unwrap()).unwrap();
+            cases.push((label.to_owned(), reason.to_owned(), restored));
+        };
+        let mut selector = value["selector"].clone();
+        selector[0]["pattern"] = json!(usize::MAX);
+        add("bad pattern index", "unknown selector pattern index", "selector", selector);
+        let mut selector = value["selector"].clone();
+        selector[0]["offset"] = json!(usize::MAX);
+        add("bad pattern offset", "selector offset", "selector", selector);
+        let mut selector = value["selector"].as_array().unwrap().clone();
+        // Duplicating a nonrecursive state isolates uniqueness from closure.
+        selector.insert(3, selector[2].clone());
+        add("duplicate selector", "strictly ordered and unique", "selector", json!(selector));
+        let mut selector = value["selector"].as_array().unwrap().clone();
+        selector.rotate_left(3);
+        add("unordered selector", "strictly ordered and unique", "selector", json!(selector));
+        let mut selector = value["selector"].as_array().unwrap().clone();
+        selector.remove(1);
+        add("missing epsilon closure", "epsilon successor", "selector", json!(selector));
+        for field in ["native", "links"] {
+            add(field, "outside frozen index", field, json!(usize::MAX));
+            add(field, "differs from coordinate", field, json!(0));
+            let sibling = if field == "native" {
+                independent.source.native.descend(Some(0), "elsewhere".as_ref())
+            } else {
+                independent.links.descend(Some(0), "elsewhere".as_ref())
+            };
+            add(field, "differs from coordinate", field, json!(sibling));
+        }
+        for field in ["source_ignore", "desired_ignore"] {
+            for (label, reason, chain) in [
+                ("unknown chain", "unknown frozen ignore-chain key", json!(["", "missing"])),
+                ("nonancestor chain", "is not an ancestor", json!(["", "elsewhere"])),
+                ("duplicate chain", "strictly nested and unique", json!(["", "pkg", "pkg"])),
+                ("unordered chain", "strictly nested and unique", json!(["", "pkg/sub", "pkg"])),
+                ("parent chain coordinate", "invalid ignore-chain coordinate", json!(["../pkg"])),
+                ("absolute chain coordinate", "invalid ignore-chain coordinate", json!(["/pkg"])),
+                ("dot chain coordinate", "invalid ignore-chain coordinate", json!(["."])),
+                ("administrative chain coordinate", "invalid ignore-chain coordinate", json!([".git"])),
+            ] {
+                add(&format!("{field}: {label}"), reason, field, json!({"chain": chain, "ignored": false}));
+            }
+            add(
+                field,
+                "includes its own ignore-chain key",
+                field,
+                json!({"chain": ["", "pkg", "pkg/sub"], "ignored": true}),
+            );
+        }
+
+        fs::rename(&f.source, f._temp.path().join("source-moved-away")).unwrap();
+        let mut healthy = Coordinated::from_parts(parts.clone(), diff_dirs::Execution::Sequential).unwrap();
+        healthy.validate_policies(&[loan(&independent)]).unwrap();
+        assert!(
+            matches!(healthy.bind(&[loan(&independent)]), Err(Error::Source(_))),
+            "valid context reaches missing-root I/O"
+        );
+        for (label, reason, altered) in cases {
+            let mut saved = parts.clone();
+            saved.frames[frame].remaining[edge].members[0].context = altered;
+            let mut restored = Coordinated::from_parts(saved, diff_dirs::Execution::Sequential).unwrap();
+            let error = restored.bind(&[loan(&independent)]).unwrap_err();
+            let Error::Context { target, relative, cause } = error else {
+                panic!("{label}: expected pre-I/O context refusal, got {error}")
+            };
+            assert_eq!(target.0, "lane", "{label}");
+            assert_eq!(relative, Path::new("pkg/sub"), "{label}");
+            let cause = anyhow::Error::from_boxed(cause);
+            assert!(format!("{cause:#}").contains(&reason), "{label}: {cause:#}");
+            assert!(cause.chain().count() > 1, "{label}: retain the owner's original reference failure");
+            assert_eq!(restored.route_metadata_checks(), 0, "{label}");
+            assert!(restored.source_session().is_none(), "{label}");
+        }
+        let trace = independent.trace.lock().unwrap();
+        assert_eq!(trace.search_steps, 0, "validation never replays selector/ignore admission");
+        assert!(trace.admissions.is_empty());
+        assert!(trace.hints.is_empty());
+        assert!(trace.shapes.is_empty());
     }
 
     #[test]

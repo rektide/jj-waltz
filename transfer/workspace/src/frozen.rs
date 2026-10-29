@@ -3,14 +3,14 @@
 //! The legacy creation/reseed adapter retains its persistent Git oracle over an
 //! isolated frozen tree; tests also use that oracle for differential evidence.
 use crate::tracked::{Entry, file_bytes};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -92,6 +92,27 @@ impl FrozenIgnore {
             ignored: false,
         }
     }
+    /// Validate only frozen rule references and their nesting at this coordinate.
+    /// The sticky ignored bit and the history choosing this chain remain the
+    /// caller's saved residual; no matching or ancestor admission is replayed.
+    pub(crate) fn validate_state(&self, state: &IgnoreState, at: &Path) -> Result<()> {
+        let mut previous = None;
+        for parent in &state.chain {
+            ensure!(
+                parent.components().all(|c| matches!(c, Component::Normal(n) if n != ".jj" && n != ".git")),
+                "invalid ignore-chain coordinate {parent:?}"
+            );
+            ensure!(self.directories.contains_key(parent), "unknown frozen ignore-chain key {parent:?}");
+            ensure!(at.starts_with(parent), "ignore-chain key {parent:?} is not an ancestor of {at:?}");
+            ensure!(
+                previous.is_none_or(|previous| parent != previous && parent.starts_with(previous)),
+                "ignore-chain keys are not strictly nested and unique at {parent:?}"
+            );
+            ensure!(!state.ignored || parent != at, "ignored directory includes its own ignore-chain key {parent:?}");
+            previous = Some(parent);
+        }
+        Ok(())
+    }
     /// Advance exactly one real source-directory component. Ignored parents
     /// cannot be reopened, including by control files inside the ignored parent.
     pub fn descend(&self, state: &IgnoreState, path: &Path) -> IgnoreState {
@@ -116,11 +137,11 @@ impl FrozenIgnore {
     }
     #[cfg(test)]
     pub(crate) fn test_rules(bytes: &[u8]) -> Self {
-        Self::build(
-            &BTreeMap::from([(PathBuf::from(".gitignore"), bytes.to_vec())]),
-            &Excludes { global: vec![], info: vec![] },
-        )
-        .unwrap()
+        Self::test_files(&BTreeMap::from([(PathBuf::from(".gitignore"), bytes.to_vec())]))
+    }
+    #[cfg(test)]
+    pub(crate) fn test_files(files: &BTreeMap<PathBuf, Vec<u8>>) -> Self {
+        Self::build(files, &Excludes { global: vec![], info: vec![] }).unwrap()
     }
     fn build(files: &BTreeMap<PathBuf, Vec<u8>>, excludes: &Excludes) -> Result<Self> {
         let mut hash = Sha256::new();
@@ -528,9 +549,11 @@ mod oracle_tests {
                 if directory {
                     let mut state = pure.root();
                     let mut at = PathBuf::new();
+                    pure.validate_state(&state, &at).unwrap();
                     for part in Path::new(path).components() {
                         at.push(part);
                         state = pure.descend(&state, &at);
+                        pure.validate_state(&state, &at).unwrap();
                     }
                     assert_eq!(state.ignored(), pure.ignored(Path::new(path), true), "incremental ignore chain: {path}");
                 }
