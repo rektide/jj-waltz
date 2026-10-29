@@ -1,4 +1,62 @@
 use super::*;
+use clap::Parser;
+
+#[test]
+fn cli_requires_explicit_case_acceptance_and_fixed_bounded_dimensions() {
+    let parsed = crate::Cli::try_parse_from([
+        "jw-perf",
+        "renewal",
+        "sample",
+        "owned",
+        "output",
+        "--acceptance",
+        "receipt",
+        "--case",
+        "mixed-n2",
+    ])
+    .unwrap();
+    assert!(matches!(
+        parsed.action,
+        crate::Action::Renewal {
+            action: Action::Sample {
+                case: Case::MixedN2,
+                timing: Timing::Native,
+                ..
+            }
+        }
+    ));
+    assert!(crate::Cli::try_parse_from(["jw-perf", "renewal", "sample", "owned", "output", "--case", "mixed-n2"]).is_err());
+    assert!(
+        crate::Cli::try_parse_from([
+            "jw-perf",
+            "renewal",
+            "sample",
+            "owned",
+            "output",
+            "--acceptance",
+            "receipt",
+            "--case",
+            "unbounded"
+        ])
+        .is_err()
+    );
+    assert!(
+        crate::Cli::try_parse_from([
+            "jw-perf",
+            "renewal",
+            "sample",
+            "owned",
+            "output",
+            "--acceptance",
+            "receipt",
+            "--case",
+            "mixed-n2",
+            "--destinations",
+            "3"
+        ])
+        .is_err()
+    );
+}
 
 pub(super) fn control(root: &Path, binary: &Path) -> Control {
     let value = json!({"source_commit":"a".repeat(40),"library_commit":"b".repeat(40),"rustc":"fake test compiler (not build evidence)",

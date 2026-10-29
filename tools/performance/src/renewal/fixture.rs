@@ -287,9 +287,7 @@ impl Fixture {
         let counts = roots.iter().map(|p| inventory(p).map(|v| usage(&v))).collect::<Result<Vec<_>>>()?;
         // Reserve TWO entire source copies, not just its selected payload. This
         // conservatively covers simultaneous source-leaf/payload staging in N2.
-        let reserve = (counts[0].0 * 2, counts[0].1 * 2);
-        let total = counts.iter().fold((reserve.0 + 3, reserve.1), |a, b| (a.0 + b.0, a.1 + b.1));
-        enforce_budget(total)?;
+        let (reserve, total) = aggregate_bound(&counts)?;
         Ok(json!({"live":counts,"staging_reserve":reserve,"aggregate_bound":total,"ceiling":[256,1048576],
             "scope":"all ordinary checkout entries including dirs/config/links; excludes native administration and artifacts outside trees"}))
     }
@@ -495,6 +493,18 @@ fn enforce_budget((entries, bytes): (u64, u64)) -> Result<()> {
     }
     Ok(())
 }
+fn aggregate_bound(counts: &[(u64, u64)]) -> Result<((u64, u64), (u64, u64))> {
+    if counts.len() != 3 {
+        return Err("budget requires one donor and exactly two reused receivers".into());
+    }
+    for &count in counts {
+        enforce_budget(count)?;
+    }
+    let reserve = (counts[0].0 * 2, counts[0].1 * 2);
+    let total = counts.iter().fold((reserve.0 + 3, reserve.1), |a, b| (a.0 + b.0, a.1 + b.1));
+    enforce_budget(total)?;
+    Ok((reserve, total))
+}
 fn signature(nodes: &BTreeMap<PathBuf, Node>, times: bool) -> Value {
     json!(nodes.iter().map(|(p, n)| (p.clone(), n.signature(times))).collect::<BTreeMap<_, _>>())
 }
@@ -594,6 +604,16 @@ mod tests {
         assert!(enforce_budget((256, 1048576)).is_ok());
         assert!(enforce_budget((257, 1)).is_err());
         assert!(enforce_budget((1, 1048577)).is_err());
+        assert_eq!(aggregate_bound(&[(50, 100_000); 3]).unwrap(), ((100, 200_000), (253, 500_000)));
+        assert!(
+            aggregate_bound(&[(51, 1_000); 3]).is_err(),
+            "staging pushes aggregate entries over ceiling although each root fits"
+        );
+        assert!(
+            aggregate_bound(&[(1, 210_000); 3]).is_err(),
+            "staging pushes aggregate bytes over ceiling although each root fits"
+        );
+        assert!(aggregate_bound(&[(1, 1); 4]).is_err(), "no additional fixture root");
     }
     #[test]
     fn named_reset_refuses_unexpected_content_and_never_follows_links() {
