@@ -444,7 +444,7 @@ fn loaded_link_finish_failure_leaves_native_and_selected_payload_effects() {
         "{error}"
     );
     assert!(
-        error.contains("files_reflinked: 1"),
+        error.contains("ordinary files_reflinked: 1"),
         "known ordinary work must be retained in failure context: {error}"
     );
     assert_eq!(fs::read(target.join("cache/tool")).unwrap(), b"payload");
