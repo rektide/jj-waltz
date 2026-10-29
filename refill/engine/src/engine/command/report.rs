@@ -13,6 +13,7 @@ pub enum Phase {
     Source,
     Preserve,
     Capture,
+    NativeSetup,
     NativeClear,
     NativeChild,
     ExplicitClear,
@@ -34,6 +35,7 @@ impl std::fmt::Display for Phase {
             Self::Source => "source preparation/assertion",
             Self::Preserve => "save receiving work",
             Self::Capture => "native membership capture",
+            Self::NativeSetup => "native transition guards",
             Self::NativeClear => "clear tracked checkout",
             Self::NativeChild => "establish receiving child",
             Self::ExplicitClear => "explicit replace-content",
@@ -78,8 +80,8 @@ pub enum OrdinaryState {
 pub struct NativeOutcome {
     /// Actual provider-visible S installations, owned removals and directory
     /// scope effects. Not a final-D storage-sharing count or stock-JJ effects.
-    pub completed: diff_dirs_sync::Progress,
-    pub explicit_clear: diff_dirs_sync::Progress,
+    pub completed: Option<diff_dirs_sync::Progress>,
+    pub explicit_clear: Option<diff_dirs_sync::Progress>,
     /// Actual provider coverage, retained even on an unsuccessful lane. None
     /// means no lane returned coverage, not an empty complete manifest.
     pub manifest: Option<diff_dirs_sync::ManifestCoverage>,
@@ -87,6 +89,9 @@ pub struct NativeOutcome {
     pub policy: Option<diff_dirs_sync::Policy>,
     /// Whether S is only a temporary installation before native D convergence.
     pub temporary_source_installation: bool,
+    /// None before native entry; false until adoption returns successfully.
+    /// True is not native conformance or command completion.
+    pub source_state_adopted: Option<bool>,
     pub state: Establishment,
     /// Stock JJ commands may have unenumerated effects even on process failure.
     pub attempted: Vec<Phase>,
@@ -101,6 +106,11 @@ pub struct PhaseTiming {
     pub elapsed: std::time::Duration,
     pub succeeded: bool,
 }
+impl NativeOutcome {
+    pub fn tracked_install_elapsed(&self) -> Option<std::time::Duration> {
+        self.timings.iter().find(|step| step.phase == Phase::Install).map(|step| step.elapsed)
+    }
+}
 #[derive(Debug, Clone, Default)]
 pub struct OrdinaryOutcome {
     pub state: OrdinaryState,
@@ -110,7 +120,9 @@ pub struct OrdinaryOutcome {
 }
 #[derive(Debug, Clone, Default)]
 pub struct FinishOutcome {
-    pub links: links::LinkApplyReport,
+    /// None before a link application returns, including pre-link inspection
+    /// failure. Returned zero work is Some, never inferred from phase timing.
+    pub links: Option<links::LinkApplyReport>,
     pub failed_path: Option<PathBuf>,
     pub complete: bool,
     pub elapsed: Option<std::time::Duration>,
@@ -173,7 +185,8 @@ pub struct CommandReport {
     pub source: Option<SourceReport>,
     pub preparation: Option<PreparationReport>,
     pub receivers: Vec<ReceiverReport>,
-    pub capture: CaptureCounts,
+    /// None until a valid membership/capture result supplies known counts.
+    pub capture: Option<CaptureCounts>,
     /// One snapshot per source phase, never multiplied across receiver rows.
     pub tracked_source: Option<diff_dirs_inspect::SourceDiagnostics>,
     pub ordinary_source: Option<diff_dirs_inspect::SourceDiagnostics>,
@@ -209,11 +222,15 @@ impl std::fmt::Display for CommandFailure {
             receivers.iter().filter(|r| r.native.state == Establishment::Established).count(),
         )?;
         if let Some(receiver) = self.location.receiver.as_ref().and_then(|name| receivers.iter().find(|r| &r.name == name)) {
-            write!(
-                f,
-                "; receiver native files_reflinked: {}, files_copied: {}",
-                receiver.native.completed.files_reflinked, receiver.native.completed.files_copied,
-            )?;
+            if let Some(progress) = &receiver.native.completed {
+                write!(
+                    f,
+                    "; receiver native files_reflinked: {}, files_copied: {}",
+                    progress.files_reflinked, progress.files_copied
+                )?;
+            } else {
+                f.write_str("; receiver native progress unavailable")?;
+            }
             if let Some(report) = &receiver.ordinary.report {
                 write!(
                     f,
@@ -226,7 +243,11 @@ impl std::fmt::Display for CommandFailure {
                     f.write_str(" (progress unavailable)")?;
                 }
             }
-            write!(f, "; receiver links created: {}", receiver.finish.links.linked)?;
+            if let Some(links) = &receiver.finish.links {
+                write!(f, "; receiver links created: {}", links.linked)?;
+            } else {
+                f.write_str("; receiver link progress unavailable")?;
+            }
         }
         f.write_str("; partial effects may remain, no rollback")
     }
@@ -241,6 +262,21 @@ impl std::error::Error for CommandFailure {
 mod tests {
     use super::*;
     use std::error::Error;
+
+    #[test]
+    fn unentered_native_and_finish_have_no_returned_effects_adoption_or_timing() {
+        let native = NativeOutcome::default();
+        assert!(native.completed.is_none());
+        assert!(native.explicit_clear.is_none());
+        assert!(native.manifest.is_none());
+        assert!(native.policy.is_none());
+        assert!(native.source_state_adopted.is_none());
+        assert!(native.elapsed.is_none());
+        assert!(native.tracked_install_elapsed().is_none());
+        let finish = FinishOutcome::default();
+        assert!(finish.links.is_none());
+        assert!(finish.elapsed.is_none());
+    }
 
     fn failure() -> CommandFailure {
         let mut ordinary = diff_dirs_sync::coordinated::LaneReport {
@@ -262,10 +298,10 @@ mod tests {
             reached: Phase::Links,
             status: ReceiverStatus::Failed,
             native: NativeOutcome {
-                completed: diff_dirs_sync::Progress {
+                completed: Some(diff_dirs_sync::Progress {
                     files_reflinked: 3,
                     ..Default::default()
-                },
+                }),
                 state: Establishment::Established,
                 ..Default::default()
             },
@@ -285,7 +321,7 @@ mod tests {
                 source: None,
                 preparation: None,
                 receivers: vec![earlier, receiver],
-                capture: CaptureCounts::default(),
+                capture: None,
                 tracked_source: None,
                 ordinary_source: None,
                 setup: Default::default(),

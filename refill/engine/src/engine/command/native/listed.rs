@@ -104,11 +104,11 @@ fn accept_lane(lane: diff_dirs_sync::ListedOutcome, native: &mut NativeOutcome) 
     native.manifest = Some(lane.coverage);
     match lane.outcome {
         Ok(done) => {
-            native.completed = done.completed;
+            native.completed = Some(done.completed);
             native.policy = Some(done.policy);
         }
         Err(failure) => {
-            native.completed = failure.completed.clone();
+            native.completed = Some(failure.completed.clone());
             native.policy = Some(*failure.policy.clone());
             return Err(failure.into());
         }
@@ -308,7 +308,7 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("without complete manifest coverage"));
         assert_eq!(native.manifest, Some(coverage));
-        assert_eq!(native.completed, progress);
+        assert_eq!(native.completed, Some(progress.clone()));
         let error = accept_lane(
             diff_dirs_sync::ListedOutcome {
                 id: "target".into(),
@@ -336,7 +336,7 @@ mod tests {
                 .any(|e| e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == ErrorKind::PermissionDenied))
         );
         assert_eq!(native.manifest, Some(coverage));
-        assert_eq!(native.completed, progress);
+        assert_eq!(native.completed, Some(progress));
         assert!(native.attempted.is_empty());
         assert_eq!(native.state, Establishment::Unstarted);
     }

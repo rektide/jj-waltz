@@ -163,17 +163,23 @@ impl OrdinaryTransfer for NoOrdinary {
 }
 fn report_value(report: &CommandReport) -> Value {
     json!({"source": report.source.as_ref().map(|s| json!({"commit": s.commit, "goal": s.upstream_goal, "evidence": format!("{:?}", s.evidence)})),
-        "trees": report.capture.distinct_trees, "cache_reads": report.capture.donor_cache_reads,
-        "desired_manifests": report.capture.desired_manifests, "owned_manifests": report.capture.owned_manifests,
+        "trees": report.capture.as_ref().map(|c| c.distinct_trees), "cache_reads": report.capture.as_ref().map(|c| c.donor_cache_reads),
+        "desired_manifests": report.capture.as_ref().map(|c| c.desired_manifests), "owned_manifests": report.capture.as_ref().map(|c| c.owned_manifests),
         "tracked_source": report.tracked_source.map(diagnostics_value), "ordinary_source": report.ordinary_source.map(diagnostics_value),
         "ordinary_ns": report.ordinary_elapsed.map(|d| d.as_nanos()),
-        "receivers": report.receivers.iter().map(|r| json!({"name": r.name, "status": format!("{:?}", r.status), "phase": r.reached.to_string(), "old": r.old.as_ref().map(|o| &o.commit),
+        "receivers": report.receivers.iter().map(receiver_value).collect::<Vec<_>>()})
+}
+fn receiver_value(r: &ReceiverReport) -> Value {
+    let mut row = json!({"name": r.name, "status": format!("{:?}", r.status), "phase": r.reached.to_string(), "old": r.old.as_ref().map(|o| &o.commit),
             "child": r.child.as_ref().map(|c| &c.commit_id), "change": r.child.as_ref().map(|c| &c.change_id), "native": format!("{:?}", r.native.state), "manifest": r.native.manifest.is_some_and(|m| m.complete),
-            "clones": r.native.completed.files_reflinked, "copies": r.native.completed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "clones": r.native.completed.as_ref().map(|p| p.files_reflinked), "copies": r.native.completed.as_ref().map(|p| p.files_copied), "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "adopted": r.native.source_state_adopted, "explicit_removed": r.native.explicit_clear.as_ref().map(|p| p.files_removed),
+            "native_ns": r.native.elapsed.map(|d| d.as_nanos()), "install_ns": r.native.tracked_install_elapsed().map(|d| d.as_nanos()),
             "route": format!("{:?}", r.route), "temporary_s": r.native.temporary_source_installation,
             "installed": r.native.manifest.map(|m| m.installed), "desired_leaves": r.native.manifest.map(|m| m.desired),
             "obsolete": r.native.manifest.map(|m| m.owned_obsolete), "retired": r.native.manifest.map(|m| m.owned_retired),
-            "removed_files": r.native.completed.files_removed, "removed_links": r.native.completed.symlinks_removed,
+            "removed_files": r.native.completed.as_ref().map(|p| p.files_removed), "removed_links": r.native.completed.as_ref().map(|p| p.symlinks_removed)});
+    let later = json!({
             "attempted": r.native.attempted.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
             "timings": r.native.timings.iter().map(|t| json!({"phase": format!("{:?}", t.phase), "ns": t.elapsed.as_nanos(), "ok": t.succeeded})).collect::<Vec<_>>(),
             "finish_ns": r.finish.elapsed.map(|d| d.as_nanos()),
@@ -181,7 +187,9 @@ fn report_value(report: &CommandReport) -> Value {
             "ordinary_clones": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_reflinked),
             "ordinary_removed": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_removed),
             "ordinary_satisfied": r.ordinary.report.as_ref().map(|r| r.satisfied),
-            "links_created": r.finish.links.linked})).collect::<Vec<_>>()})
+            "links_created": r.finish.links.as_ref().map(|r| r.linked)});
+    row.as_object_mut().unwrap().extend(later.as_object().unwrap().clone());
+    row
 }
 fn diagnostics_value(d: diff_dirs_inspect::SourceDiagnostics) -> Value {
     let work = |w: diff_dirs_inspect::SourceWorkDiagnostics| json!({"listings": w.listings, "metadata": w.metadata_acquisitions, "links": w.link_acquisitions, "facts": w.fact_hits, "hits": w.cache_hits});
@@ -280,7 +288,10 @@ fn vector_native_stage_reuses_trees_and_cache_and_retains_forward_failure() {
     assert_eq!(report["receivers"][1]["native"], "InProgress");
     assert_eq!(report["receivers"][1]["status"], "Failed");
     assert_eq!(report["receivers"][0]["clones"], 3);
-    assert_eq!(report["receivers"][1]["clones"], 0);
+    assert!(report["receivers"][1]["clones"].is_null(), "no tracked call returned");
+    assert!(report["receivers"][1]["install_ns"].is_null());
+    assert_eq!(report["receivers"][1]["adopted"], false);
+    assert_eq!(report["receivers"][0]["adopted"], true);
     assert_eq!(fs::read(b.join(".jj/working_copy/tree_state")).unwrap(), b_state);
     assert_eq!(fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(), source_state);
     assert_eq!(fs::read(a.join(".env")).unwrap(), b"private");
@@ -569,7 +580,11 @@ fn preservation_barrier_refuses_a_coordinate_rewritten_by_later_snapshot() {
     );
     assert_eq!(value["report"]["receivers"][0]["old"], old_a);
     assert!(!calls.iter().any(|c| c.iter().any(|s| s == "--clear")));
-    assert_eq!(value["report"]["receivers"][0]["clones"], 0);
+    assert!(value["report"]["receivers"][0]["clones"].is_null());
+    assert_eq!(value["report"]["receivers"][1]["status"], "Partial", "saved peer never started native work");
+    assert!(value["report"]["receivers"][1]["adopted"].is_null());
+    assert!(value["report"]["receivers"][1]["native_ns"].is_null());
+    assert!(value["report"]["trees"].is_null());
 }
 
 #[test]
@@ -622,6 +637,10 @@ fn preservation_barrier_refuses_donor_rewrite_without_implicit_resnapshot() {
         "{value:#}"
     );
     assert_eq!(value["report"]["source"]["commit"], s);
+    assert_eq!(
+        value["report"]["receivers"][0]["status"], "Partial",
+        "shared source barrier does not erase receiver preservation"
+    );
     assert!(!calls.iter().any(|c| c.iter().any(|s| s == "--clear")));
     assert!(
         !calls
@@ -788,6 +807,10 @@ fn production_both_native_routes_exact_s_and_distinct_d_preserve_history_identit
                 assert_eq!(r["copies"], 0);
                 assert_eq!(r["temporary_s"], distinct);
                 assert_eq!(r["finish"], true);
+                assert_eq!(r["adopted"], true);
+                assert!(r["explicit_removed"].is_null());
+                assert!(r["native_ns"].as_u64().unwrap() > 0);
+                assert!(r["install_ns"].as_u64().unwrap() > 0);
                 assert_eq!(r["route"], if mode == "replace" { "ReplaceAuthorized" } else { "ClearThenPopulate" });
                 assert_ne!(r["change"], old_change);
                 let attempted = r["attempted"].as_array().unwrap();
@@ -897,6 +920,8 @@ fn production_both_native_routes_exact_s_and_distinct_d_preserve_history_identit
             fs::write(a.join("expand/leaf"), "receiver private write\n").unwrap();
             assert_eq!(fs::read(f.source.join("expand/leaf")).unwrap(), b"selected S child\n");
             assert!(f.jj(&a, &["diff", "--summary"]).contains("expand/leaf"));
+            fs::write(f.source.join("zz"), "source private write\n").unwrap();
+            assert_eq!(fs::read(a.join("zz")).unwrap(), b"last leaf\n", "source writes are private too");
         }
     }
 }
@@ -962,6 +987,7 @@ fn both_routes_missing_wrong_kind_and_wrong_executable_source_refuse_without_ado
             let r = &value["report"]["receivers"][0];
             assert_eq!(r["phase"], "full-S tracked installation");
             assert_eq!(r["manifest"], false);
+            assert_eq!(r["adopted"], false);
             assert_eq!(r["installed"], 0);
             assert_eq!(r["clones"], 0);
             assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
@@ -995,6 +1021,7 @@ fn both_routes_late_manifest_failure_preserves_returned_visible_progress_and_ori
         assert_eq!(r["desired_leaves"], 4);
         assert_eq!(r["manifest"], false);
         assert_eq!(r["native"], "InProgress");
+        assert_eq!(r["adopted"], false);
         assert!(!r["attempted"].as_array().unwrap().contains(&json!("Adopt")));
         assert_eq!(fs::read(a.join("a")).unwrap(), b"baseline\n");
         assert_eq!(value["report"]["tracked_source"]["active"], 0);
@@ -1110,6 +1137,7 @@ fn authorized_native_reparent_failure_keeps_both_tracked_results_and_starts_no_o
         let r = &value["report"]["receivers"][i];
         assert_eq!(r["route"], "ReplaceAuthorized");
         assert_eq!(r["manifest"], true);
+        assert_eq!(r["adopted"], true);
         assert_eq!(r["clones"], 3);
         assert_eq!(r["ordinary"], "Unstarted");
         assert_eq!(r["finish"], false);
@@ -1140,6 +1168,8 @@ fn explicit_broad_clear_keeps_selected_replacement_route_but_uses_strict_create(
     assert_eq!(r["obsolete"], 0);
     assert_eq!(r["manifest"], true);
     assert_eq!(r["clones"], 3);
+    assert_eq!(r["explicit_removed"], 4);
+    assert_eq!(r["removed_files"], 0, "broad clear does not become renewal removals");
     assert!(r["attempted"].as_array().unwrap().contains(&json!("ExplicitClear")));
     assert!(r["attempted"].as_array().unwrap().contains(&json!("Reparent")));
     assert!(!r["attempted"].as_array().unwrap().contains(&json!("NativeClear")));

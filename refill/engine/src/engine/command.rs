@@ -265,7 +265,7 @@ impl ResolvedCommand {
                     finish: FinishOutcome::default(),
                 })
                 .collect(),
-            capture: CaptureCounts::default(),
+            capture: None,
             tracked_source: None,
             ordinary_source: None,
             setup: Default::default(),
@@ -318,6 +318,7 @@ impl ResolvedCommand {
             for (index, (binding, links)) in self.receivers.iter().zip(self.links).enumerate() {
                 lane = Some(index);
                 report.receivers[index].reached = phase;
+                report.receivers[index].status = ReceiverStatus::Partial;
                 snapshot(&binding.client()).context("save old receiving work")?;
                 let operation = binding.client().operation_id()?;
                 let old = binding.client().resolve_one_at(&operation, "@")?.commit_id;
@@ -377,13 +378,14 @@ impl ResolvedCommand {
                 .chain(saved.iter().map(|s| s.old_commit.clone()))
                 .collect::<Vec<_>>();
             let membership = Membership::capture(caller, &operation, &commits)?;
-            report.capture.distinct_trees = membership.count();
-            report.capture.membership_queries = membership.count();
-            report.capture.indexes = membership.count();
-            let input = native::inputs(&membership, &source, &desired, &saved, self.route, self.request.replace_content)?;
-            report.capture.donor_cache_reads = 1;
-            report.capture.desired_manifests = 1;
-            report.capture.owned_manifests = input.tracked.owned_count();
+            let capture = report.capture.insert(CaptureCounts {
+                distinct_trees: membership.count(),
+                membership_queries: membership.count(),
+                indexes: membership.count(),
+                ..Default::default()
+            });
+            let input = native::inputs(&membership, &source, &desired, &saved, self.route, self.request.replace_content, capture)?;
+            report.tracked_source = Some(input.tracked.source.diagnostics());
             let native_paths = if Arc::ptr_eq(&input.source, &input.desired) {
                 Arc::clone(&input.source.index)
             } else {
@@ -523,9 +525,9 @@ fn finish(saved: &SavedReceiver, ordinary: &OrdinaryLane, desired: &str, report:
         }
     }
     match links::apply_loaded_workspace_links(&saved.links) {
-        Ok(done) => report.finish.links = done,
+        Ok(done) => report.finish.links = Some(done),
         Err(failure) => {
-            report.finish.links = failure.completed.clone();
+            report.finish.links = Some(failure.completed.clone());
             report.finish.failed_path = failure.path.clone();
             return Err(failure.into());
         }

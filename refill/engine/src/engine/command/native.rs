@@ -102,17 +102,23 @@ pub(super) fn inputs(
     saved: &[SavedReceiver],
     route: RenewalRoute,
     replace_content: bool,
+    capture: &mut CaptureCounts,
 ) -> Result<NativeInputs> {
     let source_tree = membership.get(&source.report.commit);
     let desired_tree = membership.get(desired);
     let additions = desired_tree.leaves.iter().filter(|e| !source_tree.index.contains(&e.path)).cloned().collect();
+    let donor_tree_state = read_tree_state(&source.binding.root)?;
+    capture.donor_cache_reads = 1;
+    let tracked = TrackedPhase::prepare(membership, source, saved, route, replace_content)?;
+    capture.desired_manifests = 1;
+    capture.owned_manifests = tracked.owned_count();
     Ok(NativeInputs {
         source: source_tree,
         desired: desired_tree,
         old_trees: saved.iter().map(|s| (s.old_commit.clone(), membership.get(&s.old_commit))).collect(),
-        donor_tree_state: read_tree_state(&source.binding.root)?,
+        donor_tree_state,
         additions,
-        tracked: TrackedPhase::prepare(membership, source, saved, route, replace_content)?,
+        tracked,
     })
 }
 
@@ -130,21 +136,25 @@ pub(super) fn establish(
     let started = Instant::now();
     report.status = ReceiverStatus::Partial;
     report.native.state = Establishment::InProgress;
+    report.native.source_state_adopted = Some(false);
     let result = (|| {
         let binding = &saved.binding;
         let client = binding.client();
         // A preceding native receiver may rewrite history. Never silently repin
         // an O captured by the preservation barrier.
-        let operation = client.operation_id()?;
-        source.binding.verify_at(&operation)?;
-        ensure!(
-            source.binding.client().resolve_one_at(&operation, "@")?.commit_id == source.report.commit,
-            "donor coordinate changed before native transition"
-        );
-        binding.verify_at(&operation)?;
-        let old = client.resolve_one_at(&operation, "@")?;
-        ensure!(old.commit_id == saved.old_commit, "saved receiver O moved before native transition");
-        bookmarks::verify_batch(&client, [&saved.guard])?;
+        let old = measured(report, Phase::NativeSetup, |_| {
+            let operation = client.operation_id()?;
+            source.binding.verify_at(&operation)?;
+            ensure!(
+                source.binding.client().resolve_one_at(&operation, "@")?.commit_id == source.report.commit,
+                "donor coordinate changed before native transition"
+            );
+            binding.verify_at(&operation)?;
+            let old = client.resolve_one_at(&operation, "@")?;
+            ensure!(old.commit_id == saved.old_commit, "saved receiver O moved before native transition");
+            bookmarks::verify_batch(&client, [&saved.guard])?;
+            Ok(old)
+        })?;
         report.native.temporary_source_installation = source.report.commit != desired;
         if report.route == RenewalRoute::ClearThenPopulate {
             measured(report, Phase::NativeClear, |_| {
@@ -162,10 +172,11 @@ pub(super) fn establish(
         } else {
             &saved.old_commit
         };
-        let child = measured(report, Phase::NativeChild, |_| {
+        let child = measured(report, Phase::NativeChild, |report| {
             client.run_refill(["new", &commit_id_revset(parent)?])?;
             let operation = client.operation_id()?;
             let child = client.commit_facts_at(&operation, "@")?;
+            report.child = Some(child.clone());
             ensure!(
                 child.parents == [parent] && child.ordinary_empty_child(),
                 "new child does not have its exact native parent"
@@ -182,13 +193,12 @@ pub(super) fn establish(
             binding.verify_at(&operation)?;
             Ok(child)
         })?;
-        report.child = Some(child.clone());
         if replace_content {
             measured(report, Phase::ExplicitClear, |report| {
                 match diff_dirs_sync::clear_with_visitor(&binding.root, cow::transfer::WorkspaceClear) {
-                    Ok(done) => report.native.explicit_clear = done.completed,
+                    Ok(done) => report.native.explicit_clear = Some(done.completed),
                     Err(failure) => {
-                        report.native.explicit_clear = failure.completed.clone();
+                        report.native.explicit_clear = Some(failure.completed.clone());
                         return Err(failure.into());
                     }
                 }
@@ -200,6 +210,7 @@ pub(super) fn establish(
             admit_additions(&binding.root, &input.source.index, &input.additions)
         })?;
         measured(report, Phase::Adopt, |_| adopt_tree_state(&binding.root, &input.donor_tree_state))?;
+        report.native.source_state_adopted = Some(true);
         if source.report.commit != desired {
             measured(report, Phase::Restore, |_| {
                 client.run_refill(["restore", "--from", &commit_id_revset(desired)?])?;
@@ -207,10 +218,11 @@ pub(super) fn establish(
             })?;
         }
         if report.route == RenewalRoute::ReplaceAuthorized {
-            measured(report, Phase::Reparent, |_| {
+            measured(report, Phase::Reparent, |report| {
                 let operation = client.operation_id()?;
                 binding.verify_at(&operation)?;
                 let current = client.commit_facts_at(&operation, "@")?;
+                report.child = Some(current.clone());
                 ensure!(
                     current.change_id == child.change_id && current.parents == [saved.old_commit.as_str()],
                     "new receiving C changed before reparenting"

@@ -42,10 +42,12 @@ pub fn refill_one_from(cwd: &Path, request: ReseedRequest, mut diagnostic: impl 
         old_commit: receiver.old.unwrap().commit,
         final_commit: child.commit_id,
         change_id: child.change_id,
-        native_install: receiver.native.completed,
-        explicit_clear: receiver.native.explicit_clear,
+        native_install: receiver.native.completed.expect("successful command has returned tracked progress"),
+        // Legacy projection only: its old fixed Progress cannot express an
+        // unrequested clear. The canonical native report retains None.
+        explicit_clear: receiver.native.explicit_clear.unwrap_or_default(),
         ordinary: receiver.ordinary.report,
-        links: receiver.finish.links,
+        links: receiver.finish.links.expect("successful finish has a returned link report"),
         native_ms: (report.setup + receiver.native.elapsed.unwrap_or_default()).as_millis(),
         ordinary_ms: report.ordinary_elapsed.unwrap_or_default().as_millis(),
         finish_ms: receiver.finish.elapsed.unwrap_or_default().as_millis(),
