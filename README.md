@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6-astra#high
-  at: 2026-10-28
+  by: model:openai/gpt-6.1-sol#xhigh
+  at: 2026-10-29
 sources:
+  - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
+    title: Documents public two-route refill, schema 1, actual S versus goal, final-only preparation and nonmutating PLANNED previews
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
     title: Human requests right-sized lifecycle guarantees and challenges pre-iteration; parent documents operating hazards and the technical architecture for root decisions, explicit native costs and streaming reseed
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
@@ -135,7 +137,7 @@ it can be the primary or an explicitly selected workspace.
 | `--source-at` | Donor tracked-tree assertion | Donor tracked-tree assertion; upstream goal with `--prepare` | Upstream goal |
 | `--at` | Explicit creation base | Explicit sync-target override | — |
 | Fetch / preparation commands | Never | Only with explicit `--prepare` | One pinned upstream / local argv |
-| `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Verify selected payload |
+| `--copy-ignored`, `--no-copy-ignored` | New-workspace payload | Refill payload | Rejected; no payload census |
 | `--dry-run` | — | Supported | Supported |
 | `--format=json` | — | — | Machine-readable report |
 | `--replace-content` | — | Discard unrecorded target contents | — |
@@ -197,7 +199,7 @@ preparation commands. Trunk configuration does not choose the creation base.
 
 Unsupported cloning, Watchman, or rejected copied JJ state cause a warning and
 ordinary JJ checkout fallback during **tracked creation**. That is not CoW success.
-Private ignored payloads, reseed refills, and prepare payload verification require
+Private ignored payloads and reseed refills require
 real CoW and have no ordinary
 copy fallback.
 
@@ -231,7 +233,7 @@ jj duplicate -r feature-bookmark --onto <sync base>   # 3. layer the feature bac
 
 Pause donor/target writers, then preview with `--dry-run` before steps 2 and 3.
 Reseed makes the workspace's content **be the donor's content**: it snapshots real
-work, starts a fresh empty child of the donor's current working-copy commit,
+receiving work (not the plain donor), starts a fresh empty child of actual donor WC commit S,
 reflinks the whole tracked tree from the donor, lets JJ materialize it, and copies
 selected ignored payload. The root, `.jj`, registration, bookmarks, and lifecycle
 identity remain, and it never fetches or builds. Tracked feature work stays safe
@@ -241,8 +243,8 @@ optional assertion that the donor's tracked tree matches a revset.
 
 Fresh reseeds require **bookmarked work by default**. A present, unconflicted
 local or remote bookmark must point at the snapshotted work tip or a descendant;
-a bookmark on an older base does not cover new edits. Dry-run reports the covering
-name and tip, or blocks the batch. `jw` never creates or moves a bookmark for this
+a bookmark on an older base does not cover new edits. Coverage runs after execution's
+preservation snapshots; preview leaves it pending. `jw` never creates or moves a bookmark for this
 guard. Deliberately name your work with JJ, or explicitly bypass only this
 requirement:
 
@@ -252,12 +254,29 @@ jw reseed --dry-run
 jw reseed --allow-unbookmarked --dry-run  # explicit exception; other guards remain
 ```
 
-Dry-run can record normal JJ snapshots but does not refill/reset/delete files.
+Dry-run is read-only **PLANNED — payload/path obstructions not inspected**, never
+READY. It performs no snapshot, live assertion, fetch, builder, membership walk,
+clone probe, payload inspection, lock or metadata write.
 See [readiness and bookmark coverage](docs/reseed.md#check-readiness-before-refilling).
 
 Donor selection is CLI `--from` → local `source` → verified primary. The optional
 tree assertion is CLI `--source-at` → local `source_at`; the sync base is otherwise
-the donor's freshly snapshotted `@`.
+the donor's recorded prepared `@`, with no implicit live proof.
+
+Both native routes use the same public command/cohort:
+`--renewal-route=clear-then-populate` (default) or `replace-authorized`.
+The latter renews only recorded ownership, retaining unrelated locals; it does not
+fall back to clearing. `--replace-content` independently authorizes broad deletion.
+Full-S installation coverage gates captured-S state adoption. If `--at` chooses
+D≠S, native convergence may materialize D from the store; S clone counts are not
+proof that every final D leaf shares donor storage. Refill requires exact native
+profile `0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b`.
+
+`reseed` and `prepare` both accept `--format=plain|json`. JSON
+[schema 1](docs/schema/refill-v1.schema.json) emits one complete outcome document on
+normally returned parsed success or failure, including early resolution errors.
+Counts/durations/indexes are checked-u128 decimal strings, unavailable facts null,
+and Unix paths carry lossless hex bytes. Builders/diagnostics use stderr.
 
 ### Layer features back after a sync
 
@@ -280,7 +299,7 @@ jw prepare --format=json
 ```
 
 `prepare` selects and fetches one pinned upstream, prepares the donor, and reports
-the **exact frozen commit**. It is source-only: it never chooses targets, refills
+**actual prepared WC S separately from the fetched upstream goal**. It is source-only: it never chooses targets, refills
 files, or advances workers, and it has the same meaning from any registered
 workspace. Dry-run explains the prospective fetch and preparation commands without
 fetching or building.
@@ -304,10 +323,12 @@ jw reseed worker-a --prepare --copy-ignored node_modules  # prepare once, then s
 
 Plain `reseed` uses the existing donor without preparation. `reseed --prepare`
 runs the same preparation as `jw prepare` before planning the refill, using the
-same source, upstream goal, local commands, and ignored-copy policy. Its
-`--dry-run` describes prospective preparation and marks refill readiness
-**NOT ASSESSED** until that future donor exists; it does not fetch/build or snapshot
-targets. Use plain `reseed --dry-run` after preparation for full readiness checks.
+same source, upstream goal and local commands. It hands actual S directly to refill
+once, without a second donor assertion. Its `--dry-run` is PLANNED, not a future
+payload/readiness certificate. Prepare performs no payload selection or verification;
+its former ignored-copy flags are rejected. Schema 1 uses `.source.source_commit_id`
+for S and `.source.upstream_goal_commit_id` for goal; the ambiguous old top-level key
+is removed.
 
 Feature layering stays an ordinary `jj` operation after the sync: `jj duplicate
 -r <bookmark> --onto <base>` keeps the old line and its dated bookmarks, while
@@ -318,7 +339,8 @@ Feature layering stays an ordinary `jj` operation after the sync: `jj duplicate
 
 `jw reseed --group all --dry-run` selects all registered workers except the
 verified primary and chosen donor, with no configuration required. Unsafe or
-unbookmarked members remain BLOCKED; one blocker prevents every refill. `all`
+unbookmarked members are never skipped by warn policy; execution's history gate
+precedes native mutation. Static resolution blockers prevent refill. `all`
 is reserved against local group definitions. See [all registered workers](docs/reseed.md#all-registered-workers)
 for donor selection, snapshot precautions, and literal-name recovery.
 
@@ -339,12 +361,13 @@ commands = [
 ```
 
 Commands run sequentially as argv in the donor root, without an implicit shell.
-Each must leave tracked files, including lockfiles, unchanged and tolerate retry.
+Later commands may repair earlier tracked edits; one final conformance check must
+pass. Identity guards remain between steps. Every command must tolerate retry.
 After failure, fix the source and run prepare again; every command may run again.
 Use `command = [...]`
 for one command or `commands = [[...], ...]`, never both, even when empty. No commands
-means no guessed installer/build: selected existing payload can still be borrowed,
-but is not freshly built. Preparation commands are repository-local, run via
+means no guessed installer/build: ignored contents remain existing data, not freshly
+built or verified. Preparation commands are repository-local, run via
 `prepare` or explicit `reseed --prepare`, and execute trusted programs rather than a sandbox.
 
 Use `jw reseed --group workers --dry-run` to select refill targets; `prepare` has
@@ -360,10 +383,10 @@ patterns differ from ignored-copy patterns; see [wildcard groups](docs/reseed.md
 ```sh
 jw add feature --copy-ignored node_modules
 jw reseed --copy-ignored 'packages/*/node_modules' --dry-run
-jw prepare --no-copy-ignored --dry-run
+jw prepare --dry-run             # source only; no ignored-copy flags
 ```
 
-The same controls apply to new workspaces, reseed, and prepare. Selected ignored roots
+The same controls apply to new workspaces and reseed, not prepare. Selected ignored roots
 are **replaced** with private reflinks, not hard links or shared-directory symlinks.
 Other target contents stay unless explicitly erased. Existing switches never refill.
 
@@ -381,7 +404,7 @@ not the independently required real-CoW payload phase. Pause donor writers first
 
 Dependencies reflect the donor's installed state. If feature manifests differ,
 run that project's frozen install in the feature. Symlinks are copied as links;
-source-bound absolute links are reported, not rewritten. See
+absolute links retain their literal text and may remain source-bound. They are not rewritten. See
 [ignored-data rules](docs/reseed.md#ignored-data).
 
 ### Workspace links
@@ -412,8 +435,8 @@ reseed planning/refill. Plain reseed takes no operation lock. Keep donor and tar
 writers quiescent yourself; the preparation lock does not coordinate refills or
 arbitrary JJ processes.
 
-Dry-run can snapshot real work to preserve it. It does not fetch, create new changes
-or bookmarks, run preparation, or refill files. `--replace-content` explicitly
+Dry-run is read-only PLANNED declaration planning, not readiness or preservation.
+It creates no lock, metadata, snapshot, change or bookmark. `--replace-content` explicitly
 permits deleting unrecorded target contents, including `.env`, except `.jj`.
 
 Verifying an intact workspace is a bounded JJ tracked-tree check: it may snapshot
@@ -422,7 +445,7 @@ additional files; automatic stale-tree updates are disabled. Sparse or mid-refil
 targets are refused before snapshotting; `jw` never repairs them.
 
 After an interrupted refill, recover **out of band** in the affected root using
-the covering bookmark printed by the failed command:
+captured saved O/history/root, choosing an appropriate covering bookmark:
 
 ```sh
 jj new <bookmark>
@@ -434,6 +457,8 @@ The default bookmark guard keeps your work named before mutation. With explicit
 `--allow-unbookmarked`, use the printed prior commit or JJ's operation log instead.
 Do not run ordinary snapshotting commands on a half-filled checkout before this
 deliberate recovery. Successful peers in a failed batch stay complete.
+Native child facts after failure are last observed, not freshly verified. Full
+sparse patterns do not prove that interrupted authorized replacement completed.
 
 There are no progress journals, receipts, migrations, or `--resume` flags. Old
 files are ignored and left untouched. If prepare fails, fix its donor and run

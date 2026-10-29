@@ -1,5 +1,5 @@
-//! Shared command boundary. CLI cutover and contextual provider adoption are
-//! deliberately separate; there is only one vector-ready native orchestration.
+//! Sole public refill orchestration: captured resolution, native renewal,
+//! one contextual ordinary cohort and loaded finish.
 use super::{Identity, LocalConfig, PreparationLock, bookmarks, load_config, prepare, selection, snapshot};
 use crate::ReseedRequest;
 use anyhow::{Context, Result, bail, ensure};

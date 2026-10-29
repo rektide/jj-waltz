@@ -559,7 +559,7 @@ impl Envelope {
         }
         for r in &self.receivers {
             let count = |n: Option<Decimal>| n.map(|n| n.0.to_string()).unwrap_or_else(|| "unknown".into());
-            writeln!(
+            write!(
                 text,
                 "{} {}: route={} phase={} renewal={} ordinary={} links={}; root={} O={} history={}",
                 r.status,
@@ -574,6 +574,19 @@ impl Envelope {
                 r.saved.as_ref().map(|s| s.history.status).unwrap_or("unknown")
             )
             .unwrap();
+            if let Some(saved) = &r.saved
+                && let Some(bookmark) = &saved.history.bookmark
+            {
+                write!(
+                    text,
+                    " bookmark={bookmark:?} remote={:?} work_tip={} target={}",
+                    saved.history.remote,
+                    saved.history.work_tip_commit_id.as_deref().unwrap_or("unknown"),
+                    saved.history.bookmark_target_commit_id.as_deref().unwrap_or("unknown")
+                )
+                .unwrap();
+            }
+            text.push('\n');
         }
         if let Some(error) = &self.error {
             writeln!(
@@ -1088,6 +1101,26 @@ pub fn prepare(request: PrepareRequest) -> Outcome {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    #[test]
+    fn plain_row_identifies_saved_history_without_dumping_reports() {
+        let mut envelope = Envelope::new("reseed", false, Some(&ReseedRequest::default()));
+        let mut row = Receiver::unstarted("worker", Path::new("/receiver"), "clear-then-populate", false);
+        row.saved = Some(Saved {
+            commit_id: "saved-O".into(),
+            history: History::from(&HistoryCoverage::Covered {
+                work_tip: "work-tip".into(),
+                name: "saved-work".into(),
+                remote: None,
+                target: "bookmark-target".into(),
+            }),
+        });
+        envelope.receivers.push(row);
+        let plain = envelope.plain();
+        assert!(plain.contains("root=/receiver O=saved-O history=covered bookmark=\"saved-work\""));
+        assert!(plain.contains("work_tip=work-tip target=bookmark-target"));
+        assert_eq!(plain.lines().count(), 2);
+        assert!(!plain.contains("NativeOutcome"));
+    }
     #[test]
     fn schema_and_explicit_fixtures_accept_nulls_and_reject_numeric_noncanonical_and_overflow_counts() {
         let schema: Value = serde_json::from_str(include_str!("../../../docs/schema/refill-v1.schema.json")).unwrap();

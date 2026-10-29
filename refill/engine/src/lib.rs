@@ -1,4 +1,4 @@
-//! In-place CoW reseeding through stock JJ's sparse checkout interface.
+//! In-place CoW renewal through profile-gated JJ transitions and one cohort.
 //! Work is snapshotted and bookmark coverage checked before mutation. Interrupted
 //! refills require deliberate out-of-band recovery, never automatic repair.
 

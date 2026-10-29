@@ -6,9 +6,11 @@ title: jj-waltz — choose and verify the workspace outcome
 resource: /skills/jj-waltz/SKILL.md
 status: maintained
 updated:
-  by: model:zai-coding-plan/glm-5.3#max
-  at: 2026-10-17
+  by: model:openai/gpt-6.1-sol#xhigh
+  at: 2026-10-29
 sources:
+  - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
+    title: Aligns operative skill with both public native routes, schema 1, final-only preparation and read-only PLANNED previews
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Documented explicit reseed preparation, preparation-only locking, and deferred prospective readiness
   - resource: "opencode://ses_eb6ef3ef2ffe4155t844hpUnEL"
@@ -177,15 +179,15 @@ apply to that preparation too.
 The repository operation lock covers preparation only and ends before reseed
 planning/refill; plain reseed acquires no operation lock. The caller must keep
 donor and target writers quiescent. `reseed --prepare --dry-run` explains the
-prospective preparation and reports refill readiness NOT ASSESSED, without target
-snapshots: future fetched trees and installed payload cannot yet be checked.
-Run plain `reseed --dry-run` after preparation for full READY/BLOCKED checks.
+prospective preparation as PLANNED, never readiness. All previews perform no
+snapshot, live assertion, fetch, builder, payload inspection, membership/clone probe,
+lock or metadata write. History preservation and obstruction checks remain pending.
 
 Fresh reseeds require a present, unconflicted **local or remote bookmark** covering
 the snapshotted work tip (at the tip or a descendant). An old
 base bookmark cannot cover new work. Ordinary undescribed empty single-parent
 scratch uses its parent; described empty changes and merges count themselves.
-Plain reseed dry-run reports READY/BLOCKED and the covering bookmark/tip. Do not auto-create or
+Execution records covering history after preservation; preview does not prove it. Do not auto-create or
 move bookmarks to defeat a refusal. The operator can deliberately name the work
 or explicitly choose `--allow-unbookmarked`; that bypasses only this requirement,
 not ownership, content, sparse-state, or CoW checks.
@@ -203,10 +205,14 @@ the primary prepares the primary donor:
    the selected remote must fast-forward. Preserve that refusal rather than
    abandoning source work to force progress.
 3. Local `[freshen]` provides `command` or ordered `commands`, never both even when
-   empty. Run argv sequentially in donor cwd, without an implicit shell. Steps must
-    leave tracked files unchanged and tolerate retry from the start. No commands means existing payload, not a fresh
+    empty. Run argv sequentially in donor cwd, without an implicit shell. Later steps
+    may repair tracked edits before one final conformance check; identity guards
+    still run between steps. All steps must tolerate retry from the start. No commands means existing payload, not a fresh
    build; do not guess an installer or use global build commands.
-4. Completion reports the **exact frozen commit**, also in `--format=json`.
+4. Completion reports **actual S separately from fetched upstream goal**, also in
+   schema-1 `--format=json` as `.source.source_commit_id` and
+   `.source.upstream_goal_commit_id`. The old ambiguous top-level key is removed.
+   Prepare performs no payload census/verification and rejects ignored-copy flags.
    Prepare never selects or refills a worker and creates no worker-preservation
    bookmarks (native fetch can update refs). Consume the prepared donor with
    plain `jw reseed worker`; layer the feature back afterward in jj —
@@ -216,14 +222,18 @@ the primary prepares the primary donor:
 
 Refills require full, conflict-free eligible JJ-only targets and real CoW.
 `--replace-content` destroys unrecorded target contents, including `.env`, except
-`.jj`; use it only for that requested outcome. Dry-run may snapshot real work, but
-does not fetch, create new changes, run preparation, or refill.
+`.jj`; use it only for that requested outcome. Native route is independent:
+`--renewal-route=clear-then-populate` (default) or `replace-authorized`. Both use
+the same shared command/cohort and gate S-state adoption on successful complete
+full-S coverage; replacement has no clear-first fallback. Plain donor input is
+assumed prepared with no implicit snapshot. The exact supported native build is
+`0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b`.
 
 ## Private payloads and shared links
 
 Ignored-copy lists replace in CLI → primary-local → root global `copy_ignored`
 order; absence inherits, local `[]` does not. `--no-copy-ignored` disables even an
-explicit CLI list. This policy applies to creation, reseed, and prepare.
+explicit CLI list. This policy applies to creation and reseed, not prepare.
 
 Quote patterns (`*`, `?`, `**`, trailing `/`). Missing matches succeed; nonignored
 source matches are skipped/reported. Selected roots must pass source/target ignore,
@@ -238,8 +248,9 @@ mutation behavior; do not substitute one for the other or overwrite a conflict.
 ## Recover out of band
 
 If a refill stops, avoid snapshot-capable JJ commands in a half-filled target.
-`jw` refuses sparse/mid-refill targets and prints the two-command remedy. Use the
-covering bookmark named in the error, in the affected workspace:
+`jw` refuses sparse/mid-refill targets without automatic repair. Full sparse can
+still be incomplete after replacement failure. Use captured saved O/history/root
+and choose deliberate recovery, for example the covering bookmark in that root:
 
 ```sh
 jj new <bookmark>
@@ -273,9 +284,15 @@ Use the owning app for app-created checkout cleanup. Consult the
   warnings before claiming CoW or complete payload setup.
 - **Reseed:** confirm the sync — target `@-` is the pinned base (donor's current
   commit or `--at`), the tree matches the donor, and payload/refill completed.
-- **Prepare:** confirm the exact reported commit and command/payload completion;
+- **Prepare:** confirm actual S, distinct upstream goal and final tracked conformance;
   a source-only success has no target. Consume it via reseed
   and verify the worker separately.
+- **Structured outcomes:** `--format=json` emits one complete schema-1 document
+  on normally returned parsed success/failure. Counts, durations and step indexes
+  are checked-u128 decimal strings; unavailable facts are null. Decode exact Unix
+  path hex rather than display text. Never infer current disk state from failed
+  native child coordinates (last observed only), or final-D sharing from S installs.
+  Read [the outcome guide](../../docs/reseed.md#structured-outcomes).
 - **Recovery:** distinguish completed and failed targets. Recover failed refills
   deliberately before retrying; partial progress is not batch success.
 - **Links/lifecycle:** use the branch reference's completion checks; directory,

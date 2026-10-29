@@ -6,8 +6,10 @@ resource: /CONTEXT.md
 status: maintained
 updated:
   by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-17
+  at: 2026-10-29
 sources:
+  - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
+    title: Replaces retired receipt/readiness vocabulary with public schema 1, accepted S/goal separation, both native routes and final-only source preparation
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
     title: Replaced journal-based recovery with forward-only reseed, bookmark-based out-of-band recovery, and preparation retries from the start
   - resource: "opencode://ses_eb899cdcdffecJnB7J1dSGs4ci"
@@ -134,34 +136,34 @@ by itself a claim that a command exposing that concept already exists.
 - **Reseed** — an explicit in-place refill of an existing workspace using a
   prepared source's CoW files and JJ materialization of differences. It preserves
   root, registration, and lifecycle identity; it is not status refresh or adoption.
-- **Prepared source** — a full, conflict-free source workspace whose snapshotted
-  tracked tree equals an exact selected baseline. Ignored dependency contents are
+- **Prepared source** — a full, conflict-free donor accepted as actual WC commit S:
+  assumed prepared, explicitly live-asserted, or produced. Plain reseed does not
+  snapshot or live-verify it implicitly. Ignored dependency contents are
   separate installed-source data, not proof of compatibility with a feature tree.
-- **Reseed pending record / receipt** — repository-scoped recovery intent for an
-  incomplete reseed / provenance of a completed one. Neither changes historical
-  creation-base metadata. Resume reads pending intent before target snapshotting.
+- **Refill outcome** — schema-1 returned command/receiver facts, including partial
+  effects, saved O/history and last-observed native child coordinates. It is not a
+  durable recovery journal, post-error census or permission for automatic repair.
 - **Source preparation** — explicit donor fetch to a pinned upstream baseline and
   configured preparation, performed only by `prepare` from the `[freshen]`
   configuration. It is source-only: it never selects targets, refills, or
   advances workspaces, and it is distinct from status refresh.
-- **Prepared commit** — the exact frozen upstream commit `prepare` reports on
-  completion. Workers consume it through `reseed --at` without another fetch or
-  preparation; it is not standing following state.
-- **Preparation batch** — source-keyed write-ahead intent retaining trusted policy,
-  a frozen source goal, verified dependency payload, and legacy target plans until
-  receipts account for completion. New prepare journals freeze an explicitly empty
-  target plan. Partial installation is not a prepared donor.
+- **Prepared commit** — accepted actual source WC S, independently of the fetched
+  upstream goal. Default reseed D is S; `--at` chooses exact D separately. JSON
+  `.source.source_commit_id` means S; `.source.upstream_goal_commit_id` means goal.
+- **Preparation** — source-only fetch/advance, ordered argv and one final tracked
+  conformance proof. No payload selection/census/verification or durable progress
+  journal. Partial preparation never yields an accepted S.
 - **Freshening command sequence** — repository-local ordered argv, normalized from
   one `command` or a `commands` list, never both. Absence means no builder is
   guessed; selected ignored contents remain explicitly existing source data.
-- **Completed / in-flight command** — a step durably acknowledged after successful
-  exit and source/target checks / an attempted step without that acknowledgement.
-  Resume skips completed steps; an in-flight step may retry after partial side
-  effects. External command execution is not exactly-once.
+- **Selected / started / succeeded step** — declared, attempted, or successfully
+  exited argv. A failed attempt remains started; later steps stay selected. Later
+  commands may repair tracked edits before final conformance. A new prepare reruns
+  from the start; no exactly-once or resume claim exists.
 - **Ignored-copy policy** — one replacing list selected from CLI, repository-local,
   then root global config, or none. Missing selection inherits; explicit `[]`
-  does not. `--no-copy-ignored` disables copying for the run. Recovery uses the
-  recorded effective list, not newly introduced defaults.
+  does not. `--no-copy-ignored` disables copying for creation/reseed; prepare has
+  no ignored-copy flags. Each invocation selects its own effective policy.
 - **Eligible ignored payload root** — a matched source directory proved ignored
   under frozen source rules and separate from tracked files. Nonignored source
   matches are skipped/reported while viable descendants remain discoverable;
@@ -211,10 +213,9 @@ by itself a claim that a command exposing that concept already exists.
 - Reseed donor selection uses explicit `--from`, configured `source`, then a
   verified primary checkout of the same repository. It never guesses an archive
   location or silently substitutes the current feature checkout. The source
-  baseline is CLI `--source-at`, then configured `source_at`, otherwise freshly
-  snapshotted donor `@`; tree assertions do not require equal commit identities.
-  Differences from a target are handled per path, not treated as a reason to
-  discard feature changes.
+  assertion is CLI `--source-at`, then configured `source_at`, otherwise assumed
+  prepared recorded donor `@`; tree assertions do not require equal commit IDs.
+  Refill renews full S, then converges to exact D, not feature layering.
 - Prepare selects/pins upstream before fetch: explicit CLI/local goal, otherwise a
   unique applicable tracked pair, otherwise a unique exact remote at the clean
   source base (including untracked refs), otherwise require `--source-at`. No
@@ -223,16 +224,20 @@ by itself a claim that a command exposing that concept already exists.
   selection, no refill, no `--at`, and no worker-preservation bookmarks; it
   mutates only its selected donor — possibly the caller's own checkout — leaving
   other workspaces untouched. Completion reports the exact commit, including
-  `source_commit_id` in JSON. Failure leaves progress in place; fix the donor and
+   `.source.source_commit_id` in schema 1, with upstream goal separate. Failure leaves progress in place; fix the donor and
   run prepare again. Every configured command may repeat and must tolerate retry.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work. Default-on bookmark coverage is checked before mutation;
-  `--allow-unbookmarked` explicitly bypasses only coverage. Failed refills name the
-  covered work tip, bookmark, and root: recover there with `jj new <bookmark>` and
-  `jj sparse reset`, then re-run reseed. Sparse/mid-refill targets are refused
+  `--allow-unbookmarked` explicitly bypasses only coverage. Both selected native
+  routes require successful complete full-S coverage before state adoption. Failed
+  outcomes retain O/history/root for deliberate out-of-band recovery; full sparse
+  can still be incomplete after interrupted replacement. Sparse/mid-refill targets are refused
   before snapshots, never repaired. There are no progress journals, receipts,
   migrations, or `--resume`; old files are ignored without cleanup.
+- All reseed/prepare previews are read-only PLANNED declarations, not readiness.
+  No snapshots, live assertions, builders, membership/copy probes, payload census,
+  lock or metadata writes. JSON failure rendering never rediscovers context.
 
 ## Milestone-zero command contract
 

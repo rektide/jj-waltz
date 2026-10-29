@@ -5,9 +5,11 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:openai/gpt-6-astra#high
-  at: 2026-10-28
+  by: model:openai/gpt-6.1-sol#xhigh
+  at: 2026-10-29
 sources:
+  - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
+    title: Records one public shared refill path, typed captured outcomes, both native routes, source-only final conformance and old-driver retirement
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
     title: Developed the streaming architecture, then commissioned and reviewed the six-crate foundation and recorded its actual module boundaries and correction evidence
   - resource: "opencode://ses_e7c479171ffeGjjWpkruJHEmUO"
@@ -145,7 +147,8 @@ records extraction, correction and native-test evidence.
 - `refill/engine` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and out-of-band failure guidance. Plans exist only in memory. It uses
-  public commands through `JjClient`, not creation's private `tree_state` copying.
+   commands through `JjClient`; complete full-S installation gates captured source
+   `tree_state` adoption while retaining receiving checkout identity.
   Filesystem cloning and validation remain in `cow`; configured links remain in
   `links`. Historical lifecycle metadata is not rewritten by reseeding.
 - `freshen::source` owns operation-bound upstream selection and post-fetch graph
@@ -305,7 +308,7 @@ name/path patterns against a frozen, snapshot-disabled registration inventory.
 It retains missing-root registrations rather than classifying broken targets as
 unrelated checkouts. Selection never initializes or adopts matched directories.
 The optional unmatched policy affects group misses only, not positional names or
-target safety. Its aggregate warning is emitted through `run_with_diagnostics`
+target safety. Its aggregate warning is emitted through the resolver diagnostic callback
 before planning (and survives later errors); successful reports retain structured
 skips and selected roots/origins. Empty remaining selections fail.
 See [operator syntax](reseed.md#wildcard-groups).
@@ -314,11 +317,11 @@ Reserved built-in `all` expands the sorted registration inventory, excluding onl
 the verified primary and effective donor by canonical root identity. Donor path
 resolution is shared with source preflight, not repeated per target. Unusable
 registrations become selection issues; all other members enter the existing
-readiness and bookmark checks. A local `all` definition is rejected. See
+static binding checks and execution-only preservation/history gate. A local `all` definition is rejected. See
 [all registered workers](reseed.md#all-registered-workers).
 
 Reseeding retains no durable progress state. The repository advisory operation
-lock serializes only preparation, including preparation previews. Both standalone
+lock serializes only executing preparation, never previews. Both standalone
 `prepare` and explicit `reseed --prepare` enter the same scoped preparation branch;
 the guard drops on every return/error and before subsequent reseed donor proof,
 target snapshots, planning, and refill. Plain reseed does not acquire the lock.
@@ -330,30 +333,32 @@ is created. This also works for unmanaged native JJ workspaces: initializing the
 repository identity does not adopt a workspace or create lifecycle records.
 Existing corrupt or nonempty manifest-less stores are rejected rather than reset.
 
-Plans snapshot the prepared source and named targets before capturing exact
-revisions. A full, conflict-free prepared source must match the selected source
-tree. Full JJ-only targets retain root and `.jj` identity and registration. The
-primary checkout and source are never eligible targets. CoW probing, ignored-root
-validation, and filesystem/ownership checks precede destructive work.
+`ResolvedCommand` is the sole public reseed driver. `ReseedRequest.renewal_route`
+is its single route authority. Resolution captures profile, source intent, ordered
+bound selections/origins/skips and loaded links without mutating workspaces. A
+typed `ResolutionFailure` retains the successfully captured prefix. No second
+discovery runs after failure. Full JJ-only receivers retain root/`.jj`/registration;
+source/primary cannot receive. Pool admission, required-CoW probes, source handoff,
+all O preservation/history checks and shared S/D/O capture precede native renewal.
 
 The donor path uses explicit `--from`, then configured `source`, then a verified
 primary checkout of the current repository. Discovery follows JJ identity rather
 than searching archive directories or substituting the current feature checkout.
 Ordinary donor baseline selection is CLI `--source-at`, then configured `source_at`,
-otherwise the freshly snapshotted donor `@`. Asserted tree identity is checked at
+otherwise assumed-prepared recorded donor `@`, without an implicit snapshot. Asserted tree identity is checked at
 the same captured source operation before target snapshots. A donor/target tree
 difference is handled per path; an explicit/configured mismatch remains an error.
 Prepare uses native source selection instead of ordinary reseed's tree assertion.
 `ReseedRequest::prepare` defaults to false; when requested, it shares source/policy
-resolution with refill and passes the exact verified preparation goal into the
-subsequent donor assertion. It does not resolve a prospective upstream expression
-again or run preparation twice. The final report retains the preparation summary.
-Combined dry-run describes preparation and defers refill readiness with NOT ASSESSED
-outcomes; it cannot prove the future fetched tree or installed payload. Structural
-target blockers remain visible. See [preview semantics](reseed.md#prepare-the-source).
+resolution with refill and passes accepted actual S directly, not the upstream
+goal or another live assertion. Preparation runs once. Source context retains
+recorded-before-work coordinate, effective assertion exact result, selected upstream,
+process states and measured spans even on failure. Every preview is read-only
+PLANNED: no snapshots, live diff, fetch/build, locks/metadata, membership walk,
+clone probe or payload inspection. See [preview semantics](reseed.md#prepare-the-source).
 
-Snapshot-free `Inventory` retains the caller's verified registered name. With no
-names/groups, `run` inserts that one non-primary literal target before
+Snapshot-free `RegistrySnapshot` retains the caller's verified registered name. With no
+names/groups, the resolver inserts that one non-primary literal target before
 source/target snapshots and reports origin `current`. At the primary it
 requires explicit selection for reseed. `prepare` is separate and source-only
 from any registered workspace. Explicit names/groups suppress this default even for
@@ -363,37 +368,43 @@ introduced.
 `prepare` snapshots the source, freezes native upstream selection, fetches only
 that bookmark/remote through `JjClient::fetch_bookmark`, validates/pins the source
 goal, selects its empty child, and runs trusted configured argv in the donor. It
-then reports the exact source commit, including `source_commit_id` in JSON. It never enters
+performs one final tracked check after all successful argv and then reports actual
+S independently of goal in schema 1. A later argv can repair earlier tracked edits;
+process success is distinct from identity/final-check success. It never enters
 target planning and creates no worker-preservation bookmarks; it mutates only its
 selected donor — which may be the caller's own checkout — leaving other
 workspaces untouched. Preparation settings alone never activate it. Live checks
 retain directory/repository identity, ownership, full sparsity, exact source
-change/parent, tracked-tree equality, and selected ignored-root validation.
+change/parent and final tracked-tree equality, but perform no payload census.
 No donor stamp/digest is captured for reuse by a later invocation. Failed
 preparation leaves progress in place: the operator fixes the donor and runs
 prepare again, potentially repeating every command and selecting/fetching anew.
 
-Execution clears sparsity, optionally creates a fresh child at a frozen base,
-prefills tree-identical paths, expands sparsity, and verifies the target against
-its desired revision. Selected payload survives this phase except for actual
-old tracked leaves being cleared. Configured ignored roots are reconciled only after tracked
-verification. Links and final tracked-tree verification complete the forward
-pass. Target and donor commit IDs are pinned between JJ calls in memory.
+Both routes share prepared full-S manifests, required O indexes, effect bindings
+and one native source session across serial native receivers. Clear-first creates
+an exact-D child while sparse-empty then installs S create-absent. Authorized
+replacement creates a new same-O child, renews only owned O→S, and later reparents
+only that receiving change to D. Complete returned S coverage and successful lane
+outcome are required before D admission/state adoption. Optional S→D restore and
+native conformance follow; no route fallback exists. Broad `replace_content` remains
+independent authority and has separate returned effects. D≠S installs are not final-D
+sharing proof. After native-only owners are released, one `ContextualOrdinary`
+cohort runs, then loaded links and snapshot-free native identity finish.
 Bookmark coverage is captured after snapshots, checked for the whole batch, and
 rechecked before each target clears. There are no write-ahead phases, journal
 comparisons, receipts, or temporary markers.
 
-On mutation failure, the error names the covered work tip, covering bookmark,
-and affected root. Recovery belongs to the operator: `jj new <bookmark>`, then
-`jj sparse reset` there, then re-run reseed. Explicit unbookmarked runs name the
-prior commit instead. A subsequent run refuses non-full sparse selection before
-snapshotting, prints the remedy, and never repairs it. Old progress files are
+On failure, the report retains saved O/history/root, actual returned work and last
+entered phase. Native child facts are last observed, not freshly queried after
+failed native commands. Incomplete replacement can be full sparse. Recovery
+belongs to the operator; reporting neither rediscovers nor repairs state.
+A subsequent run refuses non-full sparse selection before snapshotting. Old progress files are
 ignored, without migration, pruning, or reconciliation.
 
 ### Tracked-tree verification
 
 Normal-path verification of an intact, full-sparse workspace
-(`engine::verify_disk`) is a bounded JJ tracked-tree proof: one snapshot with
+(`command::native::native_diff`) is a bounded JJ tracked-tree proof: one snapshot with
 `fsmonitor.backend=none`, `snapshot.auto-track=none()`, and
 `snapshot.auto-update-stale=false`, then a single
 `jj diff --from @ --to <frozen commit> --summary` whose empty output proves
@@ -409,8 +420,8 @@ stale state when the tree identity is unchanged.
 
 Sparse-incomplete targets are rejected, not reconstructed. Stock JJ rejects sparse
 mutation with `--ignore-working-copy`, so a new run never attempts mutation until
-the operator restores a complete checkout. During the forward pass, expansion
-runs while sparse-empty: staged prefills are outside the snapshot selection.
+the operator restores a complete checkout. State adoption follows complete S
+installation, never placeholder stats credited from only a clone count.
 Scoped `snapshot.auto-track=none()` prevents unrelated retained data from entering
 the desired change. Batched symlink proofs avoid per-file subprocess scaling.
 
@@ -424,24 +435,22 @@ resolves optional CLI/local lists and the caller-supplied global `copy_ignored` 
 preserving missing versus explicit empty intent. `--no-copy-ignored` wins; otherwise lists
 replace in CLI > local > global order. The transfer crate never loads application
 global config itself; callers that have one pass its layer explicitly. Current
-command exposure includes add/s creation, reseed, and prepare payload verification.
+command exposure includes add/s creation and reseed; prepare has no payload selection.
 
 `Patterns::compile` normalizes trailing slash, rejects unsafe relative paths and
 unsupported syntax, deduplicates equivalent selectors, and compiles components.
 Its traversal-independent `Selector` carries active pattern prefixes through the
-caller's directory iteration. Reseed's `payload::select_outside` discovers roots
-inline during the existing donor validation walk, instead of running
-`Patterns::select` and then walking those same prefixes again in `payload::outside`.
-Creation and prepare retain `Patterns::select` as a standalone driver over the
+caller's directory iteration. Reseed discovers source-qualified roots in the
+existing contextual comparison, without a donor validation prewalk. Creation
+retains `Patterns::select` as a standalone driver over the
 same matcher. Recursive `**` has zero/one-component transitions; it does not launch
-another subtree walk. Inactive prefixes stop matching work while donor validation
-still checks unselected regions. Selected ignored outer roots prune discovery and
+another subtree walk. Inactive prefixes stop matching work. Selected ignored outer roots prune discovery and
 include nested matches once, so covered descendants are not separately enumerated
 or spuriously reported missing. Administrative directories, directory symlinks,
 and mounted-child boundaries are not traversed.
 
-Creation and reseed supply `is_ignored` from the shared isolated native Git probe over
-frozen desired `.gitignore` content and excludes. A nonignored source match is
+Creation uses its isolated native Git probe; reseed uses immutable in-process
+`FrozenIgnore` inputs captured from S/D control files and effective excludes. A nonignored source match is
 skipped/reported while viable descendant patterns continue. Native probe/I/O
 failures are errors, not silently converted to skips. An ignored candidate is
 checked against frozen source tracked paths before selection; forced-tracked
@@ -450,13 +459,14 @@ confinement, obstruction, and actual private-CoW checks. Unselected target data
 is not automatically pruned; `--replace-content` remains its explicit destructive
 exception. See [operator policy examples](reseed.md#ignored-copy-policy-layers).
 
-Reseed's command-owned `FrozenRules` shares rule extraction/sandboxes for equal
-pinned coordinates and effective excludes. A persistent framed native
-`check-ignore --no-index --stdin -z --verbose --non-matching` oracle supplies
-negative/negated answers during adaptive discovery, memoized by path/kind.
-It is never called from a payload checker. Revalidation consumes the frozen
-selection and rules, not rebuilt sandboxes or a new expansion. Preparation still
-checks the exact goal before commands and after completion.
+`FrozenIgnores` shares rule extraction/compiled immutable searches for equal trees
+and effective excludes. Creation's `IgnoreRules` oracle and actually used lifecycle
+helpers remain; old reseed `FrozenRules`, payload audit/realization, `FutureContent`,
+Plan/execute, legacy producer, source-only old driver and temporary N1 export are
+retired. Public DTO serialization belongs only to `app/cli/src/refill_report.rs`.
+Its schema-1 projection preserves original typed errors, decimal-u128 counters,
+lossless Unix paths, explicit unavailable nulls and one command/source diagnostic
+snapshot. The CLI bypasses generic post-error context hints for handled outcomes.
 
 On Linux, shared `cow::topology` captures mountinfo before recursive traversal and
 rejects nested directory/file mounts and obvious overlapping bind aliases. This
@@ -465,8 +475,9 @@ replace-content deletion. Other platforms retain native checks. Stable topology
 and path bindings remain a caller obligation; source preparation does not reuse
 this batch context across its external build commands.
 
-`cow::transfer::Auxiliary` is a compiled `diff_dirs::Visitor` bound once to the
-workspace roots. Early filters union names before child metadata/readlink; late
+Creation's `cow::transfer::Auxiliary` remains a compiled visitor. Reseed instead
+uses contextual `SourceQualified` policies in one ordered cohort. Early filtering
+acts before child metadata/readlink; late policy
 retains routing containers without granting replacement of local routing leaves.
 Selected-region actions and descent use the same finalized library batch,
 including source-only/target-only recursion and private collision staging. Frozen
@@ -474,17 +485,17 @@ source/desired JJ leaves gate boundary overlap in both prefix directions. No
 per-entry JJ, Git or mount queries occur in the visitor. `legacy()` preserves the
 existing selector's bounded authority; empty selection never becomes copy-all.
 
-Reseed retains `payload::Guard` only as an observed-fact compatibility check and
-absolute-link diagnostic collector. Normal execution calls
-`Applier::new_checked(..., ReflinkRequired, guard).visitor(...).run()` (or borrows
-the command's shared pool), without pre-audit or synthetic reflink probe. Dry-run
-uses the same binding's **joint preview**, not side-local audit. Deep refusal can
+Reseed uses actual provider observation/policy facts, not `payload::Guard` or a
+retained root inventory. Optional `payload-parallel` lends one command-owned
+min(available_parallelism,4) pool across the whole cohort; native operations stay
+serial and peer application fails fast. Disabled selection creates no runtime/pool.
+`native-dirent` forwards to the same provider. Deep refusal can
 follow tracked/payload progress; out-of-band JJ recovery is unchanged.
 Clean payload has no writes; convergence is type/size/mtime or literal-link based,
 not hashing or mode-only repair. See [operator guarantees](reseed.md#ignored-data).
 
-Tracked creation/reseed prefills share `diff_dirs_sync::seed_leaves`, retaining
-the creation adapter's missing/non-leaf skip behavior. The installer refuses an
+Tracked creation retains `diff_dirs_sync::seed_leaves`; reseed uses the complete
+prepared listed executor with explicit ownership authority. Creation's installer refuses an
 existing destination leaf; no separate recursive copier remains in JW. Nested
 tracked creation cannot use the kernel's disjoint-root binding, so it uses the
 existing visible ordinary-JJ recreation fallback. Explicit replacement clears

@@ -8,9 +8,15 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6-astra#high
-  at: 2026-10-26
+  by: model:openai/gpt-6.1-sol#xhigh
+  at: 2026-10-29
 sources:
+  - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
+    title: Cuts both public commands over to the reviewed two-route cohort, schema 1 and read-only PLANNED previews; retires the old driver and migrates public verification
+  - resource: /design/coordinated-refill/public-contract0.gpt6a.md
+    title: Accepted schema, outcome, timing and retirement contract
+  - resource: /design/coordinated-refill/execution2.sol61x.md
+    title: Reviewed two-route native implementation and reporting limits
   - resource: "opencode://ses_e8720e969ffeR1x2H40WZ36GY6"
     title: Implemented explicit reseed preparation, preparation-only lock scope, and honest prospective previews with native integration tests
   - resource: "opencode://ses_ead124fcaffedy7mtUij1h6iei"
@@ -90,9 +96,10 @@ jw reseed my-feature           # literal target; primary requires explicit selec
 jw reseed worker-a worker-b --from /path/to/prepared-source --dry-run
 ```
 
-Remove `--dry-run` when the plan is right. Reseed snapshots real work and syncs
-the workspace onto the donor's current working-copy commit: equal paths are
-reflinked from the donor and JJ materializes the tracked tree. Selected ignored
+Remove `--dry-run` when you intend execution. Execution snapshots receiving work,
+not the plain donor, and syncs onto actual donor WC commit **S** (or exact desired
+parent **D** selected by `--at`). Every S tracked leaf is installed, including
+equal paths, before native state adoption. Selected ignored
 payload is reconciled incrementally; unchanged payload is not recopied.
 
 Donor precedence is CLI `--from` → primary-local `source` → verified primary
@@ -102,7 +109,8 @@ root, not an arbitrary subdirectory. Caller identity is independent of donor
 selection; `--from` does not change the process cwd or caller role.
 
 The optional donor **tracked-tree assertion** is CLI `--source-at` → local
-`source_at` → freshly snapshotted donor `@`. A supplied assertion must resolve to
+`source_at` → no live assertion. Plain input is assumed prepared; it is not an
+implicit donor snapshot or payload verification. A supplied assertion resolves to
 one exact commit whose tracked tree matches the donor. Equal trees need not have
 equal commit IDs. A mismatch stops before target snapshots or mutations. The
 assertion never changes the sync target.
@@ -134,11 +142,13 @@ overlap is an error; old target tracked files becoming payload are supported.
 Selected roots are **mirrored incrementally** with private reflinks, not hard
 links or shared directory symlinks. Target-only entries inside those roots are
 deleted; unrelated contents outside them are not pruned. Symlinks are copied as links;
-source-bound absolute links are reported, not rewritten. Dependencies reflect
+absolute links retain their literal spelling and may remain source-bound; they are
+not rewritten. Dependencies reflect
 the installed donor state. If feature manifests differ, run the project's frozen
 install in the feature workspace.
 
-Creation and reseed now share a root-bound early/late visitor: names outside the
+Creation and reseed share bounded ignored-root selection semantics. Reseed uses
+one contextual source-qualified cohort, not repeated single-target transfers: names outside the
 selected regions (including native metadata and unrelated local data) are skipped
 before child metadata/readlink; late decisions retain routing directories and
 refuse routing file/link obstructions. The same finalized actions control writes
@@ -181,12 +191,13 @@ order. Missing local policy inherits; local `copy_ignored = []` does not.
 `--no-copy-ignored` wins even over an explicit CLI list. `jw` never writes this
 policy for you. There are no global build commands.
 
-The same selector and policy apply to new `add`/`s` workspaces, reseed, and prepare.
+The same selector and policy apply to new `add`/`s` workspaces and reseed, not prepare.
 Creation inherits only the local copy list, not donor or preparation settings.
 Existing switches never refill payloads. Neither path hashes or persists a
 payload inventory. Rules come from pinned tracked `.gitignore` files plus frozen
-effective backend/global excludes. Reseed reuses those inputs and a persistent,
-memoized native Git ignore oracle; copying/comparison validates entries inline. See
+effective backend/global excludes. Reseed reuses compiled in-process frozen ignore
+rules; copying/comparison validates entries inline. Creation retains its native
+ignore oracle. See
 [creation's private dependencies](../README.md#private-dependencies-on-creation).
 
 ## Prepare the source
@@ -201,28 +212,29 @@ jw reseed worker --prepare --copy-ignored node_modules  # prepare once, then ref
 
 Prepare is source-only from any registered workspace. It selects/fetches a pinned
 upstream, selects an empty donor child of the exact goal, runs local commands,
-verifies the tracked tree and selected payload, then reports that exact commit.
-JSON retains `source_commit_id`; installer stdout goes to stderr. It never selects,
+performs one final tracked conformance check after the ordered argv, then reports
+actual S independently of the fetched goal. It performs no payload selection,
+census or verification. `--copy-ignored` and `--no-copy-ignored` are rejected on
+prepare, not silently ignored. Installer stdout goes to stderr. It never selects,
 snapshots, refills, or advances other workers, nor creates preservation bookmarks.
 Native fetch may update refs. Reuse the reported commit without preparing again;
 feature layering after a sync stays an ordinary JJ operation (`jj duplicate` keeps
 the old line and its dated bookmarks; `jj rebase` drags bookmarks).
 
 `reseed --prepare` uses the same effective donor path, upstream selection, local
-commands, and ignored-copy policy as standalone preparation. `--source-at` is then
-an upstream goal; the exact verified preparation result becomes the donor tree
-assertion for refill. `--at` still independently overrides the sync target. Target
+commands as standalone preparation. `--source-at` is then an upstream goal; actual
+S is handed directly to the same reseed command without an extra live assertion.
+`--at` still independently overrides D. Target
 selection and early structural checks precede preparation; the ordinary donor,
-bookmark, payload, and target proofs run before refill. If preparation fails, no
+bookmark and native-input guards precede destructive refill. Payload/link checks
+run in their execution phases. If preparation fails, no
 target is snapshotted or refilled, and donor progress is left for deliberate repair.
 
 With `reseed --prepare --dry-run`, no fetch, donor advancement, installer, target
-snapshot, or refill runs. Normal donor snapshots may still record existing work.
-The report describes prospective preparation, keeps the post-fetch commit unknown,
-and marks eligible targets **NOT ASSESSED**, rather than asserting today's donor
-matches tomorrow's goal or claiming READY. Early target blockers are still reported.
-Run standalone `prepare`, then plain `reseed --dry-run`, to check full readiness
-against the resulting donor and payload.
+snapshot, lock creation, metadata initialization or refill runs. The report says
+**PLANNED — payload/path obstructions not inspected**, keeps S null, and records
+prospective upstream selection separately. Receiver preservation and live assertions
+remain pending. Static blockers still fail; a plan is never a readiness certificate.
 
 ### Native upstream selection
 
@@ -258,8 +270,9 @@ commands = [
 For one program use `command = ["cargo", "build", "--locked"]`. `command` and
 `commands` cannot both be present, even when empty. Every command needs a nonempty
 argv/program; `commands = []` means no commands. Execution is sequential in donor
-cwd, without an implicit shell, and stops on first failure. Every successful step
-must leave tracked files, including lockfiles, unchanged before the next runs.
+cwd, without an implicit shell, and stops on first failure. Later successful
+steps may repair earlier tracked edits. Only the final tracked conformance check
+must pass; identity guards still run between steps.
 These are trusted programs, not sandboxed code.
 
 **Commands must tolerate retry.** If prepare fails, fix the donor and run prepare
@@ -268,8 +281,8 @@ selected and fetched anew. Tracked installer edits require deliberate restoratio
 No source progress is automatically rolled back, and no durable completion or
 partial-install health is recorded. Do not borrow incomplete dependencies.
 
-With no commands, only fetch/source advancement runs. Selected existing payload
-can be verified but is reported as **existing data, not freshly built**. There is
+With no commands, only fetch/source advancement and tracked conformance run.
+Ignored contents are **existing data, not freshly built or verified**. There is
 no guessed installer or automatic pruning. `[prepare]` remains a deprecated warned
 alias for `[freshen]`; both together are an error. Settings alone never activate
 preparation. Prepare accepts no target names, groups, `--at`, or `--replace-content`.
@@ -345,7 +358,7 @@ blockers, not unrelated candidates to skip. No remaining targets is an error.
 Pause agents, builds, editors, monitors, and independent JJ writers on donor and
 targets, including before previewing. The repository `operation.lock` serializes
 only preparation (`jw prepare` and the preparation portion of `reseed --prepare`),
-including its preview, and is released on completion or error. Reseed planning
+never preview, and is released on completion or error. Reseed planning
 and refill hold no operation lock; plain reseed does not acquire it. The caller
 must keep shared donors and targets quiescent across these operations. Full, conflict-free checkouts and JJ-only
 targets are required. Primary/source/overlapping targets, external ownership,
@@ -367,29 +380,24 @@ this is not protection against hostile concurrent path/mount replacement.
 
 ### Check readiness before refilling
 
-Plain `reseed --dry-run` uses the real preflight and reports each selected target READY or
-BLOCKED, exiting nonzero for any blocker. Target-local failures do not hide peers.
-A failed shared donor proof marks unchecked targets **not assessed**, never READY.
-The real command rechecks structural guards and never refills just the valid
-subset of a structurally blocked batch. Checks include ownership, registration,
-sparse/stale state, conflicts, bookmarks, ignored rules, obstructions, and links.
-Preview additionally runs joint, read-only planning with the execution visitor,
-including one-sided interiors, routing collisions and coupled replacement
-removability. Independent source/target audits cannot substitute for that joint
-plan. It does not probe reflink capability or prove later writes will succeed.
+`--dry-run` is read-only declaration planning: **PLANNED**, not READY. It resolves
+profile, config, selection, bindings and recorded intent, but performs no live diff,
+snapshot, fetch, builder, membership enumeration, clone probe, payload inspection,
+transfer or lock/metadata write. Source results stay null. Static refusal is
+`blocked`/nonzero; known bound rows stay planned unless an offending row is attributed.
+Unresolved names never become synthetic failed receiver rows. History coverage
+is checked after execution's preservation snapshots, not promised by a preview.
 
 Normal execution does **not** audit payload interiors first. The checked streaming
 comparison/copier/remover rejects administrative names and special entries even
 when equal, but deep refusal or actual required-reflink failure can follow tracked
 changes, earlier payload progress, or completed peers. The offending entry is not
-acted on; there is no rollback. `--replace-content` retains broader eager content
-validation because its deletion scope is larger. Resolve the violation and use
+acted on; there is no rollback. `--replace-content` is a separate returned broad
+clear with its own progress, not a preview guarantee. Resolve the violation and use
 the recovery instructions below before retrying.
 
-Preview does not fetch/build/refill/reset/delete, but normal JJ snapshots can
-record real work and auto-track under JJ's policy. Sparse/mid-refill targets are
-refused **before snapshotting**. Output explains new snapshot updates and the
-single SYNC consequence, including where tracked work is saved in JJ history.
+Execution can snapshot real receiving work under JJ's ordinary auto-tracking
+policy. Sparse/mid-refill targets are refused before preservation.
 Unrelated data stays unless selected or erased
 with explicit `--replace-content`.
 
@@ -401,7 +409,7 @@ ancestor/base,
 equal tree, tag, or arbitrary snapshot does not count. Remote coverage uses JJ's
 recorded view without fetching. An ordinary undescribed empty single-parent
 scratch uses its parent; described empty changes and merges count themselves.
-The preview names the work tip and covering bookmark.
+Execution records the saved O, work tip and covering bookmark; preview leaves them pending.
 
 ```sh
 jj bookmark create my-feature -r <reported-work-tip>
@@ -427,32 +435,45 @@ are tracked; automatic stale-tree updates are disabled.
 
 ### Interrupted refills
 
-Execution is one forward pass: validate, check bookmarked work, clear sparse
-selection, `jj new` at the pinned base, prefill equal paths with
-reflinks, reset sparse selection, reconcile selected ignored roots, apply links, and
-verify. Commit-ID checks between JJ calls remain in memory. There is no durable
+Execution is one shared forward pass: resolve, source handoff, preserve all O/history,
+capture shared S/D/O inputs, establish serial native receivers, run one ordinary
+cohort, then loaded-link/native-identity finish. Both native routes use the same
+reviewed provider and require successful **complete full-S coverage before adoption**:
+
+- `--renewal-route=clear-then-populate` (default): sparse clear, unchanged-O and
+  residual guards, new exact-D child, strict create-absent S install, D admission,
+  captured-S state adoption, optional S→D restore and conformance.
+- `--renewal-route=replace-authorized`: new same-O child with its own change identity,
+  owned O→S renewal, D admission, S adoption, optional D restore, then receiving-only
+  reparent to exact D and conformance. No clear-first fallback.
+
+`--replace-content` independently authorizes broad non-admin clearing on either
+route; installation after that clear is strict create-absent. D≠S may remove S
+installs and materialize D leaves from the store. S install counters do **not**
+prove final-D donor sharing. Commit-ID checks remain in memory. There is no durable
 intermediate state and **jw never repairs a partial workspace**.
 
-Tracked prefills use the generic create-only listed-leaf installer; explicit
-`--replace-content` uses the generic visitor-driven clear, retaining `.jj` in
-place. `jj new` creates an empty **change with the base's file tree**, not an empty
-tree. Sparse expansion can leave placeholder stats for prefills, and native
-verification may read/hash those already-recorded paths even with auto-track
-disabled. Production reseed does not transplant donor working-copy metadata.
+Only captured S `tree_state` is adopted after full installation; receiving checkout,
+repository pointer, root and `.jj` identities are retained. Native clear/restore/
+reparent effects are unenumerated, not fabricated clone/remove counts. Both routes
+require the exact `jj 0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b` profile.
 
-On failure after mutation starts, the error names the covered work tip, covering
-bookmark, affected root, and this out-of-band remedy:
+Failures retain saved O/history/root, last entered phase and actual returned partial
+effects. Native child coordinates are **last observed facts**, not a freshness
+promise after a failed native process; reporting performs no post-error census.
+An interrupted replacement can have full sparse patterns but incomplete contents.
+Inspect the saved history and choose deliberate out-of-band recovery, for example:
 
 ```sh
-# In the affected workspace, using the bookmark printed in the error:
+# In the affected workspace, using the recorded covering bookmark:
 jj new <bookmark>
 jj sparse reset
 # Then re-run the intended jw reseed command.
 ```
 
 Do not run ordinary snapshotting commands on a half-filled target first. The next
-reseed refuses non-full sparse selection and prints the same two-command remedy
-without repairing or snapshotting it. If coverage was deliberately bypassed, use
+reseed refuses non-full sparse selection without repairing or snapshotting it.
+Full sparse alone does not prove recovery. If coverage was deliberately bypassed, use
 the printed prior commit or recover through JJ's operation log instead. Successful
 peers stay complete; the batch exits nonzero on any failure. A successful tracked
 refill is not complete if ignored copying or links fail.
@@ -461,10 +482,52 @@ There are no journals, receipts, legacy readers, migrations, or `--resume` flags
 Leftover old files are ignored and left untouched, never automatically pruned.
 Each new prepare/reseed resolves its own policy and source selection.
 
+## Structured outcomes
+
+Both commands accept `--format=plain|json` (plain default). Schema 1 lives in
+[`schema/refill-v1.schema.json`](schema/refill-v1.schema.json); illustrative fixtures
+live in [`app/cli/tests/fixtures/refill`](../app/cli/tests/fixtures/refill/).
+Every normally returned parsed JSON command emits exactly one complete stdout
+document, including early resolution failure, then exits zero/nonzero. Diagnostics,
+builders and the original error chain go to stderr. Clap syntax/help and broken
+stdout/process termination are outside this outcome guarantee.
+
+- Dispatch on numeric `schema_version:1` and `command`; ignore additive fields.
+  All counts, durations (integer milliseconds) and step indexes are canonical
+  decimal **strings**; parse checked u128, never JavaScript floating-point numbers.
+  Unavailable/unstarted values are explicit null, not successful zero reports.
+- Paths contain `display` plus lowercase `unix_bytes_hex` of exact Unix bytes.
+  Decode hex for identity. Display text and diagnostic messages are not reversible
+  identifiers or machine classifiers.
+- `.source.source_commit_id` is accepted actual S; `.source.upstream_goal_commit_id`
+  is fetched goal. The old unversioned top-level `source_commit_id` meant goal and
+  is removed. Default D is actual S, not goal. Recorded input, effective assertion
+  and prospective upstream selection remain independently visible.
+- Complete receivers require native establishment, ordinary disabled/satisfied,
+  and finish complete. On failure, complete peers remain complete, started unfinished
+  peers are partial, untouched peers not_started. A shared final donor error can
+  coexist with every receiver complete. Preview status is planned or blocked.
+- Effects are actual returned visible provider work, not native JJ effects or a
+  post-effect census. Ordinary deviation and retention are independent totals.
+  `observed.comparator` renders `family@version:hex-parameters`; observed data is the
+  committed comparison prefix, not final equality or physical sharing proof.
+- `capture.desired_manifests` counts prepared full-S manifests;
+  `capture.owned_manifests` counts actual required distinct O indexes, not the
+  provider's implicit empty ownership. Diagnostics appear once per native/ordinary
+  source phase, not per receiver; retained gauges are return-boundary ownership,
+  not peak RSS or raw syscall counts.
+- `command_ms` excludes rendering; `engine_ms` spans resolution through final barrier;
+  `pre_native_ms` includes source/preservation/capture; `ordinary_ms` is one cohort
+  wall span. Native install/step, source/process and finish spans are measured at
+  their own boundaries; overlapping spans must not be summed. Per-lane ordinary
+  application time is unavailable (null), not derived by subtraction.
+
 ## Related material
 
-- [Visitor/JJ protocol checkpoint](../design/sync-scope/visitor0.sol61xh.md):
-  implemented compatibility boundary and tested-but-unselected cache-adoption transition.
+- [Reviewed native checkpoint](../design/coordinated-refill/execution2.sol61x.md):
+  both routes, coverage/adoption, optional borrowed pool and bounded native evidence.
+- [Public contract](../design/coordinated-refill/public-contract0.gpt6a.md): exact
+  field and status rules plus the performance adapter's separate acceptance binding.
 - [CoW creation](../README.md#copy-on-write-workspaces): new workspaces, rather than refilling existing ones.
 - [Architecture](architecture.md#in-place-reseeding): ownership and live safety boundaries.
 - [Performance assessment](../tools/performance/README.md): retained fixtures and process-count gates.
@@ -486,12 +549,15 @@ Each new prepare/reseed resolves its own policy and source selection.
 
 ## Verification and limits
 
-Native tests use disposable local repositories/remotes and fake installers, never
+Current native tests use disposable local repositories/remotes and fake installers, never
 operator workspaces. Real-CoW runs require `JW_TEST_REQUIRE_COW=1` on a reflink-capable
 filesystem and check shared extents, private inodes, independent writes, ignored
-replacement, symlink boundaries, readiness aggregation, bookmark guards, and
-out-of-band recovery refusals. The bounded verifier retains zero-file-show-call
-and batched symlink process-count regressions.
+replacement, symlink boundaries, read-only planning, bookmark guards, and partial
+outcomes. [The native checkpoint](../design/coordinated-refill/execution2.sol61x.md#bounded-verification-receipts)
+and [public execution account](../design/coordinated-refill/execution3.sol61x.md)
+separate current evidence from historical measurements below.
+
+### Historical checkpoints (not schema 1 or current latency evidence)
 
 The explicit `--prepare` / preparation-only lock checkpoint covered 266 library,
 preparation, reseed, and bookmark cases with real CoW required on native JJ
