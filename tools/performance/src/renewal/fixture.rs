@@ -219,6 +219,31 @@ impl Fixture {
     }
 
     pub fn open(root: &Path) -> Result<Self> {
+        let f = Self::open_for_rebind(root)?;
+        f.verify_adapter()?;
+        Ok(f)
+    }
+    fn verify_adapter(&self) -> Result<()> {
+        let path = self.root.join("adapter-binding.json");
+        let adapter = if path.exists() {
+            let binding: Value = serde_json::from_slice(&fs::read(path)?)?;
+            if binding["fixture_sha256"] != artifacts::sha256(&self.root.join("fixture.json"))?
+                || binding["candidate_sha256"] != self.control.sha256
+                || binding["provenance_sha256"] != self.control.provenance_sha256
+                || binding["measurement_profile"] != super::PROFILE
+            {
+                return Err("adapter rebind no longer matches unchanged fixture/candidate/profile".into());
+            }
+            binding["adapter_sha256"].as_str().ok_or("missing bound adapter hash")?.to_owned()
+        } else {
+            artifacts::sha256(&self.root.join("setup/adapter"))?
+        };
+        if adapter != artifacts::sha256(&std::env::current_exe()?)? {
+            return Err("adapter changed; explicit renewal rebind-adapter is required before reusing owned roots".into());
+        }
+        Ok(())
+    }
+    pub fn open_for_rebind(root: &Path) -> Result<Self> {
         let root = fs::canonicalize(root)?;
         if fs::read_to_string(root.join(".owned-renewal"))? != MARKER {
             return Err("not an owned renewal fixture".into());
@@ -329,6 +354,10 @@ impl Fixture {
                     fs::write(worker.join(if index == 0 { "Q/stale-a" } else { "Q/stale-b" }), "stale selected leaf\n")?;
                 }
             }
+            // JJ's native materializer promises executable state, not a stable
+            // full permission mask. Normalize only these seven named regulars
+            // outside timing, so exact metadata start signatures remain matched.
+            reset_regular_modes(&worker, &self.donor)?;
             stable_times(&worker)?;
             // Named preservation snapshot happens OUTSIDE the measured command.
             ctx.jj(&worker, &["status"])?;
@@ -603,9 +632,72 @@ fn stable_times(root: &Path) -> Result<()> {
     Ok(())
 }
 
+fn reset_regular_modes(root: &Path, donor: &BTreeMap<PathBuf, Node>) -> Result<()> {
+    // Validate the entire closed set before changing any mode. No links followed.
+    for path in FILES {
+        if !fs::symlink_metadata(root.join(path))?.is_file() {
+            return Err("named tracked reset regular changed kind".into());
+        }
+        if donor.get(Path::new(path)).is_none_or(|n| n.kind != "file") {
+            return Err("missing named donor regular mode".into());
+        }
+    }
+    for path in FILES {
+        fs::set_permissions(root.join(path), fs::Permissions::from_mode(donor[Path::new(path)].mode))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn named_mode_reset_removes_native_materializer_mask_variance_without_changing_executable_contract() {
+        let own = super::super::tests::scratch();
+        fs::create_dir(own.path().join("collapse")).unwrap();
+        for path in FILES {
+            fs::write(own.path().join(path), "small reset regular").unwrap();
+            fs::set_permissions(own.path().join(path), fs::Permissions::from_mode(if path == "mode" { 0o755 } else { 0o644 })).unwrap();
+        }
+        let donor = inventory(own.path()).unwrap();
+        for path in FILES {
+            fs::set_permissions(own.path().join(path), fs::Permissions::from_mode(if path == "mode" { 0o700 } else { 0o600 })).unwrap();
+        }
+        reset_regular_modes(own.path(), &donor).unwrap();
+        assert_eq!(inventory(own.path()).unwrap(), donor);
+        fs::remove_file(own.path().join("mode")).unwrap();
+        std::os::unix::fs::symlink("steady", own.path().join("mode")).unwrap();
+        fs::set_permissions(own.path().join("steady"), fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(reset_regular_modes(own.path(), &donor).is_err());
+        assert_eq!(
+            fs::metadata(own.path().join("steady")).unwrap().mode() & 0o777,
+            0o600,
+            "preflight before any chmod"
+        );
+    }
+    #[test]
+    fn adapter_changes_require_explicit_rebinding_and_cannot_change_fixture_candidate_or_profile() {
+        let own = super::super::tests::scratch();
+        let control = super::super::tests::control(own.path(), Path::new("/usr/bin/true"));
+        let f = Fixture::fake(own.path(), control);
+        fs::write(own.path().join("fixture.json"), b"unchanged original fixture").unwrap();
+        fs::create_dir(own.path().join("setup")).unwrap();
+        fs::copy(std::env::current_exe().unwrap(), own.path().join("setup/adapter")).unwrap();
+        f.verify_adapter().unwrap();
+        fs::write(own.path().join("setup/adapter"), b"earlier adapter").unwrap();
+        assert!(f.verify_adapter().unwrap_err().to_string().contains("rebind-adapter"));
+        let binding = json!({"adapter_sha256":artifacts::sha256(&std::env::current_exe().unwrap()).unwrap(),
+            "fixture_sha256":artifacts::sha256(&own.path().join("fixture.json")).unwrap(),
+            "candidate_sha256":f.control.sha256,"provenance_sha256":f.control.provenance_sha256,"measurement_profile":super::super::PROFILE});
+        write_json(&own.path().join("adapter-binding.json"), &binding).unwrap();
+        f.verify_adapter().unwrap();
+        for key in ["fixture_sha256", "candidate_sha256", "provenance_sha256", "measurement_profile"] {
+            let mut invalid = binding.clone();
+            invalid[key] = json!("changed");
+            fs::write(own.path().join("adapter-binding.json"), serde_json::to_vec(&invalid).unwrap()).unwrap();
+            assert!(f.verify_adapter().is_err());
+        }
+    }
     #[test]
     fn exact_ids_and_staging_budget_fail_closed() {
         assert!(exact("@-").is_err());
@@ -658,6 +750,7 @@ mod tests {
         let mut ctx = super::super::context(&logs, Path::new("/usr/local/bin/jj"), Path::new("/usr/bin/git")).unwrap();
         let f = Fixture::create(root, c, &mut ctx).unwrap();
         write_json(&root.join("fixture.json"), &f).unwrap();
+        // Context's preserved adapter is the real test executable here.
         let f = Fixture::open(root).unwrap();
         let mut peak = (0, 0);
         let mut starts = Vec::new();

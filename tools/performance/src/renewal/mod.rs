@@ -43,6 +43,8 @@ pub enum Action {
     },
     /// Gate the real public command on four tiny shapes, both routes, sequentially.
     Accept { root: PathBuf, output: PathBuf },
+    /// Deliberately rebind an unchanged owned fixture after an adapter-only fix.
+    RebindAdapter { root: PathBuf, output: PathBuf },
     /// Requires successful bound acceptance. Four native samples OR two count probes.
     Sample {
         root: PathBuf,
@@ -131,6 +133,7 @@ pub fn run(action: Action) -> Result<()> {
             println!("{}", root.join("fixture.json").display());
         }
         Action::Accept { root, output } => accept(&root, &output)?,
+        Action::RebindAdapter { root, output } => rebind_adapter(&root, &output)?,
         Action::Sample {
             root,
             output,
@@ -239,6 +242,36 @@ fn outside_fixture(fixture: &Fixture, output: &Path) -> Result<()> {
     Ok(())
 }
 
+fn rebind_adapter(root: &Path, output: &Path) -> Result<()> {
+    let _lock = diff_dirs_perf_runner::host_lock()?;
+    let fixture = Fixture::open_for_rebind(root)?;
+    let output = fresh_path(output)?;
+    outside_fixture(&fixture, &output)?;
+    fs::create_dir(&output)?;
+    let mut ctx = context(&output, &fixture.jj, &fixture.git)?;
+    fixture.verify(&mut ctx)?;
+    let path = fixture.root.join("adapter-binding.json");
+    let previous: Value = if path.exists() {
+        serde_json::from_slice(&fs::read(&path)?)?
+    } else {
+        json!({"adapter_sha256":artifacts::sha256(&fixture.root.join("setup/adapter"))?,
+            "scope":"original initialized adapter, before explicit rebind support"})
+    };
+    let binding = json!({"adapter_sha256":artifacts::sha256(&std::env::current_exe()?)?,
+        "fixture_sha256":artifacts::sha256(&fixture.root.join("fixture.json"))?,
+        "candidate_sha256":fixture.control.sha256,"provenance_sha256":fixture.control.provenance_sha256,
+        "measurement_profile":PROFILE,"receipt":output.join("rebind.json")});
+    write_json(
+        &output.join("rebind.json"),
+        &json!({"previous":previous,"binding":binding,"verified":true,
+        "scope":"adapter-only rebind; immutable fixture/candidate/profile/native tools preserved; old acceptance is not promoted"}),
+    )?;
+    let next = fixture.root.join(".adapter-binding-next.json");
+    write_json(&next, &binding)?;
+    fs::rename(next, path)?;
+    Ok(())
+}
+
 fn argv(fixture: &Fixture, case: Case, route: Route) -> Result<Vec<String>> {
     let mut args = vec!["reseed".into()];
     args.extend(["worker-a", "worker-b"].into_iter().take(case.receivers()).map(str::to_owned));
@@ -317,8 +350,8 @@ fn accept(root: &Path, output: &Path) -> Result<()> {
             for route in Route::ALL {
                 let stem = output.join(format!("{}-{}", case.label(), route.label()));
                 let start = fixture.reset(&mut ctx, case)?;
-                match_start(&mut matched, &start)?;
                 write_json(&stem.with_extension("start.json"), &start)?;
+                match_start(&mut matched, &start)?;
                 let observation = invoke(&mut ctx, &fixture.control, &fixture, case, route, Timing::Native, &stem)?;
                 let physical = fixture.verify_result(&mut ctx, case, &start)?;
                 write_json(&stem.with_extension("physical.json"), &physical)?;
@@ -408,8 +441,8 @@ impl Renewal {
         let setup = Instant::now();
         self.fixture.verify(ctx)?;
         let start = self.fixture.reset(ctx, self.case)?;
-        match_start(&mut self.matched, &start)?;
         write_json(&stem.with_extension("start.json"), &start)?;
+        match_start(&mut self.matched, &start)?;
         sample.preparation_ns += setup.elapsed().as_nanos();
         let route = Route::from_label(&control.label)?;
         sample.argv = argv(&self.fixture, self.case, route)?;

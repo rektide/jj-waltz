@@ -115,6 +115,17 @@ objects and a bounded write-isolation probe are checked outside timing. Resets
 use named native `new`/`status`/bookmark operations and strict required-reflink Q
 copies with small named deltas. Unexpected Q contents or route kinds refuse
 before reset deletion. No recursive catch-all cleanup or native-state restoration.
+Named tracked regulars are normalized to the fixture's fixed full permission masks
+outside timing: native JJ materialization may otherwise produce `0600` versus
+`0644` despite identical bytes and executable state. Matched signatures still check
+the actual full modes; no oracle is weakened to hide reset variation.
+
+An adapter-only correction requires explicit `renewal rebind-adapter ROOT NEW_OUTPUT`
+before reusing roots. It checks the unchanged fixture/candidate/build sidecar/profile,
+native tools, donor and bindings, preserves previous/new adapter hashes and a raw
+verification receipt, then records the deliberate rebind. `fixture.json`, previous
+acceptance and raw outcomes are never edited. Start a NEW acceptance output; a
+rebind never promotes an old failed gate or permits a changed candidate.
 
 Ordinary residency is inventoried under the three checkout roots, excluding
 native administration and external artifacts. A conservative reserve of two full
