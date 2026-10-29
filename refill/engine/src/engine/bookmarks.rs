@@ -27,6 +27,15 @@ impl Proof {
 }
 
 impl Guard {
+    /// Exact saved evidence for the command report, separate from its human
+    /// recovery text. None means the requirement was explicitly bypassed.
+    pub(super) fn coverage(&self) -> Option<(&str, &str, Option<&str>, &str)> {
+        match self {
+            Self::AllowUnbookmarked => None,
+            Self::Required(proof) => Some((&proof.work_tip, &proof.name, proof.remote.as_deref(), &proof.target)),
+        }
+    }
+
     pub(super) fn recovery(&self, root: &std::path::Path, old_commit: &str) -> String {
         let (work, bookmark) = match self {
             Self::Required(proof) => (proof.work_tip.as_str(), proof.label()),

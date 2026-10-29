@@ -40,6 +40,7 @@ pub use report::*;
 pub use source::*;
 
 pub struct ResolvedCommand {
+    started: Instant,
     resolution: Resolution,
     request: ReseedRequest,
     pub route: RenewalRoute,
@@ -78,11 +79,13 @@ pub struct OrdinaryLane {
 #[derive(Debug)]
 pub enum DesiredPlan {
     Recorded(String),
+    AfterLiveSourceAssertion,
     FuturePreparedSource,
     PostPreparationRevset(String),
 }
 #[derive(Debug)]
 pub struct CommandPlan {
+    pub profile: NativeProfile,
     pub label: &'static str,
     pub source: SourcePlan,
     pub desired: DesiredPlan,
@@ -96,6 +99,7 @@ pub struct CommandPlan {
 
 impl ResolvedCommand {
     pub fn resolve(cwd: &Path, mut request: ReseedRequest, route: RenewalRoute, diagnostic: &mut dyn FnMut(&str)) -> Result<Self> {
+        let started = Instant::now();
         let resolution = Resolution::capture(cwd, &request, false)?;
         let registry = &resolution.registry;
         if request.names.is_empty() && request.groups.is_empty() {
@@ -158,6 +162,7 @@ impl ResolvedCommand {
         }
         let source = ResolvedSource::from_resolution(&resolution, &request);
         Ok(Self {
+            started,
             resolution,
             request,
             route,
@@ -192,9 +197,11 @@ impl ResolvedCommand {
             (Some(revset), true) => DesiredPlan::PostPreparationRevset(revset.clone()),
             (None, true) => DesiredPlan::FuturePreparedSource,
             (Some(revset), false) => DesiredPlan::Recorded(self.resolution.caller.resolve_one_at(&operation, revset)?.commit_id),
+            (None, false) if source.assertion_pending => DesiredPlan::AfterLiveSourceAssertion,
             (None, false) => DesiredPlan::Recorded(source.recorded_commit.clone()),
         };
         Ok(CommandPlan {
+            profile: self.source.binding.repository.profile.clone(),
             label: "PLANNED — payload/path obstructions not inspected",
             source,
             desired,
@@ -228,8 +235,10 @@ impl ResolvedCommand {
         transfer: &mut impl OrdinaryTransfer,
         diagnostic: &mut dyn FnMut(&str),
     ) -> std::result::Result<CommandReport, CommandFailure> {
-        let started = Instant::now();
+        let started = self.started;
+        let mut setup_done = false;
         let mut report = CommandReport {
+            profile: self.source.binding.repository.profile.clone(),
             source: None,
             preparation: None,
             receivers: self
@@ -310,7 +319,7 @@ impl ResolvedCommand {
                 diagnostic(&format!("{}: saved old tracked work at {old}", binding.name));
                 report.receivers[index].old = Some(SavedWork {
                     commit: old.clone(),
-                    history: "coverage pending".into(),
+                    history: HistoryCoverage::Pending,
                 });
                 report.receivers[index].desired = Some(desired.clone());
                 saved.push(SavedReceiver {
@@ -337,7 +346,7 @@ impl ResolvedCommand {
                 if let Some(coverage) = &coverage {
                     saved.guard = coverage.require(&saved.old_commit)?;
                 }
-                report.receivers[index].old.as_mut().unwrap().history = saved.guard.describe();
+                report.receivers[index].old.as_mut().unwrap().history = HistoryCoverage::from_guard(&saved.guard);
             }
             // Source and every original receiver coordinate must still hold after
             // all preservation snapshots. No destructive refill before this.
@@ -368,9 +377,13 @@ impl ResolvedCommand {
             report.capture.indexes = membership.count();
             let input = native::inputs(&membership, &source, &desired, &saved)?;
             report.capture.donor_cache_reads = 1;
-            let native_paths = Arc::new(NativePathIndex {
-                paths: input.source.index.paths.union(&input.desired.index.paths).cloned().collect(),
-            });
+            let native_paths = if Arc::ptr_eq(&input.source, &input.desired) {
+                Arc::clone(&input.source.index)
+            } else {
+                Arc::new(NativePathIndex {
+                    paths: Arc::new(input.source.index.paths.union(&input.desired.index.paths).cloned().collect()),
+                })
+            };
             let mut ignores = FrozenIgnores::default();
             for (commit, key) in &membership.keys {
                 ignores.same_tree(commit, key);
@@ -410,6 +423,7 @@ impl ResolvedCommand {
                 });
             }
             report.setup_ms = started.elapsed().as_millis();
+            setup_done = true;
             for (index, saved) in saved.iter().enumerate() {
                 lane = Some(index);
                 let result = native::establish(&source, &desired, saved, &input, self.request.replace_content, &mut report.receivers[index]);
@@ -466,6 +480,9 @@ impl ResolvedCommand {
             Ok(())
         })();
         report.elapsed_ms = started.elapsed().as_millis();
+        if !setup_done {
+            report.setup_ms = report.elapsed_ms;
+        }
         match result {
             Ok(()) => Ok(report),
             Err(source) => {

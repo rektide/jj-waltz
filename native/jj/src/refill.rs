@@ -35,8 +35,10 @@ impl NativeProfile {
         })
     }
 
-    pub fn capture(client: &JjClient) -> Result<Self> {
-        Self::classify(client.run(["--version"])?.trimmed_stdout()?)
+    pub fn capture() -> Result<Self> {
+        // This build loads secure repo config even for --version. Ask outside
+        // any checkout, before trusting the profile-specific startup guard.
+        Self::classify(JjClient::new("/").run(["--version"])?.trimmed_stdout()?)
     }
 }
 

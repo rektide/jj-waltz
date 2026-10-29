@@ -98,9 +98,33 @@ pub struct FinishOutcome {
     pub elapsed_ms: u128,
 }
 #[derive(Debug, Clone)]
+pub enum HistoryCoverage {
+    Pending,
+    Bypassed,
+    Covered {
+        work_tip: String,
+        name: String,
+        remote: Option<String>,
+        target: String,
+    },
+}
+impl HistoryCoverage {
+    pub(super) fn from_guard(guard: &bookmarks::Guard) -> Self {
+        match guard.coverage() {
+            None => Self::Bypassed,
+            Some((work_tip, name, remote, target)) => Self::Covered {
+                work_tip: work_tip.into(),
+                name: name.into(),
+                remote: remote.map(str::to_owned),
+                target: target.into(),
+            },
+        }
+    }
+}
+#[derive(Debug, Clone)]
 pub struct SavedWork {
     pub commit: String,
-    pub history: String,
+    pub history: HistoryCoverage,
 }
 #[derive(Debug, Clone)]
 pub struct ReceiverReport {
@@ -125,6 +149,7 @@ pub struct CaptureCounts {
 }
 #[derive(Debug)]
 pub struct CommandReport {
+    pub profile: NativeProfile,
     pub source: Option<SourceReport>,
     pub preparation: Option<PreparationReport>,
     pub receivers: Vec<ReceiverReport>,

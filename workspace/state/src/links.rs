@@ -77,7 +77,7 @@ impl LinkApplication {
 
 impl LinkApplyReport {
     pub fn has_entries(&self) -> bool {
-        self.linked > 0 || self.satisfied > 0 || self.skipped_missing_target > 0
+        self.linked > 0 || self.directories_created > 0 || self.satisfied > 0 || self.skipped_missing_target > 0
     }
 }
 

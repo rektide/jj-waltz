@@ -3,7 +3,7 @@ use jj_waltz_native_jj::jj::{adopt_tree_state, read_tree_state};
 
 #[derive(Debug, Default)]
 pub struct NativePathIndex {
-    pub paths: BTreeSet<PathBuf>,
+    pub paths: Arc<BTreeSet<PathBuf>>,
 }
 impl NativePathIndex {
     pub fn contains(&self, path: &Path) -> bool {
@@ -63,7 +63,7 @@ impl Membership {
             if !result.trees.contains_key(key) {
                 let leaves = Arc::new(tracked::entries(client, operation, commit)?);
                 let index = Arc::new(NativePathIndex {
-                    paths: leaves.iter().map(|e| e.path.clone()).collect(),
+                    paths: Arc::new(leaves.iter().map(|e| e.path.clone()).collect()),
                 });
                 result.trees.insert(
                     key.to_owned(),

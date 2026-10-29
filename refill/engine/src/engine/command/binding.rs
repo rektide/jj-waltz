@@ -145,7 +145,7 @@ impl Resolution {
                 && std::env::var_os("GIT_CONFIG_COUNT").is_none_or(|v| v.is_empty() || v == "0"),
             "unset active Git config environment overrides before reseed"
         );
-        let profile = NativeProfile::capture(&JjClient::new(cwd))?;
+        let profile = NativeProfile::capture()?;
         let (caller, registry) = if source_only {
             RegistrySnapshot::capture_source(cwd)?
         } else {

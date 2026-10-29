@@ -31,8 +31,10 @@ pub struct SourceSelection {
 }
 
 impl SourceSelection {
-    /// The caller must first snapshot real source work and verify disk bytes.
-    /// All queries here are read-only against `operation`, including previews.
+    /// Execution first snapshots real source work. Preview intentionally selects
+    /// from recorded facts only, with live preparation/conformance still pending.
+    /// All queries here are read-only against `operation`; selection is not a
+    /// live disk or ignored-payload proof.
     pub fn select(client: &JjClient, operation: &str, source_at: Option<&str>, remote: Option<&str>) -> Result<Self> {
         if remote == Some("") {
             bail!("freshen.remote must not be empty");
@@ -198,7 +200,8 @@ impl SourceSelection {
 
     /// After fetching the pinned remote, validate the SAME bookmark and donor.
     /// Returns the exact goal to pin before `jj new` or configured commands.
-    /// The coordinator must also revalidate source disk bytes before mutation.
+    /// The coordinator owns source snapshot/conformance and stable-binding checks;
+    /// this method checks recorded coordinates and publication, not disk bytes.
     pub fn resolve_fetched(&self, client: &JjClient, operation: &str) -> Result<String> {
         self.verify_source_at(client, operation)?;
         let refs = client.bookmark_refs_at(operation)?;
@@ -271,7 +274,7 @@ impl SourceSelection {
     /// Native JJ may normalize a directly published/immutable checkout to a new
     /// empty child while fetching. That leaves the exact old tree/history intact;
     /// any other changed source revision is work, not a disposable normalization.
-    /// Disk bytes still need the coordinator's separate filesystem proof.
+    /// This is not a disk-tree proof; final conformance belongs to the producer.
     pub fn verify_source_at(&self, client: &JjClient, operation: &str) -> Result<CommitFacts> {
         let current = client.commit_facts_at(operation, "@")?;
         let normalized_published = self.base == self.source.commit_id && current.ordinary_empty_child() && current.parents[0] == self.source.commit_id;

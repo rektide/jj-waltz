@@ -148,7 +148,8 @@ fn report_value(report: &CommandReport) -> Value {
         "trees": report.capture.distinct_trees, "cache_reads": report.capture.donor_cache_reads,
         "receivers": report.receivers.iter().map(|r| json!({"name": r.name, "status": format!("{:?}", r.status), "phase": r.reached.to_string(), "old": r.old.as_ref().map(|o| &o.commit),
             "child": r.child.as_ref().map(|c| &c.commit_id), "change": r.child.as_ref().map(|c| &c.change_id), "native": format!("{:?}", r.native.state), "manifest": r.native.manifest_complete,
-            "clones": r.native.installed.files_reflinked, "copies": r.native.installed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete})).collect::<Vec<_>>()})
+            "clones": r.native.installed.files_reflinked, "copies": r.native.installed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "links_created": r.finish.links.linked})).collect::<Vec<_>>()})
 }
 fn preparation_value(r: &PreparationReport) -> Value {
     json!({"saved": r.saved_commit, "goal": r.upstream_goal, "source": r.source_commit, "steps": r.steps.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>(),
@@ -329,6 +330,15 @@ fn producer_failure_stops_later_argv_and_final_divergence_is_distinct() {
     assert_eq!(value["preparation"]["final_started"], true);
     assert_eq!(value["preparation"]["final_ok"], false);
     assert_eq!(fs::read(f.source.join("a")).unwrap(), b"divergent");
+
+    f.jj(&f.source, &["new", "trunk@origin"]);
+    f.settings(vec![vec!["jj", "new", "@"], vec!["sh", "-c", "touch .env"]]);
+    let (value, _) = f.run("producer", &f.request(&[]), None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert!(value["error"].as_str().unwrap().contains("selected revision changed"));
+    assert_eq!(value["preparation"]["steps"], json!(["Succeeded", "Selected"]));
+    assert_eq!(value["preparation"]["final_started"], false);
+    assert!(!f.source.join(".env").exists());
 }
 
 fn bytes_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
@@ -364,6 +374,8 @@ fn preview_is_planned_and_read_only_including_prepare_and_pending_assertion() {
     fs::write(f.source.join("a"), "unsaved donor\n").unwrap();
     let before_source = bytes_under(&f.source);
     let before_a = bytes_under(&a);
+    let config = f.temp.path().join("config");
+    let before_config = config.exists().then(|| bytes_under(&config));
     let request = ReseedRequest {
         dry_run: true,
         source_at: Some(f.s.clone()),
@@ -378,6 +390,7 @@ fn preview_is_planned_and_read_only_including_prepare_and_pending_assertion() {
     assert_eq!(value["inspected"], false);
     assert_eq!(before_source, bytes_under(&f.source));
     assert_eq!(before_a, bytes_under(&a));
+    assert_eq!(before_config, config.exists().then(|| bytes_under(&config)));
     for name in ["status", "diff", "fetch", "new", "show"] {
         assert!(calls_named(&calls, name).is_empty(), "{name}: {calls:#?}");
     }
@@ -410,6 +423,19 @@ fn preview_is_planned_and_read_only_including_prepare_and_pending_assertion() {
     assert!(!f.source.join(".env").exists());
     assert!(calls_named(&calls, "fetch").is_empty());
     assert!(!calls.iter().any(|c| c.iter().any(|s| s == "status" || s == "--clear")));
+    let (value, _) = f.run(
+        "preview",
+        &ReseedRequest {
+            dry_run: true,
+            prepare: true,
+            at: Some("post-fetch-only-ref".into()),
+            ..f.request(&["a"])
+        },
+        None,
+    );
+    assert_eq!(value["ok"], true, "{value:#}");
+    assert_eq!(value["desired"], "PostPreparationRevset(\"post-fetch-only-ref\")");
+    assert_eq!(before, bytes_under(&f.source));
 }
 
 #[test]
@@ -466,4 +492,117 @@ fn divergent_operation_preview_refuses_without_reconciliation() {
     );
     assert_eq!(value["ok"], false, "{value:#}");
     assert_eq!(before, bytes_under(&f.source), "even divergent operation reconciliation must not write");
+}
+
+#[test]
+fn preservation_barrier_refuses_a_coordinate_rewritten_by_later_snapshot() {
+    let f = Fixture::new();
+    let b = f.receiver("b");
+    let a = f.receiver("a");
+    f.jj(&a, &["new", "b@"]);
+    let old_a = f.jj(
+        &a,
+        &[
+            "--at-operation",
+            "@",
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            "commit_id",
+        ],
+    );
+    fs::write(b.join("a"), "unsaved ancestor change\n").unwrap();
+    let (value, calls) = f.run("execute", &f.request(&["a", "b"]), None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert!(
+        value["error"].as_str().unwrap().contains("saved receiver O moved during preservation"),
+        "{value:#}"
+    );
+    assert_eq!(value["report"]["receivers"][0]["old"], old_a);
+    assert!(!calls.iter().any(|c| c.iter().any(|s| s == "--clear")));
+    assert_eq!(value["report"]["receivers"][0]["clones"], 0);
+}
+
+#[test]
+fn preview_refuses_native_secure_config_migration_without_creating_metadata() {
+    let f = Fixture::new();
+    f.receiver("a");
+    let legacy = f.source.join(".jj/repo/config.toml");
+    assert!(!f.source.join(".jj/repo/config-id").exists());
+    fs::write(&legacy, "[user]\nname='legacy'\n").unwrap();
+    let before = bytes_under(&f.source);
+    let (value, calls) = f.run(
+        "preview",
+        &ReseedRequest {
+            dry_run: true,
+            ..f.request(&["a"])
+        },
+        None,
+    );
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert!(value["error"].as_str().unwrap().contains("would require migration"));
+    assert_eq!(before, bytes_under(&f.source));
+    assert!(!f.source.join(".jj/repo/config-id").exists());
+    assert!(!calls.iter().any(|c| c.iter().any(|s| s == "operation" || s == "workspace")));
+}
+
+#[test]
+fn preservation_barrier_refuses_donor_rewrite_without_implicit_resnapshot() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    f.jj(&f.source, &["new", "a@"]);
+    let s = f.jj(
+        &f.source,
+        &[
+            "--at-operation",
+            "@",
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            "commit_id",
+        ],
+    );
+    fs::write(a.join("a"), "unsaved ancestor change\n").unwrap();
+    let (value, calls) = f.run("execute", &f.request(&["a"]), None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert!(
+        value["error"].as_str().unwrap().contains("donor coordinate changed during receiving snapshots"),
+        "{value:#}"
+    );
+    assert_eq!(value["report"]["source"]["commit"], s);
+    assert!(!calls.iter().any(|c| c.iter().any(|s| s == "--clear")));
+    assert!(
+        !calls
+            .iter()
+            .any(|c| Path::new(&c[0]) == f.source && !c.iter().any(|s| s == "--ignore-working-copy")),
+        "no live donor resnapshot/repin"
+    );
+}
+
+#[test]
+fn later_finish_failure_keeps_earlier_complete_receiver_and_actual_link_count() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    let b = f.receiver("b");
+    fs::create_dir(a.join("cache")).unwrap();
+    fs::write(a.join("cache/tool"), "local tool\n").unwrap();
+    fs::write(f.source.join(".jwlinks.toml"), "[[link]]\nsource='.env'\ntarget='cache/tool'\nrequired=true\n").unwrap();
+    let (value, _) = f.run("execute", &f.request(&["a", "b"]), None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert_eq!(value["receiver"], "b");
+    assert_eq!(value["phase"], "loaded link finish");
+    assert_eq!(value["report"]["receivers"][0]["status"], "Complete");
+    assert_eq!(value["report"]["receivers"][0]["links_created"], 1);
+    assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
+    assert_eq!(value["report"]["receivers"][1]["native"], "Established");
+    assert_eq!(value["report"]["receivers"][1]["links_created"], 0);
+    assert!(fs::symlink_metadata(a.join(".env")).unwrap().is_symlink());
+    assert_eq!(fs::read(a.join(".env")).unwrap(), b"local tool\n");
+    assert!(!b.join(".env").exists());
 }

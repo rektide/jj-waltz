@@ -67,7 +67,7 @@ impl OrdinaryTransfer for LegacyOrdinary {
             patterns: Arc::clone(&cohort.patterns),
             source_ignore: Arc::clone(&lane.source_ignore),
             desired_ignore: Arc::clone(&lane.desired_ignore),
-            native: Arc::new(cohort.native.paths.clone()),
+            native: Arc::clone(&cohort.native.paths),
             links: lane.active_links.clone(),
             devices: (cohort.source.device, lane.binding.device),
         };

@@ -10,6 +10,7 @@ pub enum SourceEvidence {
 }
 #[derive(Debug, Clone)]
 pub struct SourceReport {
+    pub profile: NativeProfile,
     pub root: PathBuf,
     pub operation: String,
     /// Actual resulting donor WC S, never the upstream goal in its place.
@@ -37,6 +38,7 @@ pub struct PreparationStep {
 }
 #[derive(Debug, Clone, Default)]
 pub struct PreparationReport {
+    pub elapsed_ms: u128,
     pub saved_commit: Option<String>,
     pub upstream_goal: Option<String>,
     pub source_commit: Option<String>,
@@ -66,17 +68,20 @@ pub struct ResolvedSource {
     pub binding: Arc<BoundWorkspace>,
     pub assertion: Option<String>,
     settings: Option<prepare::Settings>,
+    preview_only: bool,
 }
 impl ResolvedSource {
     pub fn resolve(cwd: &Path, request: crate::PrepareRequest) -> Result<Self> {
         let request = ReseedRequest {
             source: request.source,
             source_at: request.source_at,
+            dry_run: request.dry_run,
             ..Default::default()
         };
         let resolution = Resolution::capture(cwd, &request, true)?;
         let registrations = jj_waltz_workspace_state::ownership::refill_registrations_at(&resolution.caller, &resolution.registry.operation)?;
         resolution.check_ownership(&resolution.source, &registrations)?;
+        Topology::capture()?.workspace(&resolution.source.root, true)?;
         Ok(Self::from_resolution(&resolution, &request))
     }
     pub(super) fn from_resolution(r: &Resolution, request: &ReseedRequest) -> Self {
@@ -84,6 +89,7 @@ impl ResolvedSource {
             binding: Arc::clone(&r.source),
             assertion: request.source_at.clone().or_else(|| r.config.source_at.clone()),
             settings: r.config.freshen.clone(),
+            preview_only: request.dry_run,
         }
     }
 
@@ -113,6 +119,7 @@ impl ResolvedSource {
     pub(super) fn existing(&self) -> Result<PreparedSource> {
         let client = self.binding.client();
         let operation = client.operation_id()?;
+        self.binding.verify_at(&operation)?;
         let evidence = if let Some(assertion) = &self.assertion {
             let assertion = client.resolve_one_at(&operation, assertion)?.commit_id;
             native_diff(&client, &assertion).context("explicit source_at live assertion (may have recorded donor edits)")?;
@@ -131,6 +138,7 @@ impl ResolvedSource {
         Ok(PreparedSource {
             binding: Arc::clone(&self.binding),
             report: SourceReport {
+                profile: self.binding.repository.profile.clone(),
                 root: self.binding.root.clone(),
                 operation,
                 commit: facts.commit_id,
@@ -156,22 +164,14 @@ pub struct SourcePlan {
 /// One final tracked conformance proof after all successful argv. The lock is
 /// preparation-only and is dropped before this in-process handoff is consumed.
 pub fn prepare_source(source: &ResolvedSource, diagnostic: &mut dyn FnMut(&str)) -> std::result::Result<PreparedSource, PreparationFailure> {
+    let started = Instant::now();
     let mut completed = PreparationReport::default();
     let result = (|| {
+        ensure!(!source.preview_only, "use preview() for a read-only preparation plan");
         let client = source.binding.client();
-        let _lock = PreparationLock::lock(&client)?;
         let operation = client.operation_id()?;
         source.binding.verify_at(&operation)?;
         binding::validate_local(&client, &operation)?;
-        snapshot(&client).context("save source tracked work")?;
-        let operation = client.operation_id()?;
-        let selected = SourceSelection::select(
-            &client,
-            &operation,
-            source.assertion.as_deref(),
-            source.settings.as_ref().and_then(|s| s.remote.as_deref()),
-        )?;
-        completed.saved_commit = Some(selected.source.commit_id.clone());
         completed.steps = source
             .argv()?
             .into_iter()
@@ -180,6 +180,16 @@ pub fn prepare_source(source: &ResolvedSource, diagnostic: &mut dyn FnMut(&str))
                 status: StepStatus::Selected,
             })
             .collect();
+        let _lock = PreparationLock::lock(&client)?;
+        snapshot(&client).context("save source tracked work")?;
+        let operation = client.operation_id()?;
+        completed.saved_commit = Some(client.resolve_one_at(&operation, "@")?.commit_id);
+        let selected = SourceSelection::select(
+            &client,
+            &operation,
+            source.assertion.as_deref(),
+            source.settings.as_ref().and_then(|s| s.remote.as_deref()),
+        )?;
         selected.verify_source_at(&client, &client.operation_id()?)?;
         diagnostic(&format!(
             "Prepare: fetching {:?}@{:?}; saved source {}",
@@ -229,8 +239,10 @@ pub fn prepare_source(source: &ResolvedSource, diagnostic: &mut dyn FnMut(&str))
         ensure!(facts.ordinary_empty_child(), "prepared source is not an empty child");
         completed.final_conformance_succeeded = true;
         completed.source_commit = Some(facts.commit_id);
+        completed.elapsed_ms = started.elapsed().as_millis();
         source.handoff(Some(goal), SourceEvidence::Produced, Some(completed.clone()))
     })();
+    completed.elapsed_ms = started.elapsed().as_millis();
     result.map_err(|source| PreparationFailure { completed, source })
 }
 
@@ -238,6 +250,10 @@ fn source_identity(source: &ResolvedSource, goal: &str, change: &str) -> Result<
     let client = source.binding.client();
     let operation = client.operation_id()?;
     source.binding.verify_at(&operation)?;
+    ensure!(
+        jj_waltz_workspace_state::ownership::detect(&source.binding.root)?.is_none(),
+        "preparation source acquired external Git ownership"
+    );
     binding::validate_local(&client, &operation)?;
     let facts = client.commit_facts_at(&operation, "@")?;
     ensure!(
