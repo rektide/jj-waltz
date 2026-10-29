@@ -2,6 +2,7 @@ mod build;
 mod context;
 mod diagnostics;
 mod instrumentation;
+mod renewal;
 mod snapshot;
 mod workload;
 
@@ -46,6 +47,11 @@ enum Action {
         jj: PathBuf,
     },
     Run(Box<RunArgs>),
+    /// Bounded two-route verification/sampling on one reused owned donor.
+    Renewal {
+        #[command(subcommand)]
+        action: renewal::Action,
+    },
     /// Summarize a retained JJ/Git exec-wrapper trace without running a campaign.
     Count {
         trace: PathBuf,
@@ -176,6 +182,7 @@ fn main() -> Result<()> {
         )?,
         Action::Snapshot { donor, output, jj } => snapshot::import(&donor, &output, &instrumentation::native(&jj)?)?,
         Action::Count { trace } => println!("{}", serde_json::to_string_pretty(&instrumentation::counts(&trace)?)?),
+        Action::Renewal { action } => renewal::run(action)?,
         Action::Install { root } => workload::install(&root)?,
         Action::CopyBaseline { source, output } => diagnostics::copy_baseline(&source, &output)?,
         Action::Check {

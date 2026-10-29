@@ -73,6 +73,15 @@ impl Context {
         Ok((fs::read_to_string(stdout)?.trim().into(), result))
     }
     fn run_raw(&mut self, binary: &Path, args: &[String], cwd: &Path, trace: Option<&Path>) -> Result<(PathBuf, process::Outcome)> {
+        let (stdout, result) = self.attempt(binary, args, cwd, trace)?;
+        if result.code != Some(0) || result.timed_out {
+            return Err(format!("native command failed; see {}", stdout.with_extension("stderr").display()).into());
+        }
+        Ok((stdout, result))
+    }
+    /// Retain raw output and process status even on command failure. Report parsing
+    /// belongs after this boundary and must not replace the original exit/cause.
+    pub fn attempt(&mut self, binary: &Path, args: &[String], cwd: &Path, trace: Option<&Path>) -> Result<(PathBuf, process::Outcome)> {
         let stem = self.root.join("commands").join(format!("{:04}", self.sequence));
         self.sequence += 1;
         let mut command = Command::new(binary);
@@ -83,9 +92,6 @@ impl Context {
                 .env("PATH", format!("{}:/usr/bin:/bin", self.root.join("count-bin").display()));
         }
         let result = process::run(&mut command, &stem, Duration::from_secs(self.timeout_seconds))?;
-        if result.code != Some(0) || result.timed_out {
-            return Err(format!("native command failed; see {}.stderr", stem.display()).into());
-        }
         Ok((stem.with_extension("stdout"), result))
     }
     pub fn historical_file_hash(&mut self, root: &Path, revision: &str, path: &Path) -> Result<String> {
