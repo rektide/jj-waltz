@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ezracerpac/jj-waltz/docs/schema/refill-v1.schema.json",
+  "title": "jw reseed / prepare outcome, schema 1",
+  "description": "All declared fields are required; unavailable facts are null. Consumers must use checked u128 conversion for canonical decimal strings and decode Unix path bytes for identity. Additive keys may be ignored.",
+  "type": "object",
+  "required": ["schema_version", "command", "mode", "status", "renewal_route", "native_profile", "selection", "source", "desired", "preview", "receivers", "capture", "source_diagnostics", "timings", "error"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "command": {"enum": ["reseed", "prepare"]},
+    "mode": {"enum": ["execute", "preview"]},
+    "status": {"enum": ["complete", "planned", "failed", "blocked"]},
+    "renewal_route": {"anyOf": [{"$ref": "#/$defs/route"}, {"type": "null"}]},
+    "native_profile": {"anyOf": [{"$ref": "#/$defs/profile"}, {"type": "null"}]},
+    "selection": {"$ref": "#/$defs/selection"},
+    "source": {"anyOf": [{"$ref": "#/$defs/source"}, {"type": "null"}]},
+    "desired": {"anyOf": [{"$ref": "#/$defs/desired"}, {"type": "null"}]},
+    "preview": {"anyOf": [{"$ref": "#/$defs/preview"}, {"type": "null"}]},
+    "receivers": {"type": "array", "items": {"$ref": "#/$defs/receiver"}},
+    "capture": {"anyOf": [{"$ref": "#/$defs/capture"}, {"type": "null"}]},
+    "source_diagnostics": {"type": "object", "required": ["native", "ordinary"], "properties": {
+      "native": {"anyOf": [{"$ref": "#/$defs/sourceDiagnostics"}, {"type": "null"}]},
+      "ordinary": {"anyOf": [{"$ref": "#/$defs/sourceDiagnostics"}, {"type": "null"}]}
+    }},
+    "timings": {"type": "object", "required": ["command_ms", "engine_ms", "pre_native_ms", "ordinary_ms"], "properties": {
+      "command_ms": {"$ref": "#/$defs/optionalN"}, "engine_ms": {"$ref": "#/$defs/optionalN"},
+      "pre_native_ms": {"$ref": "#/$defs/optionalN"}, "ordinary_ms": {"$ref": "#/$defs/optionalN"}
+    }},
+    "error": {"anyOf": [{"$ref": "#/$defs/error"}, {"type": "null"}]}
+  },
+  "allOf": [
+    {"if": {"properties": {"command": {"const": "prepare"}}}, "then": {"properties": {
+      "renewal_route": {"type": "null"}, "desired": {"type": "null"}, "capture": {"type": "null"}, "receivers": {"maxItems": 0},
+      "selection": {"properties": {"names": {"maxItems": 0}, "groups": {"maxItems": 0}, "resolved": {"maxItems": 0}, "skipped": {"maxItems": 0}}}
+    }}},
+    {"if": {"properties": {"status": {"enum": ["complete", "planned"]}}}, "then": {"properties": {"error": {"type": "null"}}}, "else": {"properties": {"error": {"$ref": "#/$defs/error"}}}},
+    {"if": {"properties": {"status": {"const": "planned"}}}, "then": {"properties": {"mode": {"const": "preview"}, "preview": {"$ref": "#/$defs/preview"}}}},
+    {"if": {"properties": {"mode": {"const": "execute"}}}, "then": {"properties": {"preview": {"type": "null"}, "status": {"enum": ["complete", "failed"]}}}}
+  ],
+  "$defs": {
+    "N": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$", "maxLength": 39, "description": "Canonical unsigned decimal, checked u128 (0..340282366920938463463374607431768211455). No floating-point coercion.", "allOf": [{"pattern": "^(?:[0-9]{1,38}|[1-2][0-9]{38}|3[0-3][0-9]{37}|340[0-1][0-9]{35}|3402[0-7][0-9]{34}|34028[0-1][0-9]{33}|340282[0-2][0-9]{32}|3402823[0-5][0-9]{31}|34028236[0-5][0-9]{30}|340282366[0-8][0-9]{29}|3402823669[0-1][0-9]{28}|340282366920[0-8][0-9]{26}|3402823669209[0-2][0-9]{25}|34028236692093[0-7][0-9]{24}|340282366920938[0-3][0-9]{23}|3402823669209384[0-5][0-9]{22}|34028236692093846[0-2][0-9]{21}|340282366920938463[0-3][0-9]{20}|3402823669209384634[0-5][0-9]{19}|34028236692093846346[0-2][0-9]{18}|340282366920938463463[0-2][0-9]{17}|3402823669209384634633[0-6][0-9]{16}|34028236692093846346337[0-3][0-9]{15}|340282366920938463463374[0-5][0-9]{14}|34028236692093846346337460[0-6][0-9]{12}|340282366920938463463374607[0-3][0-9]{11}|3402823669209384634633746074[0-2][0-9]{10}|340282366920938463463374607430[0-9]{9}|340282366920938463463374607431[0-6][0-9]{8}|3402823669209384634633746074317[0-5][0-9]{7}|34028236692093846346337460743176[0-7][0-9]{6}|340282366920938463463374607431768[0-1][0-9]{5}|34028236692093846346337460743176820[0-9]{4}|340282366920938463463374607431768210[0-9]{3}|340282366920938463463374607431768211[0-3][0-9]{2}|3402823669209384634633746074317682114[0-4][0-9]{1}|34028236692093846346337460743176821145[0-4]|340282366920938463463374607431768211455)$"}]},
+    "optionalN": {"anyOf": [{"$ref": "#/$defs/N"}, {"type": "null"}]},
+    "optionalString": {"type": ["string", "null"]},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "path": {"type": "object", "required": ["display", "unix_bytes_hex"], "properties": {"display": {"type": "string"}, "unix_bytes_hex": {"type": "string", "pattern": "^([0-9a-f]{2})*$"}}},
+    "optionalPath": {"anyOf": [{"$ref": "#/$defs/path"}, {"type": "null"}]},
+    "route": {"enum": ["clear-then-populate", "replace-authorized"]},
+    "phase": {"enum": ["resolve", "source", "preserve", "capture", "native_clear", "native_child", "explicit_clear", "install", "admit_desired", "adopt", "restore", "reparent", "native_verify", "ordinary", "links", "finish", "complete"]},
+    "profile": {"type": "object", "required": ["id", "raw_version"], "properties": {"id": {"type": "string"}, "raw_version": {"type": "string"}}},
+    "selection": {"type": "object", "required": ["names", "groups", "resolved", "skipped"], "properties": {
+      "names": {"$ref": "#/$defs/strings"}, "groups": {"$ref": "#/$defs/strings"},
+      "resolved": {"type": "array", "items": {"type": "object", "required": ["name", "root", "origins"], "properties": {"name": {"type": "string"}, "root": {"$ref": "#/$defs/path"}, "origins": {"$ref": "#/$defs/strings"}}}},
+      "skipped": {"type": "array", "items": {"type": "object", "required": ["candidate", "reason"], "properties": {"candidate": {"type": "string"}, "reason": {"type": "string"}}}}
+    }},
+    "desired": {"type": "object", "required": ["kind", "revset", "commit_id", "state"], "properties": {
+      "kind": {"enum": ["source", "revset"]}, "revset": {"$ref": "#/$defs/optionalString"}, "commit_id": {"$ref": "#/$defs/optionalString"},
+      "state": {"enum": ["unresolved", "recorded", "after_live_assertion", "future_prepared_source", "post_preparation_revset", "resolved"]}
+    }},
+    "preview": {"type": "object", "required": ["label", "clone_capability_probed", "preservation_pending", "obstructions_inspected", "ordinary_patterns"], "properties": {
+      "label": {"const": "PLANNED — payload/path obstructions not inspected"}, "clone_capability_probed": {"const": false}, "preservation_pending": {"type": "boolean"}, "obstructions_inspected": {"const": false},
+      "ordinary_patterns": {"anyOf": [{"$ref": "#/$defs/strings"}, {"type": "null"}]}
+    }},
+    "source": {"type": "object", "required": ["name", "root", "operation_id", "recorded_commit_id", "source_commit_id", "source_change_id", "upstream_goal_commit_id", "state", "evidence", "assertion", "upstream", "preparation", "elapsed_ms"], "properties": {
+      "name": {"type": "string"}, "root": {"$ref": "#/$defs/path"}, "operation_id": {"$ref": "#/$defs/optionalString"}, "recorded_commit_id": {"$ref": "#/$defs/optionalString"},
+      "source_commit_id": {"$ref": "#/$defs/optionalString"}, "source_change_id": {"$ref": "#/$defs/optionalString"}, "upstream_goal_commit_id": {"$ref": "#/$defs/optionalString"},
+      "state": {"enum": ["planned", "not_started", "ready", "failed"]}, "evidence": {"enum": ["assumed_prepared", "live_assertion", "produced", null]},
+      "assertion": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["revset", "commit_id", "status"], "properties": {"revset": {"type": "string"}, "commit_id": {"$ref": "#/$defs/optionalString"}, "status": {"enum": ["pending", "succeeded", "failed"]}}}]},
+      "upstream": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["remote", "bookmark", "prospective_goal_commit_id"], "properties": {"remote": {"type": "string"}, "bookmark": {"type": "string"}, "prospective_goal_commit_id": {"$ref": "#/$defs/optionalString"}}}]},
+      "preparation": {"anyOf": [{"$ref": "#/$defs/preparation"}, {"type": "null"}]}, "elapsed_ms": {"$ref": "#/$defs/optionalN"}
+    }},
+    "preparation": {"type": "object", "required": ["status", "saved_commit_id", "steps", "final_conformance", "elapsed_ms"], "properties": {
+      "status": {"enum": ["planned", "not_started", "succeeded", "failed"]}, "saved_commit_id": {"$ref": "#/$defs/optionalString"},
+      "steps": {"type": "array", "items": {"type": "object", "required": ["index", "argv", "status", "elapsed_ms"], "properties": {"index": {"$ref": "#/$defs/N"}, "argv": {"$ref": "#/$defs/strings"}, "status": {"enum": ["selected", "started", "succeeded"]}, "elapsed_ms": {"$ref": "#/$defs/optionalN"}}}},
+      "final_conformance": {"enum": ["pending", "succeeded", "failed"]}, "elapsed_ms": {"$ref": "#/$defs/optionalN"}
+    }},
+    "receiver": {"type": "object", "required": ["name", "root", "renewal_route", "status", "phase", "saved", "desired_commit_id", "child", "native", "ordinary", "finish"], "properties": {
+      "name": {"type": "string"}, "root": {"$ref": "#/$defs/path"}, "renewal_route": {"$ref": "#/$defs/route"},
+      "status": {"enum": ["planned", "blocked", "not_started", "partial", "failed", "complete"]}, "phase": {"$ref": "#/$defs/phase"},
+      "saved": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["commit_id", "history"], "properties": {"commit_id": {"type": "string"}, "history": {"$ref": "#/$defs/history"}}}]},
+      "desired_commit_id": {"$ref": "#/$defs/optionalString"},
+      "child": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["commit_id", "change_id", "parent_commit_ids"], "properties": {"commit_id": {"type": "string"}, "change_id": {"type": "string"}, "parent_commit_ids": {"$ref": "#/$defs/strings"}}}]},
+      "native": {"$ref": "#/$defs/native"}, "ordinary": {"$ref": "#/$defs/ordinary"}, "finish": {"$ref": "#/$defs/finish"}
+    }, "allOf": [{"if": {"properties": {"status": {"const": "complete"}}}, "then": {"properties": {
+      "phase": {"const": "complete"}, "saved": {"type": "object"}, "child": {"type": "object"}, "desired_commit_id": {"type": "string"},
+      "native": {"properties": {"state": {"const": "established"}, "manifest": {"type": "object", "properties": {"complete": {"const": true}}}, "renewal_effects": {"$ref": "#/$defs/effects"}, "source_state_adopted": {"const": true}}},
+      "ordinary": {"properties": {"state": {"enum": ["disabled", "satisfied"]}}}, "finish": {"properties": {"state": {"const": "complete"}, "links": {"type": "object"}}}
+    }}}]},
+    "history": {"type": "object", "required": ["status", "work_tip_commit_id", "bookmark", "remote", "bookmark_target_commit_id"], "properties": {
+      "status": {"enum": ["pending", "bypassed", "covered"]}, "work_tip_commit_id": {"$ref": "#/$defs/optionalString"}, "bookmark": {"$ref": "#/$defs/optionalString"}, "remote": {"$ref": "#/$defs/optionalString"}, "bookmark_target_commit_id": {"$ref": "#/$defs/optionalString"}
+    }},
+    "native": {"type": "object", "required": ["state", "manifest", "renewal_effects", "explicit_clear_effects", "source_state_adopted", "steps", "elapsed_ms", "tracked_install_ms"], "properties": {
+      "state": {"enum": ["unstarted", "in_progress", "established"]},
+      "manifest": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["desired", "installed", "owned_obsolete", "owned_retired", "complete"], "properties": {"desired": {"$ref": "#/$defs/N"}, "installed": {"$ref": "#/$defs/N"}, "owned_obsolete": {"$ref": "#/$defs/N"}, "owned_retired": {"$ref": "#/$defs/N"}, "complete": {"type": "boolean"}}}]},
+      "renewal_effects": {"anyOf": [{"$ref": "#/$defs/effects"}, {"type": "null"}]}, "explicit_clear_effects": {"anyOf": [{"$ref": "#/$defs/effects"}, {"type": "null"}]},
+      "source_state_adopted": {"type": ["boolean", "null"]},
+      "steps": {"type": "array", "items": {"type": "object", "required": ["phase", "status", "elapsed_ms"], "properties": {"phase": {"$ref": "#/$defs/phase"}, "status": {"enum": ["succeeded", "failed"]}, "elapsed_ms": {"$ref": "#/$defs/optionalN"}}}},
+      "elapsed_ms": {"$ref": "#/$defs/optionalN"}, "tracked_install_ms": {"$ref": "#/$defs/optionalN"}
+    }},
+    "effects": {"type": "object", "required": ["files_copied", "files_reflinked", "bytes_copied", "bytes_reflinked", "symlinks_created", "directories_created", "files_removed", "symlinks_removed", "directories_removed", "directory_permissions_set"], "properties": {
+      "files_copied": {"$ref": "#/$defs/N"}, "files_reflinked": {"$ref": "#/$defs/N"}, "bytes_copied": {"$ref": "#/$defs/N"}, "bytes_reflinked": {"$ref": "#/$defs/N"}, "symlinks_created": {"$ref": "#/$defs/N"}, "directories_created": {"$ref": "#/$defs/N"}, "files_removed": {"$ref": "#/$defs/N"}, "symlinks_removed": {"$ref": "#/$defs/N"}, "directories_removed": {"$ref": "#/$defs/N"}, "directory_permissions_set": {"$ref": "#/$defs/N"}
+    }},
+    "ordinary": {"type": "object", "required": ["state", "report", "application_ms"], "properties": {
+      "state": {"enum": ["disabled", "unstarted", "partial", "satisfied"]}, "application_ms": {"$ref": "#/$defs/optionalN"},
+      "report": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/ordinaryReport"}]}
+    }},
+    "ordinaryReport": {"type": "object", "required": ["satisfied", "deviated", "retained", "applications", "planned", "completed", "opaque_deviated", "additional_retained", "excluded", "end", "pruned", "observed"], "properties": {
+      "satisfied": {"type": "boolean"}, "deviated": {"$ref": "#/$defs/N"}, "retained": {"$ref": "#/$defs/N"}, "applications": {"$ref": "#/$defs/N"}, "planned": {"$ref": "#/$defs/N"}, "completed": {"$ref": "#/$defs/effects"}, "opaque_deviated": {"$ref": "#/$defs/N"}, "additional_retained": {"$ref": "#/$defs/N"}, "excluded": {"$ref": "#/$defs/N"}, "end": {"enum": ["comparison_failed", "application_failed", "refresh_failed", "decision_changed", "abandoned", null]}, "pruned": {"type": "boolean"}, "observed": {"$ref": "#/$defs/observed"}
+    }},
+    "observed": {"type": "object", "required": ["state", "scoped", "comparator", "excluded", "planned", "deviated", "retained", "equal", "different", "not_assessed", "unsupported", "unresolved", "stopped_paired", "examined_directories"], "properties": {
+      "state": {"enum": ["incomplete", "complete", "failed"]}, "scoped": {"type": "boolean"}, "comparator": {"$ref": "#/$defs/optionalString"}, "excluded": {"$ref": "#/$defs/N"}, "planned": {"$ref": "#/$defs/N"}, "deviated": {"$ref": "#/$defs/N"}, "retained": {"$ref": "#/$defs/N"}, "equal": {"$ref": "#/$defs/N"}, "different": {"$ref": "#/$defs/N"}, "not_assessed": {"$ref": "#/$defs/N"}, "unsupported": {"$ref": "#/$defs/N"}, "unresolved": {"$ref": "#/$defs/N"}, "stopped_paired": {"$ref": "#/$defs/N"}, "examined_directories": {"$ref": "#/$defs/N"}
+    }},
+    "finish": {"type": "object", "required": ["state", "links", "failed_path", "elapsed_ms"], "properties": {
+      "state": {"enum": ["unstarted", "partial", "complete"]}, "failed_path": {"$ref": "#/$defs/optionalPath"}, "elapsed_ms": {"$ref": "#/$defs/optionalN"},
+      "links": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["linked", "directories_created", "satisfied", "skipped_missing_target"], "properties": {"linked": {"$ref": "#/$defs/N"}, "directories_created": {"$ref": "#/$defs/N"}, "satisfied": {"$ref": "#/$defs/N"}, "skipped_missing_target": {"$ref": "#/$defs/N"}}}]}
+    }},
+    "capture": {"type": "object", "description": "Actual prepared manifest counts: owned_manifests counts required O indexes, never the provider's implicit empty owner set.", "required": ["distinct_trees", "membership_queries", "indexes", "donor_cache_reads", "desired_manifests", "owned_manifests"], "properties": {
+      "distinct_trees": {"$ref": "#/$defs/N"}, "membership_queries": {"$ref": "#/$defs/N"}, "indexes": {"$ref": "#/$defs/N"}, "donor_cache_reads": {"$ref": "#/$defs/N"}, "desired_manifests": {"$ref": "#/$defs/N"}, "owned_manifests": {"$ref": "#/$defs/N"}
+    }},
+    "sourceWork": {"type": "object", "required": ["listings", "metadata_acquisitions", "link_acquisitions", "fact_hits", "cache_hits", "cache_misses"], "properties": {
+      "listings": {"$ref": "#/$defs/N"}, "metadata_acquisitions": {"$ref": "#/$defs/N"}, "link_acquisitions": {"$ref": "#/$defs/N"}, "fact_hits": {"$ref": "#/$defs/N"}, "cache_hits": {"$ref": "#/$defs/N"}, "cache_misses": {"$ref": "#/$defs/N"}
+    }},
+    "sourceDiagnostics": {"type": "object", "required": ["paired", "opaque", "declared", "retained_batches", "retained_charged_capacity", "active_batches", "evictions"], "properties": {
+      "paired": {"$ref": "#/$defs/sourceWork"}, "opaque": {"$ref": "#/$defs/sourceWork"}, "declared": {"$ref": "#/$defs/sourceWork"}, "retained_batches": {"$ref": "#/$defs/N"}, "retained_charged_capacity": {"$ref": "#/$defs/N"}, "active_batches": {"$ref": "#/$defs/N"}, "evictions": {"$ref": "#/$defs/N"}
+    }},
+    "error": {"type": "object", "required": ["kind", "phase", "receiver", "path", "argv_step", "message", "causes", "secondary"], "properties": {
+      "kind": {"enum": ["resolution", "preparation", "execution"]}, "phase": {"$ref": "#/$defs/phase"}, "receiver": {"$ref": "#/$defs/optionalString"}, "path": {"$ref": "#/$defs/optionalPath"}, "argv_step": {"$ref": "#/$defs/optionalN"}, "message": {"type": "string"}, "causes": {"$ref": "#/$defs/strings"},
+      "secondary": {"type": "array", "items": {"type": "object", "required": ["operation", "path", "message", "causes"], "properties": {"operation": {"$ref": "#/$defs/optionalString"}, "path": {"$ref": "#/$defs/optionalPath"}, "message": {"type": "string"}, "causes": {"$ref": "#/$defs/strings"}}}}
+    }}
+  }
+}

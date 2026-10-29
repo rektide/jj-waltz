@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "command": "reseed",
+  "mode": "execute",
+  "status": "failed",
+  "renewal_route": "clear-then-populate",
+  "native_profile": null,
+  "selection": {"names": ["worker-a"], "groups": [], "resolved": [], "skipped": []},
+  "source": null,
+  "desired": {"kind": "source", "revset": null, "commit_id": null, "state": "unresolved"},
+  "preview": null,
+  "receivers": [],
+  "capture": null,
+  "source_diagnostics": {"native": null, "ordinary": null},
+  "timings": {"command_ms": "2", "engine_ms": null, "pre_native_ms": null, "ordinary_ms": null},
+  "error": {
+    "kind": "resolution", "phase": "resolve", "receiver": null, "path": null, "argv_step": null,
+    "message": "cannot resolve configured source", "causes": ["No such file or directory (os error 2)"], "secondary": []
+  }
+}

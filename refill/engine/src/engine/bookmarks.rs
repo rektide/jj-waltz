@@ -36,41 +36,6 @@ impl Guard {
         }
     }
 
-    pub(super) fn recovery(&self, root: &std::path::Path, old_commit: &str) -> String {
-        let (work, bookmark) = match self {
-            Self::Required(proof) => (proof.work_tip.as_str(), proof.label()),
-            Self::AllowUnbookmarked => (old_commit, old_commit.to_owned()),
-        };
-        let expression = match self {
-            Self::Required(proof) => {
-                let name = serde_json::to_string(&proof.name).expect("JSON string");
-                match &proof.remote {
-                    Some(remote) => format!("{name}@{}", serde_json::to_string(remote).expect("JSON string")),
-                    None => name,
-                }
-            }
-            Self::AllowUnbookmarked => commit_id_revset(old_commit).expect("pinned commit ID"),
-        };
-        let revision = shlex::try_quote(&expression).expect("JSON revset has no NUL");
-        match self {
-            Self::Required(_) => format!(
-                "your work tip {work} is covered by bookmark {bookmark}; recover with `jj new {revision}` and `jj sparse reset` in {}, then re-run reseed; jw will not repair it",
-                root.display(),
-            ),
-            Self::AllowUnbookmarked => format!(
-                "bookmark requirement was explicitly bypassed; your prior work is in JJ history at {work}; recover with `jj new {revision}` and `jj sparse reset` in {}, then re-run reseed; jw will not repair it",
-                root.display(),
-            ),
-        }
-    }
-
-    pub(super) fn describe(&self) -> String {
-        match self {
-            Self::AllowUnbookmarked => "bookmark requirement explicitly bypassed (--allow-unbookmarked)".into(),
-            Self::Required(proof) => format!("bookmark {:?} covers work tip {}", proof.label(), proof.work_tip),
-        }
-    }
-
     /// A frozen required reference must still cover the ORIGINAL work tip. A
     /// forward move is fine; deletion, conflict or a move off that lineage is not.
     /// This is snapshot-free, including when a target is partially refilled.

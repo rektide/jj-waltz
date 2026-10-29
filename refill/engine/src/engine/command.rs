@@ -48,6 +48,7 @@ pub struct ResolvedCommand {
     pub route: RenewalRoute,
     pub source: ResolvedSource,
     pub receivers: Vec<Arc<BoundWorkspace>>,
+    pub facts: ResolutionFacts,
     patterns: Arc<Patterns>,
     pattern_declarations: Vec<String>,
     links: Vec<LoadedWorkspaceLinks>,
@@ -105,79 +106,111 @@ pub struct CommandPlan {
 }
 
 impl ResolvedCommand {
-    pub fn resolve(cwd: &Path, mut request: ReseedRequest, route: RenewalRoute, diagnostic: &mut dyn FnMut(&str)) -> Result<Self> {
+    pub fn resolve(cwd: &Path, mut request: ReseedRequest, diagnostic: &mut dyn FnMut(&str)) -> std::result::Result<Self, ResolutionFailure> {
         let started = Instant::now();
-        let resolution = Resolution::capture(cwd, &request, false)?;
-        let registry = &resolution.registry;
-        if request.names.is_empty() && request.groups.is_empty() {
-            ensure!(
-                registry.current_name != registry.primary_name,
-                "primary checkout requires literal target names or --group"
+        let mut facts = ResolutionFacts::default();
+        let mut receiver = None;
+        let result = (|| {
+            let resolution = Resolution::capture(cwd, &request, false, &mut facts)?;
+            let registry = &resolution.registry;
+            let implicit_current = request.names.is_empty() && request.groups.is_empty();
+            if implicit_current {
+                ensure!(
+                    registry.current_name != registry.primary_name,
+                    "primary checkout requires literal target names or --group"
+                );
+                request.names.push(registry.current_name.clone());
+            }
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let mut selected = selection::resolve(
+                &request,
+                &resolution.config.groups,
+                &registry.registered,
+                &registry.primary_root,
+                home.as_deref(),
+                &resolution.source.root,
+            )?;
+            if implicit_current {
+                for s in &mut selected.selections {
+                    s.origins = vec!["current".into()];
+                }
+            }
+            facts.skipped = selected.skipped.clone();
+            if let Some(warning) = selected.warning() {
+                diagnostic(&warning);
+            }
+            selected.validate()?;
+            let inherited = Config::load_inherited_copy_ignored(
+                request.copy_ignored.as_deref(),
+                resolution.config.copy_ignored.as_deref(),
+                request.no_copy_ignored,
+            )?;
+            let policy = Policy::resolve(
+                request.copy_ignored.as_deref(),
+                resolution.config.copy_ignored.as_deref(),
+                inherited.as_deref(),
+                request.no_copy_ignored,
             );
-            request.names.push(registry.current_name.clone());
-        }
-        let home = std::env::var_os("HOME").map(PathBuf::from);
-        let selected = selection::resolve(
-            &request,
-            &resolution.config.groups,
-            &registry.registered,
-            &registry.primary_root,
-            home.as_deref(),
-            &resolution.source.root,
-        )?;
-        if let Some(warning) = selected.warning() {
-            diagnostic(&warning);
-        }
-        selected.validate()?;
-        let inherited = Config::load_inherited_copy_ignored(
-            request.copy_ignored.as_deref(),
-            resolution.config.copy_ignored.as_deref(),
-            request.no_copy_ignored,
-        )?;
-        let policy = Policy::resolve(
-            request.copy_ignored.as_deref(),
-            resolution.config.copy_ignored.as_deref(),
-            inherited.as_deref(),
-            request.no_copy_ignored,
-        );
-        let patterns = Arc::new(Patterns::compile(&policy.patterns)?);
-        let link_config = links::load_link_config(&registry.primary_root)?;
-        let registrations = jj_waltz_workspace_state::ownership::refill_registrations_at(&resolution.caller, &registry.operation)?;
-        let topology = Topology::capture()?;
-        topology.workspace(&resolution.source.root, true)?;
-        let mut roots = vec![resolution.source.root.clone()];
-        let mut receivers = Vec::new();
-        let mut links = Vec::new();
-        for selected in selected.selections {
-            let root = registry.roots.get(&selected.name).context("receiver has no usable registered root")?;
-            ensure!(
-                root != &registry.primary_root && root != &resolution.source.root,
-                "primary/source is not an eligible receiver"
-            );
-            let binding = Arc::new(BoundWorkspace::capture(root, registry, Arc::clone(&resolution.source.repository), true)?);
-            ensure!(binding.name == selected.name, "selected root registration differs");
-            resolution.check_ownership(&binding, &registrations)?;
-            topology.workspace(root, false)?;
-            roots.push(root.clone());
-            links.push(LoadedWorkspaceLinks::new(link_config.as_ref(), root)?);
-            receivers.push(binding);
-        }
-        topology.separate(&roots)?;
-        ensure!(!receivers.is_empty(), "select at least one workspace");
-        if request.prepare {
-            resolution.check_ownership(&resolution.source, &registrations)?;
-        }
-        let source = ResolvedSource::from_resolution(&resolution, &request);
-        Ok(Self {
-            started,
-            resolution,
-            request,
-            route,
+            let patterns = Arc::new(Patterns::compile(&policy.patterns)?);
+            if policy.origin != jj_waltz_transfer_workspace::ignored::Origin::None {
+                diagnostic(&policy.describe());
+            }
+            if resolution.config.legacy_prepare {
+                diagnostic("warning: [prepare] is a deprecated local alias for [freshen]; rename it to [freshen]");
+            }
+            let link_config = links::load_link_config(&registry.primary_root)?;
+            let registrations = jj_waltz_workspace_state::ownership::refill_registrations_at(&resolution.caller, &registry.operation)?;
+            let topology = Topology::capture()?;
+            topology.workspace(&resolution.source.root, true)?;
+            let mut roots = vec![resolution.source.root.clone()];
+            let mut receivers = Vec::new();
+            let mut links = Vec::new();
+            for selected in selected.selections {
+                receiver = Some(selected.name.clone());
+                let root = registry.roots.get(&selected.name).context("receiver has no usable registered root")?;
+                ensure!(
+                    root != &registry.primary_root && root != &resolution.source.root,
+                    "primary/source is not an eligible receiver"
+                );
+                let binding = Arc::new(BoundWorkspace::capture(root, registry, Arc::clone(&resolution.source.repository), true)?);
+                ensure!(binding.name == selected.name, "selected root registration differs");
+                resolution.check_ownership(&binding, &registrations)?;
+                topology.workspace(root, false)?;
+                roots.push(root.clone());
+                links.push(LoadedWorkspaceLinks::new(link_config.as_ref(), root)?);
+                receivers.push(binding);
+                facts.selections.push(crate::ReseedSelection {
+                    root: root.clone(),
+                    ..selected
+                });
+            }
+            receiver = None;
+            topology.separate(&roots)?;
+            ensure!(!receivers.is_empty(), "select at least one workspace");
+            if request.prepare {
+                resolution.check_ownership(&resolution.source, &registrations)?;
+            }
+            let source = ResolvedSource::from_resolution(&resolution, &request, facts.source.clone().expect("captured source"));
+            Ok(Self {
+                started,
+                resolution,
+                route: request.renewal_route,
+                request,
+                facts: facts.clone(),
+                source,
+                receivers,
+                patterns,
+                pattern_declarations: policy.patterns,
+                links,
+            })
+        })();
+        result.map_err(|source| ResolutionFailure {
+            facts: Box::new(facts),
+            location: FailureLocation {
+                phase: Phase::Resolve,
+                receiver,
+            },
             source,
-            receivers,
-            patterns,
-            pattern_declarations: policy.patterns,
-            links,
         })
     }
 
@@ -192,6 +225,7 @@ impl ResolvedCommand {
         } else {
             let commit = client.resolve_one_at(&operation, "@")?.commit_id;
             SourcePlan {
+                context: self.source.context.clone(),
                 recorded_commit: commit.clone(),
                 prospective: None,
                 assertion_pending: self.source.assertion.is_some(),
@@ -246,6 +280,8 @@ impl ResolvedCommand {
         let mut setup_done = false;
         let mut report = CommandReport {
             profile: self.source.binding.repository.profile.clone(),
+            source_context: self.source.context.clone(),
+            desired: None,
             source: None,
             preparation: None,
             receivers: self
@@ -298,11 +334,13 @@ impl ResolvedCommand {
                     Ok(source) => source,
                     Err(failure) => {
                         report.preparation = Some(failure.completed.as_ref().clone());
+                        report.source_context = failure.context.as_ref().clone();
                         return Err(failure.into());
                     }
                 },
-                None => self.source.existing()?,
+                None => self.source.existing(&mut report.source_context)?,
             };
+            report.source_context = source.report.context.clone();
             report.source = Some(source.report.clone());
             report.preparation = source.report.preparation.clone();
             let operation = source.binding.client().operation_id()?;
@@ -313,6 +351,7 @@ impl ResolvedCommand {
                 .map(|r| self.resolution.caller.resolve_one_at(&operation, r))
                 .transpose()?
                 .map_or_else(|| source.report.commit.clone(), |r| r.commit_id);
+            report.desired = Some(desired.clone());
             let mut saved = Vec::new();
             phase = Phase::Preserve;
             for (index, (binding, links)) in self.receivers.iter().zip(self.links).enumerate() {

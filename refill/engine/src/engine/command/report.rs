@@ -1,6 +1,7 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RenewalRoute {
     #[default]
     ClearThenPopulate,
@@ -180,6 +181,8 @@ pub struct CaptureCounts {
 #[derive(Debug)]
 pub struct CommandReport {
     pub profile: NativeProfile,
+    pub source_context: SourceContext,
+    pub desired: Option<String>,
     pub source: Option<SourceReport>,
     pub preparation: Option<PreparationReport>,
     pub receivers: Vec<ReceiverReport>,
@@ -196,6 +199,40 @@ pub struct CommandReport {
 pub struct FailureLocation {
     pub phase: Phase,
     pub receiver: Option<String>,
+}
+
+/// Successfully captured resolution facts only. No discovery is performed when
+/// constructing or rendering a failure. Selection entries here are bound roots.
+#[derive(Debug, Clone, Default)]
+pub struct ResolutionFacts {
+    pub profile: Option<NativeProfile>,
+    pub source: Option<SourceContext>,
+    pub selections: Vec<crate::ReseedSelection>,
+    pub skipped: Vec<crate::ReseedSelectionMiss>,
+}
+#[derive(Debug)]
+pub struct ResolutionFailure {
+    pub facts: Box<ResolutionFacts>,
+    pub location: FailureLocation,
+    pub source: anyhow::Error,
+}
+impl std::fmt::Display for ResolutionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "refill resolution: {}", self.source)
+    }
+}
+impl std::error::Error for ResolutionFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+/// Typed owned error context. The underlying cause remains in the anyhow chain.
+#[derive(Debug)]
+pub struct ErrorPath(pub PathBuf);
+impl std::fmt::Display for ErrorPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "at {}", self.0.display())
+    }
 }
 #[derive(Debug)]
 pub struct CommandFailure {
@@ -316,6 +353,17 @@ mod tests {
         CommandFailure {
             report: Box::new(CommandReport {
                 profile: NativeProfile::classify(format!("jj {}", jj_waltz_native_jj::refill::TESTED_BUILD)).unwrap(),
+                source_context: SourceContext {
+                    name: "source".into(),
+                    root: "/source".into(),
+                    operation: "op".into(),
+                    recorded_commit: "recorded".into(),
+                    assertion: None,
+                    upstream: None,
+                    elapsed: None,
+                    preparation_argv: None,
+                },
+                desired: None,
                 source: None,
                 preparation: None,
                 receivers: vec![earlier, receiver],

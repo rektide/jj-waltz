@@ -113,15 +113,15 @@ fn default_guard_blocks_unbookmarked_work_without_refilling_a_valid_peer() {
                 args.push("--dry-run");
             }
             let output = f.reseed(&["b", "a"], &args);
+            if dry_run {
+                let plan = ok(output);
+                assert!(plan.contains("planned a:") && plan.contains("planned b:") && !plan.contains("READY"));
+                continue;
+            }
             assert!(!output.status.success(), "{}", text(&output));
             let text = text(&output);
             assert!(text.contains("unbookmarked work tip"), "{text}");
             assert!(text.contains("--allow-unbookmarked"), "{text}");
-            if dry_run {
-                assert!(text.contains("BLOCKED a:"), "{text}");
-                assert!(text.contains("PLAN b: READY"), "{text}");
-                assert!(text.contains("old-base"), "{text}");
-            }
             assert_eq!(fs::read(f.a.join("file")).unwrap(), b"unfinished work\n");
             assert_eq!(fs::metadata(f.b.join("file")).unwrap().ino(), peer_inode);
             assert_eq!(f.jj(&f.b, &["--ignore-working-copy", "sparse", "list"]), ".");
@@ -136,12 +136,11 @@ fn existing_named_change_follows_normal_dirty_snapshots_and_guard_never_creates_
     f.bookmark(&f.a, "feature", "@");
     fs::write(f.a.join("file"), b"named unfinished work\n").unwrap();
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(preview.contains("bookmark \"feature\" covers work tip"), "{preview}");
-    let preserved = f.id(&f.a, "@");
-    assert_eq!(f.id(&f.a, "feature"), preserved);
+    assert!(preview.contains("planned a:") && preview.contains("history=unknown"), "{preview}");
     // The plain default syncs the workspace onto the donor's current commit;
     // the bookmarked work itself stays in JJ history at the preserved tip.
     ok(f.reseed(&["a"], &[]));
+    let preserved = f.id(&f.a, "feature");
     assert_eq!(f.id(&f.a, "@-"), f.base, "sync child of the donor's base");
     assert_eq!(f.id(&f.a, "feature"), preserved);
     assert_eq!(fs::read(f.a.join("file")).unwrap(), b"baseline\n");
@@ -165,29 +164,29 @@ fn descendant_refs_cover_scratch_parents_but_described_empty_changes_and_merges_
     f.workspace("descendant", &descendant, &work);
     f.bookmark(&descendant, "descendant", "@");
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(preview.contains(&format!("bookmark \"descendant\" covers work tip {work}")), "{preview}");
+    assert!(preview.contains("planned a:"), "{preview}");
     f.jj(&f.a, &["new"]);
     let scratch = f.id(&f.a, "@");
     assert_ne!(scratch, work);
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(preview.contains(&format!("covers work tip {work}")), "{preview}");
+    assert!(preview.contains("planned a:"), "{preview}");
     ok(f.reseed(&["a"], &[]));
     f.jj(&f.a, &["describe", "-m", "intentional empty checkpoint"]);
     let checkpoint = f.id(&f.a, "@");
-    let blocked = f.reseed(&["a"], &["--dry-run"]);
+    let blocked = f.reseed(&["a"], &[]);
     assert!(!blocked.status.success());
     assert!(text(&blocked).contains(&format!("unbookmarked work tip {checkpoint}")));
     f.bookmark(&f.a, "checkpoint", "@");
-    ok(f.reseed(&["a"], &["--dry-run"]));
+    ok(f.reseed(&["a"], &[]));
     f.jj(&f.b, &["describe", "-m", "other empty lineage"]);
     let other = f.id(&f.b, "@");
     f.jj(&f.a, &["new", &checkpoint, &other]);
     let merge = f.id(&f.a, "@");
-    let blocked = f.reseed(&["a"], &["--dry-run"]);
+    let blocked = f.reseed(&["a"], &[]);
     assert!(!blocked.status.success());
     assert!(text(&blocked).contains(&format!("unbookmarked work tip {merge}")));
     f.bookmark(&f.a, "merge", "@");
-    ok(f.reseed(&["a"], &["--dry-run"]));
+    ok(f.reseed(&["a"], &[]));
 }
 
 #[test]
@@ -202,7 +201,7 @@ fn explicit_opt_out_never_bypasses_other_safety_checks() {
         let mut preview_args = args.clone();
         preview_args.push("--dry-run");
         let preview = ok(f.reseed(&["a"], &preview_args));
-        assert!(preview.contains("bookmark requirement explicitly bypassed"), "{preview}");
+        assert!(preview.contains("planned a:") && preview.contains("history=unknown"), "{preview}");
         ok(f.reseed(&["a"], &args));
     }
     assert!(f.records(".receipt.json").is_empty());
@@ -211,7 +210,7 @@ fn explicit_opt_out_never_bypasses_other_safety_checks() {
         let output = f.reseed(&["a"], args);
         assert!(!output.status.success());
         assert!(text(&output).contains("full sparse patterns"));
-        assert!(text(&output).contains("jj sparse reset"));
+        assert!(text(&output).contains("recover deliberately out of band"));
     }
     let output = f.reseed(&["a"], &["--resume", "--allow-unbookmarked"]);
     assert!(!output.status.success());
@@ -240,10 +239,10 @@ fn actual_remote_bookmark_counts_without_a_local_ref_and_removal_stops_coverage(
     f.jj(&f.source, &["git", "fetch", "--remote", "backup", "--branch", "saved"]);
     assert_eq!(f.jj(&f.source, &["--ignore-working-copy", "bookmark", "list", "-T", "name ++ \"\\n\""]), "");
     let preview = ok(f.reseed(&["a"], &["--dry-run"]));
-    assert!(preview.contains(&format!("bookmark \"saved@backup\" covers work tip {work}")), "{preview}");
+    assert!(preview.contains("planned a:"), "{preview}");
     ok(f.reseed(&["a"], &[]));
     f.jj(&f.source, &["git", "remote", "remove", "backup"]);
-    let blocked = f.reseed(&["a"], &["--dry-run"]);
+    let blocked = f.reseed(&["a"], &[]);
     assert!(!blocked.status.success());
     assert!(text(&blocked).contains("unbookmarked work tip"));
 }

@@ -142,13 +142,14 @@ pub(super) struct Resolution {
     pub metadata: WorkspaceMetadataStore,
 }
 impl Resolution {
-    pub fn capture(cwd: &Path, request: &ReseedRequest, source_only: bool) -> Result<Self> {
+    pub fn capture(cwd: &Path, request: &ReseedRequest, source_only: bool, facts: &mut ResolutionFacts) -> Result<Self> {
         ensure!(
             std::env::var_os("GIT_CONFIG_PARAMETERS").is_none_or(|v| v.is_empty())
                 && std::env::var_os("GIT_CONFIG_COUNT").is_none_or(|v| v.is_empty() || v == "0"),
             "unset active Git config environment overrides before reseed"
         );
         let profile = NativeProfile::capture()?;
+        facts.profile = Some(profile.clone());
         let (caller, registry) = if source_only {
             RegistrySnapshot::capture_source(cwd)?
         } else {
@@ -156,20 +157,39 @@ impl Resolution {
         };
         let config = load_config(&registry.primary_root)?;
         let raw = request.source.as_ref().or(config.source.as_ref()).unwrap_or(&registry.primary_root);
-        let source = if raw.is_absolute() {
+        let source_path = if raw.is_absolute() {
             raw.clone()
         } else if request.source.is_some() {
             cwd.join(raw)
         } else {
             registry.primary_root.join(raw)
-        }
-        .canonicalize()?;
+        };
+        let source = source_path.canonicalize().with_context(|| ErrorPath(source_path))?;
         let repo = Arc::new(RepositoryBinding {
             identity: Identity::read(&registry.repository)?,
             path: registry.repository.clone(),
             profile,
         });
         let source = Arc::new(BoundWorkspace::capture(&source, &registry, repo, false)?);
+        let recorded = source.client().commit_facts_at(&registry.operation, "@")?;
+        facts.source = Some(SourceContext {
+            name: source.name.clone(),
+            root: source.root.clone(),
+            operation: registry.operation.clone(),
+            recorded_commit: recorded.commit_id,
+            assertion: request.source_at.clone().or_else(|| config.source_at.clone()).map(|revset| SourceAssertion {
+                revset,
+                commit: None,
+                status: AssertionStatus::Pending,
+            }),
+            upstream: None,
+            elapsed: None,
+            preparation_argv: if source_only || request.prepare {
+                Some(config.freshen.as_ref().map(prepare::Settings::argv).transpose()?.unwrap_or_else(Vec::new))
+            } else {
+                None
+            },
+        });
         let metadata = WorkspaceMetadataStore::from_repo_config_path(&registry.repo_config_path)?;
         Ok(Self {
             caller,

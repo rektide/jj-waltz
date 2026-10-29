@@ -160,7 +160,7 @@ impl Fixture {
         c
     }
     fn prepare(&self, extra: &[&str]) -> Output {
-        self.jw().args(["prepare", "--copy-ignored", "node_modules"]).args(extra).output().unwrap()
+        self.jw().arg("prepare").args(extra).output().unwrap()
     }
     fn lock_path(&self) -> PathBuf {
         let config = PathBuf::from(self.jj(&self.source, &["--ignore-working-copy", "config", "path", "--repo"]));
@@ -218,7 +218,7 @@ fn prepare_from_primary_or_dirty_worker_never_selects_or_snapshots_workers() {
         let output = ok(f
             .jw()
             .current_dir(if primary { &f.source } else { &f.target })
-            .args(["prepare", "--copy-ignored", "node_modules"])
+            .args(["prepare"])
             .output()
             .unwrap());
         assert!(output.contains(&goal), "{output}");
@@ -243,8 +243,10 @@ fn json_reports_exact_commit_without_installer_stdout_contamination() {
     let output = f.prepare(&["--format", "json"]);
     assert!(String::from_utf8_lossy(&output.stderr).contains("installer-output"));
     let report: Value = serde_json::from_str(&ok(output)).unwrap();
-    assert_eq!(report["source_commit_id"], goal);
-    assert_eq!(report["targets"], json!([]));
+    assert_eq!(report["source"]["upstream_goal_commit_id"], goal);
+    assert_eq!(report["source"]["source_commit_id"], f.id(&f.source, "@"));
+    assert_ne!(report["source"]["source_commit_id"], goal);
+    assert_eq!(report["receivers"], json!([]));
 }
 
 #[test]
@@ -270,7 +272,7 @@ fn dry_run_selects_native_upstream_without_fetch_install_or_worker_snapshot() {
     let worker = f.id(&f.target, "@");
     let source = f.id(&f.source, "@");
     let output = ok(f.prepare(&["--dry-run"]));
-    assert!(output.contains("source-only prepare") && output.contains("post-fetch exact commit unknown"));
+    assert!(output.contains("PLANNED — payload/path obstructions not inspected") && output.contains("S=unknown"));
     assert_eq!(f.id(&f.source, "@"), source);
     assert_eq!(f.id(&f.target, "@"), worker);
     assert_eq!(f.id(&f.source, "dev@origin"), f.baseline);
@@ -331,7 +333,7 @@ fn command_sequence_runs_again_from_the_start_after_failure() {
     .unwrap();
     let goal = f.advance();
     let failure = fails(f.prepare(&[]), "step 2");
-    assert!(failure.contains("fix the source and run prepare again"));
+    assert!(failure.contains("no rollback"));
     fs::write(&gate, "ok").unwrap();
     ok(f.prepare(&[]));
     assert_eq!(f.id(&f.source, "@-"), goal);
@@ -424,13 +426,13 @@ fn invalid_policy_and_removed_commands_fail_before_fetch() {
 }
 
 #[test]
-fn ignored_selection_is_proved_and_no_command_does_not_claim_a_build() {
+fn preparation_does_not_select_payload_and_no_command_does_not_claim_a_build() {
     let Some(f) = Fixture::new() else { return };
     f.policy(false, "copy_ignored=['node_modules']");
     fs::create_dir(f.source.join("node_modules")).unwrap();
     fs::write(f.source.join("node_modules/package"), "existing").unwrap();
     f.advance();
-    let output = ok(f.jw().args(["prepare", "--no-copy-ignored"]).output().unwrap());
+    let output = ok(f.jw().args(["prepare"]).output().unwrap());
     assert!(output.contains("existing data, not freshly built"));
     assert!(!f.log.exists());
     assert!(!f.target.join("node_modules").exists());
@@ -477,14 +479,25 @@ fn configured_preparation_never_activates_offline_reseed() {
 #[test]
 fn preparation_lock_blocks_prepare_but_not_plain_reseed() {
     let Some(f) = Fixture::new() else { return };
-    ok(f.prepare(&["--dry-run"]));
-    let lock = fs::OpenOptions::new().read(true).write(true).open(f.lock_path()).unwrap();
+    let config = PathBuf::from(f.jj(&f.source, &["--ignore-working-copy", "config", "path", "--repo"]));
+    jj_waltz_workspace_state::metadata::WorkspaceMetadataStore::from_repo_config_path(&config)
+        .unwrap()
+        .ensure_initialized()
+        .unwrap();
+    fs::create_dir_all(f.lock_path().parent().unwrap()).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(f.lock_path())
+        .unwrap();
     lock.try_lock_exclusive().unwrap();
     for args in [vec!["prepare"], vec!["reseed", "--prepare"]] {
         fails(f.jw().args(args).output().unwrap(), "another jw preparation is running");
     }
     let preview = ok(f.jw().args(["reseed", "--dry-run"]).output().unwrap());
-    assert!(preview.contains("PLAN worker: READY"), "{preview}");
+    assert!(preview.contains("planned worker:") && !preview.contains("READY"), "{preview}");
     if f.cow_supported() {
         ok(f.jw().args(["reseed"]).output().unwrap());
     }
@@ -553,7 +566,7 @@ exec "$JW_REAL_JJ" "$@"
         .env("JW_TEST_REFILL_PROBE", &marker)
         .output()
         .unwrap());
-    assert!(output.contains("OK worker:") && output.contains("trusted configured programs"), "{output}");
+    assert!(output.contains("complete worker:") && output.contains("produced"), "{output}");
     assert!(marker.exists(), "must probe the actual refill boundary");
     assert_eq!(f.id(&f.source, "@-"), goal);
     assert_eq!(f.id(&f.target, "@-"), f.id(&f.source, "@"));
@@ -594,8 +607,8 @@ fn reseed_prepare_preview_defers_future_tree_checks_and_preserves_disks() {
             .args(["reseed", "--prepare", "--source-at", "future@origin", "--dry-run"])
             .output()
             .unwrap());
-        assert!(output.contains("post-fetch exact commit unknown"), "{output}");
-        assert!(output.contains("PLAN worker: NOT ASSESSED") && !output.contains("READY"), "{output}");
+        assert!(output.contains("S=unknown"), "{output}");
+        assert!(output.contains("planned worker:") && !output.contains("READY"), "{output}");
         assert_eq!(f.id(&f.source, "@"), donor);
         assert_eq!(f.id(&f.target, "@"), worker);
         assert_eq!([disk_stamp(&f.source), disk_stamp(&f.target)], before);
@@ -635,7 +648,7 @@ fn reseed_prepare_honors_source_override_and_disabled_payload_from_subdirectory(
         ])
         .output()
         .unwrap());
-    assert!(output.contains("OK worker:"), "{output}");
+    assert!(output.contains("complete worker:"), "{output}");
     assert_eq!(f.id(&donor, "@-"), goal);
     assert_eq!(f.id(&f.source, "@"), primary);
     assert_eq!(f.id(&f.target, "@-"), f.id(&donor, "@"));
@@ -651,7 +664,10 @@ fn leftover_journals_are_ignored_without_migration_or_pruning() {
     let directory = repo_config.parent().unwrap().join("jj-waltz/reseed");
     // Initialize the authoritative metadata manifest before adding old files;
     // manifestless nonempty stores must still fail closed, never be repaired.
-    ok(f.prepare(&["--dry-run"]));
+    jj_waltz_workspace_state::metadata::WorkspaceMetadataStore::from_repo_config_path(&repo_config)
+        .unwrap()
+        .ensure_initialized()
+        .unwrap();
     fs::create_dir_all(&directory).unwrap();
     let paths = ["old.preparation.json", "old.pending.json", "old.receipt.json"].map(|name| directory.join(name));
     for path in &paths {
@@ -668,4 +684,62 @@ fn leftover_journals_are_ignored_without_migration_or_pruning() {
     let mut names = fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>();
     names.sort();
     assert_eq!(names, ["old.pending.json", "old.preparation.json", "old.receipt.json", "operation.lock"]);
+}
+
+#[test]
+fn public_preparer_allows_final_repair_and_reports_failed_step_and_final_divergence_distinctly() {
+    let Some(f) = Fixture::new() else { return };
+    let goal = f.advance();
+    let settings = |commands: &[Vec<&str>]| {
+        fs::write(f.source.join(".jwreseed.local.toml"), format!("source_at='dev@origin'\n[freshen]\ncommands={}\n", serde_json::to_string(commands).unwrap())).unwrap();
+    };
+    settings(&[vec!["sh", "-c", "printf dirty > lockfile; echo builder-stdout"], vec!["sh", "-c", "printf 'frozen\\n' > lockfile"]]);
+    let output = f.prepare(&["--format=json"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("builder-stdout"));
+    let w: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(w["source"]["upstream_goal_commit_id"], goal);
+    assert_ne!(w["source"]["source_commit_id"], goal);
+    assert_eq!(w["source"]["preparation"]["final_conformance"], "succeeded");
+    for step in w["source"]["preparation"]["steps"].as_array().unwrap() { assert_eq!(step["status"], "succeeded"); assert!(step["elapsed_ms"].is_string()); }
+    settings(&[vec!["sh", "-c", "exit 17"], vec!["sh", "-c", "touch SHOULD_NOT_EXIST"]]);
+    let output = f.prepare(&["--format=json"]);
+    assert!(!output.status.success()); let w: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(w["status"], "failed"); assert_eq!(w["error"]["kind"], "preparation"); assert_eq!(w["error"]["argv_step"], "0");
+    assert_eq!(w["source"]["preparation"]["steps"][0]["status"], "started");
+    assert_eq!(w["source"]["preparation"]["steps"][1]["status"], "selected");
+    assert_eq!(w["source"]["preparation"]["final_conformance"], "pending"); assert!(w["source"]["source_commit_id"].is_null()); assert!(!f.source.join("SHOULD_NOT_EXIST").exists());
+    settings(&[vec!["sh", "-c", "printf dirty > lockfile"]]);
+    let output = f.prepare(&["--format=json"]); assert!(!output.status.success());
+    let w: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(w["source"]["preparation"]["steps"][0]["status"], "succeeded");
+    assert_eq!(w["source"]["preparation"]["final_conformance"], "failed"); assert!(w["error"]["argv_step"].is_null()); assert!(w["source"]["source_commit_id"].is_null());
+}
+
+#[test]
+fn public_plain_asserted_preparing_and_source_only_previews_leave_native_config_lock_and_operations_unchanged() {
+    let Some(f) = Fixture::new() else { return };
+    fs::write(f.source.join("lockfile"), "unsnapshotted donor edit").unwrap();
+    fs::write(f.target.join("version"), "unsnapshotted receiver edit").unwrap();
+    let repo_config = PathBuf::from(f.jj(&f.source, &["--ignore-working-copy", "config", "path", "--repo"]));
+    for mode in ["plain", "asserted", "preparing", "source-only"] {
+        if mode == "plain" { fs::remove_file(f.source.join(".jwreseed.local.toml")).unwrap(); } else { f.policy(true, ""); }
+        let capture = || json!({
+            "operation": f.jj(&f.source, &["--ignore-working-copy", "operation", "log", "--limit=1", "--no-graph", "-T", "id"]),
+            "source_checkout": fs::read(f.source.join(".jj/working_copy/checkout")).unwrap(), "source_tree_state": fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(),
+            "target_checkout": fs::read(f.target.join(".jj/working_copy/checkout")).unwrap(), "target_tree_state": fs::read(f.target.join(".jj/working_copy/tree_state")).unwrap(),
+            "source_disk": disk_stamp(&f.source), "target_disk": disk_stamp(&f.target), "repo_config": fs::read(&repo_config).ok(),
+            "lock": fs::read(f.lock_path()).ok(), "store_exists": repo_config.parent().unwrap().join("jj-waltz").exists()
+        });
+        let before = capture();
+        let mut cmd = f.jw();
+        cmd.args(if mode == "source-only" { vec!["prepare", "--dry-run", "--format=json"] } else { vec!["reseed", "--dry-run", "--format=json"] });
+        if mode == "preparing" { cmd.arg("--prepare"); }
+        let output = cmd.output().unwrap(); assert!(output.status.success(), "{mode}: {}", text(&output));
+        let w: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(w["status"], "planned"); assert!(w["source"]["source_commit_id"].is_null()); assert!(w["source"]["elapsed_ms"].is_null());
+        assert_eq!(w["source"]["evidence"], if mode == "plain" { json!("assumed_prepared") } else { Value::Null });
+        assert_eq!(capture(), before, "{mode} preview mutated native/config/lock state");
+        assert!(!f.log.exists());
+    }
 }

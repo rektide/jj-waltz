@@ -1,0 +1,19 @@
+{
+  "schema_version": 1, "command": "prepare", "mode": "preview", "status": "planned",
+  "renewal_route": null,
+  "native_profile": {"id": "local-tree-state-33d3a595", "raw_version": "jj 0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b"},
+  "selection": {"names": [], "groups": [], "resolved": [], "skipped": []},
+  "source": {
+    "name": "default", "root": {"display": "/donor", "unix_bytes_hex": "2f646f6e6f72"}, "operation_id": "recorded-operation",
+    "recorded_commit_id": "recorded-donor", "source_commit_id": null, "source_change_id": null, "upstream_goal_commit_id": null,
+    "state": "planned", "evidence": null,
+    "assertion": {"revset": "trunk@origin", "commit_id": null, "status": "pending"},
+    "upstream": {"remote": "origin", "bookmark": "trunk", "prospective_goal_commit_id": "old-remote-goal"},
+    "preparation": {"status": "planned", "saved_commit_id": null, "steps": [{"index": "0", "argv": ["builder"], "status": "selected", "elapsed_ms": null}], "final_conformance": "pending", "elapsed_ms": null},
+    "elapsed_ms": null
+  },
+  "desired": null,
+  "preview": {"label": "PLANNED — payload/path obstructions not inspected", "clone_capability_probed": false, "preservation_pending": false, "obstructions_inspected": false, "ordinary_patterns": null},
+  "receivers": [], "capture": null, "source_diagnostics": {"native": null, "ordinary": null},
+  "timings": {"command_ms": "1", "engine_ms": null, "pre_native_ms": null, "ordinary_ms": null}, "error": null
+}

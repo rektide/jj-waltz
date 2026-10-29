@@ -2,7 +2,6 @@
 //! Work is snapshotted and bookmark coverage checked before mutation. Interrupted
 //! refills require deliberate out-of-band recovery, never automatic repair.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -16,6 +15,8 @@ pub enum UnmatchedPolicy {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
+    #[serde(default)]
+    pub renewal_route: command::RenewalRoute,
     /// Literal targets; empty names/groups select the current variant.
     pub names: Vec<String>,
     pub groups: Vec<String>,
@@ -44,21 +45,7 @@ pub struct ReseedRequest {
 pub struct PrepareRequest {
     pub source: Option<PathBuf>,
     pub source_at: Option<String>,
-    pub copy_ignored: Option<Vec<String>>,
-    pub no_copy_ignored: bool,
     pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReseedReport {
-    pub dry_run: bool,
-    pub source: PathBuf,
-    /// None when a freshen preview cannot know the post-fetch exact goal.
-    pub source_commit_id: Option<String>,
-    pub preparation_summary: Option<String>,
-    pub targets: Vec<ReseedOutcome>,
-    pub selections: Vec<ReseedSelection>,
-    pub skipped: Vec<ReseedSelectionMiss>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -75,78 +62,10 @@ pub struct ReseedSelectionMiss {
     pub reason: String,
 }
 
-impl ReseedReport {
-    pub fn has_failures(&self) -> bool {
-        self.targets.iter().any(|target| target.status == ReseedStatus::Failed)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReseedOutcome {
-    pub name: String,
-    pub status: ReseedStatus,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum ReseedStatus {
-    Planned,
-    Succeeded,
-    Failed,
-}
-
-pub fn run(request: ReseedRequest) -> Result<ReseedReport> {
-    run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))
-}
-
-/// Emit selection diagnostics before planning, including when planning later fails.
-pub fn run_with_diagnostics(request: ReseedRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
-    run_internal(request, false, diagnostic)
-}
-
-pub fn prepare(request: PrepareRequest) -> Result<ReseedReport> {
-    prepare_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))
-}
-
-pub fn prepare_with_diagnostics(request: PrepareRequest, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
-    run_internal(
-        ReseedRequest {
-            source: request.source,
-            source_at: request.source_at,
-            copy_ignored: request.copy_ignored,
-            no_copy_ignored: request.no_copy_ignored,
-            dry_run: request.dry_run,
-            ..Default::default()
-        },
-        true,
-        diagnostic,
-    )
-}
-
-fn run_internal(request: ReseedRequest, source_only: bool, diagnostic: impl FnMut(&str)) -> Result<ReseedReport> {
-    #[cfg(unix)]
-    {
-        let mut diagnostic = diagnostic;
-        engine::run(request, source_only, &mut diagnostic)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = request;
-        let _ = source_only;
-        let _ = diagnostic;
-        anyhow::bail!("reseed requires Unix filesystem identity and CoW support")
-    }
-}
-
 #[cfg(unix)]
 mod engine;
 
-/// Temporary callable integration seam; not an alternate CLI mode.
-#[cfg(unix)]
-#[doc(hidden)]
-pub use engine::replacement::{RefillOneReport, refill_one_from};
-
-/// Callable shared command/producer boundary, pending public CLI cutover.
+/// The shared command and source-only producer used by the public CLI.
 #[cfg(unix)]
 pub use engine::command;
 

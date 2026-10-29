@@ -229,7 +229,7 @@ fn execute_command_child() {
                     json!({"ok": true, "source": source.report.commit, "goal": source.report.upstream_goal, "preparation": preparation_value(source.report.preparation.as_ref().unwrap())}),
                 );
             }
-            let command = ResolvedCommand::resolve(&cwd, request, RenewalRoute::ClearThenPopulate, &mut diagnostic)?;
+            let command = ResolvedCommand::resolve(&cwd, request, &mut diagnostic)?;
             return Ok(match command.execute_prepared(source, &mut NoOrdinary, &mut diagnostic) {
                 Ok(r) => json!({"ok": true, "report": report_value(&r)}),
                 Err(e) => json!({"ok": false, "error": format!("{e:#}"), "report": report_value(&e.report)}),
@@ -240,7 +240,14 @@ fn execute_command_child() {
         } else {
             RenewalRoute::ClearThenPopulate
         };
-        let command = ResolvedCommand::resolve(&cwd, request, route, &mut diagnostic)?;
+        let command = ResolvedCommand::resolve(
+            &cwd,
+            ReseedRequest {
+                renewal_route: route,
+                ..request
+            },
+            &mut diagnostic,
+        )?;
         if mode == "preview" {
             let p = command.preview()?;
             return Ok(

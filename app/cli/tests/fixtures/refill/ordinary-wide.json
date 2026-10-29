@@ -1,0 +1,11 @@
+{
+  "satisfied": false,
+  "deviated": "18446744073709551617", "retained": "9007199254740993",
+  "applications": "1", "planned": "340282366920938463463374607431768211455",
+  "completed": {
+    "files_copied": "0", "files_reflinked": "18446744073709551616", "bytes_copied": "0", "bytes_reflinked": "340282366920938463463374607431768211455",
+    "symlinks_created": "0", "directories_created": "0", "files_removed": "0", "symlinks_removed": "0", "directories_removed": "0", "directory_permissions_set": "0"
+  },
+  "opaque_deviated": "0", "additional_retained": "0", "excluded": "0", "end": "application_failed", "pruned": false,
+  "observed": {"state": "incomplete", "scoped": false, "comparator": null, "excluded": "0", "planned": "0", "deviated": "0", "retained": "0", "equal": "0", "different": "0", "not_assessed": "0", "unsupported": "0", "unresolved": "0", "stopped_paired": "0", "examined_directories": "0"}
+}

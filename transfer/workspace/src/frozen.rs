@@ -12,7 +12,6 @@ use std::fs;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::rc::Rc;
 use std::sync::Arc;
 
 use jj_waltz_native_jj::jj::JjClient;
@@ -21,38 +20,6 @@ use jj_waltz_native_jj::jj::JjClient;
 struct Excludes {
     global: Vec<u8>,
     info: Vec<u8>,
-}
-
-/// Command-owned cache. Equal pinned coordinates reuse extracted rule bytes;
-/// equal coordinates AND effective excludes share the sandbox and native oracle.
-#[derive(Default)]
-pub struct FrozenRules {
-    files: BTreeMap<String, BTreeMap<PathBuf, Vec<u8>>>,
-    rules: BTreeMap<(String, Excludes), Rc<IgnoreRules>>,
-    equivalent: BTreeMap<String, String>,
-}
-impl FrozenRules {
-    /// Caller supplies a JJ whole-tracked-tree equality proof, not merely equal
-    /// revisions or matching .gitignore path names. Excludes remain independent.
-    pub fn same_tree(&mut self, commit: &str, equivalent: &str) {
-        if commit != equivalent {
-            self.equivalent.insert(commit.to_owned(), equivalent.to_owned());
-        }
-    }
-    pub fn get(&mut self, client: &JjClient, operation: &str, commit: &str, entries: &[Entry]) -> Result<Rc<IgnoreRules>> {
-        let excludes = Excludes::capture(client, operation)?;
-        let coordinate = self.equivalent.get(commit).map(String::as_str).unwrap_or(commit);
-        let key = (coordinate.to_owned(), excludes);
-        if let Some(rules) = self.rules.get(&key) {
-            return Ok(Rc::clone(rules));
-        }
-        if !self.files.contains_key(coordinate) {
-            self.files.insert(coordinate.to_owned(), ignore_files(client, operation, commit, entries)?);
-        }
-        let rules = Rc::new(IgnoreRules::build(&self.files[coordinate], &key.1)?);
-        self.rules.insert(key, Rc::clone(&rules));
-        Ok(rules)
-    }
 }
 
 /// Immutable Git-compatible matching over captured control-file bytes. No live

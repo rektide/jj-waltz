@@ -1,7 +1,7 @@
 //! Snapshot-free group resolution. Membership is a registration fact, never an
 //! inference from a directory basename or a reason to adopt another checkout.
 
-use crate::{ReseedOutcome, ReseedRequest, ReseedSelection, ReseedSelectionMiss, ReseedStatus, UnmatchedPolicy};
+use crate::{ReseedRequest, ReseedSelection, ReseedSelectionMiss, UnmatchedPolicy};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -35,7 +35,12 @@ pub(super) type Registrations = BTreeMap<String, Option<PathBuf>>;
 pub(super) struct SelectionPlan {
     pub selections: Vec<ReseedSelection>,
     pub skipped: Vec<ReseedSelectionMiss>,
-    pub issues: Vec<ReseedOutcome>,
+    pub issues: Vec<SelectionIssue>,
+}
+#[derive(Debug)]
+pub(super) struct SelectionIssue {
+    pub name: String,
+    pub message: String,
 }
 
 impl SelectionPlan {
@@ -81,9 +86,8 @@ struct Resolver<'a> {
 impl Resolver<'_> {
     fn reject(&mut self, name: &str, message: String) {
         if !self.plan.issues.iter().any(|issue| issue.name == name) {
-            self.plan.issues.push(ReseedOutcome {
+            self.plan.issues.push(SelectionIssue {
                 name: name.to_owned(),
-                status: ReseedStatus::Failed,
                 message,
             });
         }
@@ -259,9 +263,8 @@ pub(super) fn resolve(
     }
     for (miss, strict) in resolver.misses {
         if strict {
-            resolver.plan.issues.push(ReseedOutcome {
+            resolver.plan.issues.push(SelectionIssue {
                 name: miss.candidate.clone(),
-                status: ReseedStatus::Failed,
                 message: format!("{} ({})", miss.candidate, miss.reason),
             });
         } else {

@@ -378,6 +378,11 @@ impl From<UnmatchedPolicyArg> for reseed::UnmatchedPolicy {
 
 #[derive(Debug, Args)]
 struct ReseedCommand {
+    /// Native renewal protocol; independent of broad --replace-content authority.
+    #[arg(long, value_enum, default_value_t)]
+    renewal_route: RenewalRouteArg,
+    #[arg(long, value_enum, default_value_t)]
+    format: OutputFormat,
     /// Literal targets (default: current variant; primary requires names or --group).
     #[arg(value_name = "NAME", add = ArgValueCompleter::new(complete_workspaces))]
     names: Vec<String>,
@@ -411,7 +416,7 @@ struct ReseedCommand {
     /// Allow work without a covering local/remote bookmark; all other guards still apply.
     #[arg(long)]
     allow_unbookmarked: bool,
-    /// Preview without fetch/build/refill; --prepare defers refill readiness. May snapshot working copies.
+    /// Read-only PLANNED declarations; no snapshots, payload inspection or clone probes.
     #[arg(long)]
     dry_run: bool,
 }
@@ -424,17 +429,26 @@ struct PrepareCommand {
     /// Upstream goal override; otherwise infer one native tracked or exact remote line before fetch.
     #[arg(long, value_name = "REVSET")]
     source_at: Option<String>,
-    /// Verify selected ignored source payload (repeatable; replaces local/global selection).
-    #[arg(long, value_name = "PATTERN")]
-    copy_ignored: Vec<String>,
-    /// Disable ignored payload selection, including an explicit selection.
-    #[arg(long)]
-    no_copy_ignored: bool,
     /// Explain prospective fetch and preparation commands without performing them.
     #[arg(long)]
     dry_run: bool,
     #[arg(long, value_enum, default_value_t)]
     format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum RenewalRouteArg {
+    #[default]
+    ClearThenPopulate,
+    ReplaceAuthorized,
+}
+impl From<RenewalRouteArg> for reseed::command::RenewalRoute {
+    fn from(route: RenewalRouteArg) -> Self {
+        match route {
+            RenewalRouteArg::ClearThenPopulate => Self::ClearThenPopulate,
+            RenewalRouteArg::ReplaceAuthorized => Self::ReplaceAuthorized,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -499,8 +513,10 @@ pub fn run() -> Result<()> {
         Commands::Doctor(cmd) => run_doctor(cmd),
         Commands::Adopt(cmd) => run_adopt(cmd),
         Commands::Repair(cmd) => run_repair(cmd),
-        Commands::Reseed(cmd) => run_reseed(cmd),
-        Commands::Prepare(cmd) => run_prepare(cmd),
+        // These handlers already render captured outcomes. Generic hints would
+        // rediscover context (and can reconcile/write) after a partial failure.
+        Commands::Reseed(cmd) => return run_reseed(cmd),
+        Commands::Prepare(cmd) => return run_prepare(cmd),
         Commands::Path(cmd) => run_path(cmd),
         Commands::Remove(cmd) => run_remove(cmd),
         Commands::Prune => run_prune(),
@@ -576,7 +592,8 @@ fn run_context(cmd: ContextCommand) -> Result<()> {
 fn run_reseed(cmd: ReseedCommand) -> Result<()> {
     use reseed::ReseedRequest;
 
-    run_refill(ReseedRequest {
+    let outcome = crate::refill_report::reseed(ReseedRequest {
+        renewal_route: cmd.renewal_route.into(),
         names: cmd.names,
         groups: cmd.groups,
         on_unmatched: cmd.on_unmatched.map(reseed::UnmatchedPolicy::from),
@@ -589,82 +606,28 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
         replace_content: cmd.replace_content,
         allow_unbookmarked: cmd.allow_unbookmarked,
         dry_run: cmd.dry_run,
-    })
+    });
+    render_refill(outcome, cmd.format)
 }
 
 fn run_prepare(cmd: PrepareCommand) -> Result<()> {
-    let report = reseed::prepare_with_diagnostics(
-        reseed::PrepareRequest {
-            source: cmd.source,
-            source_at: cmd.source_at,
-            copy_ignored: (!cmd.copy_ignored.is_empty()).then_some(cmd.copy_ignored),
-            no_copy_ignored: cmd.no_copy_ignored,
-            dry_run: cmd.dry_run,
-        },
-        |diagnostic| eprintln!("{diagnostic}"),
-    )?;
-    match cmd.format {
-        OutputFormat::Json => write_json(&report),
-        OutputFormat::Plain => print_refill_report(&report, "prepare"),
-    }
+    let outcome = crate::refill_report::prepare(reseed::PrepareRequest {
+        source: cmd.source,
+        source_at: cmd.source_at,
+        dry_run: cmd.dry_run,
+    });
+    render_refill(outcome, cmd.format)
 }
 
-fn run_refill(request: reseed::ReseedRequest) -> Result<()> {
-    let report = reseed::run_with_diagnostics(request, |diagnostic| eprintln!("{diagnostic}"))?;
-    print_refill_report(&report, "reseed")
-}
-
-fn print_refill_report(report: &reseed::ReseedReport, command: &str) -> Result<()> {
-    use reseed::ReseedStatus;
-    if report.dry_run {
-        if command == "reseed" {
-            println!("Readiness check: JJ snapshots may record working-copy changes; no fetch, preparation, refill, checkout reset, or deletion is performed.");
-        }
-        for selected in &report.selections {
-            println!("SELECT {:?} {:?} via {}", selected.name, selected.root, selected.origins.join(", "));
-        }
+fn render_refill(outcome: crate::refill_report::Outcome, format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Json => write_json(&outcome.envelope)?,
+        OutputFormat::Plain => write_text(&outcome.envelope.plain())?,
     }
-    println!(
-        "{}source: {} ({})",
-        if report.dry_run { "Dry-run " } else { "" },
-        report.source.display(),
-        report
-            .source_commit_id
-            .as_deref()
-            .unwrap_or(if command == "reseed" && report.preparation_summary.is_none() {
-                "source not verified"
-            } else {
-                "post-fetch exact commit unknown"
-            })
-    );
-    if let Some(summary) = &report.preparation_summary {
-        println!("{summary}");
+    match outcome.error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
-    for target in &report.targets {
-        let label = match target.status {
-            ReseedStatus::Planned => "PLAN",
-            ReseedStatus::Succeeded => "OK",
-            ReseedStatus::Failed if report.dry_run => "BLOCKED",
-            ReseedStatus::Failed => "FAIL",
-        };
-        println!("{label} {}: {}", target.name, target.message);
-    }
-    if report.has_failures() {
-        if report.dry_run {
-            bail!(
-                "{command} readiness blocked; no targets refilled: {}",
-                report
-                    .targets
-                    .iter()
-                    .filter(|target| target.status == ReseedStatus::Failed)
-                    .map(|target| format!("{}: {}", target.name, target.message))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            );
-        }
-        bail!("{command} did not complete for every target; follow the reported recovery instructions before retrying")
-    }
-    Ok(())
 }
 
 fn render_context_human(report: &context::ContextReport) -> String {
@@ -1240,15 +1203,12 @@ mod reseed_cli_tests {
             vec!["--at", "dev@origin"],
             vec!["--replace-content"],
             vec!["--no-freshen-bookmark"],
-        ] {
-            assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_err());
-        }
-        for args in [
-            vec!["--from", "/source"],
-            vec!["--source-at", "dev@origin"],
             vec!["--copy-ignored", "node_modules"],
             vec!["--no-copy-ignored"],
         ] {
+            assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_err());
+        }
+        for args in [vec!["--from", "/source"], vec!["--source-at", "dev@origin"]] {
             assert!(Cli::try_parse_from(["jw", "prepare"].into_iter().chain(args)).is_ok());
         }
         assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--freshen"]).is_err());

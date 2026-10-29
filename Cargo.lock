@@ -1023,7 +1023,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jj-waltz"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1031,6 +1031,7 @@ dependencies = [
  "clap_complete",
  "diff-dirs-transfer-sync",
  "diff-dirs-tree-api",
+ "diff-dirs-tree-inspect",
  "fs2",
  "jj-waltz-native-jj",
  "jj-waltz-refill-engine",
@@ -1048,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "jj-waltz-native-jj"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1069,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "jj-waltz-refill-engine"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "diff-dirs-transfer-sync",
@@ -1081,14 +1082,13 @@ dependencies = [
  "jj-waltz-workspace-state",
  "serde",
  "serde_json",
- "shlex",
  "tempfile",
  "toml",
 ]
 
 [[package]]
 name = "jj-waltz-transfer-workspace"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "diff-dirs-transfer-sync",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "jj-waltz-workspace-lifecycle"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "jj-waltz-native-jj",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "jj-waltz-workspace-state"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "fs2",

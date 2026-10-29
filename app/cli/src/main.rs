@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 mod cli;
 mod manager;
+mod refill_report;
 mod shell;
 
 fn main() -> ExitCode {

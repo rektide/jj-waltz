@@ -269,9 +269,8 @@ exec "$JW_REAL_JJ" "$@"
         assert!(!output.status.success(), "fault must interrupt reseed");
         assert!(marker.is_file(), "fault must reach {boundary}: {}", String::from_utf8_lossy(&output.stderr));
         let message = String::from_utf8_lossy(&output.stdout);
-        assert!(message.contains("covered by bookmark"), "{message}");
-        assert!(message.contains("recover with `jj new ") && message.contains("`jj sparse reset`"), "{message}");
-        assert!(message.contains("then re-run reseed"), "{message}");
+        assert!(message.contains("history=covered"), "{message}");
+        assert!(message.contains("no rollback"), "{message}");
         assert!(self.pending_records().is_empty(), "interruption must not write a journal");
     }
 }
@@ -312,13 +311,13 @@ fn builtin_all_from_worker_excludes_renamed_primary_and_refills_worker_named_def
     assert!(selected[1].starts_with("SELECT \"z\""), "{preview}");
     assert!(!preview.contains("SELECT \"primary\""), "{preview}");
     for name in ["default", "z"] {
-        assert!(preview.contains(&format!("PLAN {name}: READY")), "{preview}");
+        assert!(preview.contains(&format!("planned {name}:")), "{preview}");
     }
-    assert!(preview.contains(&format!("SYNC to {}", repo.baseline)), "{preview}");
+    assert!(preview.contains(&format!("desired: {}", repo.baseline)), "{preview}");
     let roots = [identity(&default), identity(&z)];
     let output = success(repo.jw(&subdir).args(["reseed", "--group", "all"]).output().unwrap());
-    assert!(output.contains("OK default:"), "{output}");
-    assert!(output.contains("OK z:"), "{output}");
+    assert!(output.contains("complete default:"), "{output}");
+    assert!(output.contains("complete z:"), "{output}");
     // Plain reseed syncs each workspace's content to the donor's current commit.
     assert_eq!(fs::read(default.join("modified")).unwrap(), b"baseline\n");
     assert_eq!([identity(&default), identity(&z)], roots);
@@ -355,9 +354,9 @@ fn builtin_all_excludes_effective_configured_or_cli_aliased_donor() {
         };
         assert!(!preview.contains(&format!("SELECT {excluded:?}")), "{preview}");
         assert!(!preview.contains("SELECT \"default\""), "{preview}");
-        assert!(preview.contains(&format!("PLAN {included}: READY")), "{preview}");
-        assert!(preview.contains("PLAN feature: READY"), "{preview}");
-        assert!(preview.contains(&format!("Dry-run source: {}", donor.display())), "{preview}");
+        assert!(preview.contains(&format!("planned {included}:")), "{preview}");
+        assert!(preview.contains("planned feature:"), "{preview}");
+        assert!(preview.contains(&format!("source: {}", donor.display())), "{preview}");
     }
 }
 
@@ -386,11 +385,9 @@ fn builtin_all_keeps_bad_members_blocked_and_never_refills_ready_subset() {
         .unwrap();
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
-    for name in ["missing", "sparse", "colocated", "unbookmarked"] {
-        assert!(stdout.contains(&format!("BLOCKED {name}:")), "{stdout}");
-    }
-    assert!(stdout.contains("unbookmarked work tip"), "{stdout}");
+    assert!(stdout.contains("resolution at resolve"), "{stdout}");
+    assert!(stdout.contains("missing"), "{stdout}");
+    assert!(!stdout.contains("READY"), "{stdout}");
     assert!(!String::from_utf8_lossy(&output.stderr).contains("warning: skipped"));
     let output = repo.jw(&ready).args(["reseed", "--group", "all"]).output().unwrap();
     assert!(!output.status.success());
@@ -415,7 +412,7 @@ fn builtin_all_rejects_local_collision_removed_resume_and_empty_membership() {
 }
 
 #[test]
-fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_subset() {
+fn static_resolution_blocks_before_work_and_late_finish_keeps_completed_peers() {
     let Some(mut repo) = Repo::new() else { return };
     repo.prepare_links(
         "[[link]]\nsource='dependency-link'\ntarget='private/file'\nrequired=true\n",
@@ -450,13 +447,9 @@ fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_sub
     );
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
-    assert!(stdout.contains(&format!("SYNC to {}", repo.baseline)), "{stdout}");
-    for name in ["sparse", "missing", "ignored-rules", "missing-link"] {
-        assert!(stdout.contains(&format!("BLOCKED {name}:")), "{stdout}");
-    }
-    assert!(stdout.contains("BLOCKED \"unknown\":"), "{stdout}");
-    assert!(stdout.contains("required link target will be absent"), "{stdout}");
+    assert!(stdout.contains("resolution at resolve"), "{stdout}");
+    assert!(stdout.contains("unknown"), "{stdout}");
+    assert!(!stdout.contains("READY"), "{stdout}");
     assert_eq!(identity(&ready.join("shared")), shared);
     assert_eq!(fs::read(ready.join("modified")).unwrap(), b"unsnapshotted feature\n");
     assert_eq!(fs::read(ready.join("cache/old")).unwrap(), b"private old payload\n");
@@ -464,20 +457,18 @@ fn readiness_aggregates_early_and_late_blockers_and_real_run_never_refills_a_sub
     assert!(!ready.join("dependency-link").exists());
     assert!(repo.pending_records().is_empty());
 
-    // Late planning failures must also prevent the already-valid first target
-    // from entering execution; no journal, clearing, CoW replacement or links.
-    let before = frozen_id(&repo, &ready);
+    // Payload/link inspections are execution, not readiness prewalks. Native and
+    // ordinary work can precede a later required-link refusal.
     let output = repo.reseed(&["ready", "ignored-rules", "missing-link"], &repo.root, &["--copy-ignored", "cache"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    for text in ["ignored-rules", "missing-link", "no targets refilled"] {
+    for text in ["ignored-rules", "required link target is missing", "no rollback"] {
         assert!(stderr.contains(text), "{stderr}");
     }
-    assert_eq!(frozen_id(&repo, &ready), before);
-    assert_eq!(identity(&ready.join("shared")), shared);
-    assert_eq!(fs::read(ready.join("cache/old")).unwrap(), b"private old payload\n");
-    assert!(!ready.join("cache/fresh").exists());
-    assert!(!ready.join("dependency-link").exists());
+    assert_ne!(identity(&ready.join("shared")), shared);
+    assert!(!ready.join("cache/old").exists());
+    assert!(ready.join("cache/fresh").exists());
+    assert!(ready.join("dependency-link").exists());
     assert!(repo.pending_records().is_empty());
     assert!(link.is_dir());
 }
@@ -495,18 +486,16 @@ fn readiness_reports_one_sync_consequence_without_resetting_or_deleting_files() 
     fs::write(target.join(".env"), "PRIVATE=retained\n").unwrap();
     let shared = identity(&target.join("shared"));
     let plain = success(repo.reseed(&["feature"], &repo.root, &["--dry-run"]));
-    assert!(plain.contains("JJ snapshots may record working-copy changes"), "{plain}");
-    assert!(plain.contains("new working-copy updates snapshotted"), "{plain}");
-    assert!(plain.contains("uncommitted working-copy changes present"), "{plain}");
-    assert!(plain.contains(&format!("SYNC to {}", repo.baseline)), "{plain}");
+    assert!(plain.contains("PLANNED — payload/path obstructions not inspected"), "{plain}");
+    assert!(plain.contains("O=unknown"), "{plain}");
+    assert!(plain.contains("planned feature"), "{plain}");
     assert!(!plain.contains("RESET checkout"), "{plain}");
     assert!(!plain.contains("KEEP current feature tree"), "{plain}");
     let preserved = frozen_id(&repo, &target);
-    assert_ne!(preserved, original, "preview deliberately preserves work by snapshotting");
+    assert_eq!(preserved, original, "preview must not snapshot work");
     let overridden = success(repo.reseed(&["feature"], &repo.root, &["--at", &repo.baseline, "--replace-content", "--dry-run"]));
-    assert!(overridden.contains(&format!("SYNC to {}", repo.baseline)), "{overridden}");
-    assert!(overridden.contains(&format!("tracked work saved in JJ history at {preserved}")), "{overridden}");
-    assert!(overridden.contains("no new working-copy updates recorded"), "{overridden}");
+    assert!(overridden.contains(&format!("desired: {}", repo.baseline)), "{overridden}");
+    assert!(overridden.contains("O=unknown"), "{overridden}");
     assert_eq!(frozen_id(&repo, &target), preserved, "dry-run must not create the sync child");
     assert_eq!(identity(&target.join("shared")), shared);
     assert_eq!(fs::read(target.join("modified")).unwrap(), b"keep this unfinished work\n");
@@ -529,13 +518,16 @@ fn readiness_shared_source_failure_is_not_assessed_and_never_claims_ready() {
         fs::write(target.join("modified"), "do not snapshot unchecked target\n").unwrap();
     }
     let output = repo.reseed(&["a", "b"], &repo.root, &["--dry-run"]);
-    assert!(!output.status.success());
+    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     for name in ["a", "b"] {
-        assert!(stdout.contains(&format!("BLOCKED {name}: not assessed: shared preflight failed")), "{stdout}");
+        assert!(stdout.contains(&format!("planned {name}:")), "{stdout}");
     }
-    assert!(stdout.contains("source tracked tree does not match source_at"), "{stdout}");
+    assert!(stdout.contains("S=unknown"), "{stdout}");
     assert!(!stdout.contains("READY"), "{stdout}");
+    let output = repo.reseed(&["a", "b"], &repo.root, &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("explicit source_at live assertion"));
     assert_eq!([frozen_id(&repo, &a), frozen_id(&repo, &b)], before);
     assert!(repo.pending_records().is_empty());
 }
@@ -555,10 +547,10 @@ fn readiness_sparse_empty_target_is_never_snapshotted_while_other_targets_are_ch
     let output = repo.reseed(&["feature", "ready"], &source, &["--dry-run"]);
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("BLOCKED feature:"), "{stdout}");
+    assert!(stdout.contains("resolution at resolve"), "{stdout}");
     assert!(stdout.contains("workspace is sparse or mid-refill"), "{stdout}");
-    assert!(stdout.contains("jj new <bookmark>") && stdout.contains("jj sparse reset"), "{stdout}");
-    assert!(stdout.contains("PLAN ready: READY"), "{stdout}");
+    assert!(stdout.contains("recover deliberately out of band"), "{stdout}");
+    assert!(!stdout.contains("READY"), "{stdout}");
     assert_eq!(frozen_id(&repo, &pending), before);
     assert_eq!(fs::read(pending.join("shared")).unwrap(), b"partial refill must not be snapshotted\n");
     assert!(repo.pending_records().is_empty());
@@ -609,8 +601,8 @@ fn wildcard_group_skips_mixed_checkouts_in_one_line_and_uses_registered_names() 
     }
     assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
     let stdout = success(output);
-    assert!(stdout.contains("PLAN worker-z:"), "{stdout}");
-    assert!(stdout.contains("PLAN worker-a:"), "{stdout}");
+    assert!(stdout.contains("planned worker-z:"), "{stdout}");
+    assert!(stdout.contains("planned worker-a:"), "{stdout}");
     assert!(stdout.contains("SELECT \"worker-z\""), "{stdout}");
     assert!(stdout.contains("path_globs"), "{stdout}");
     assert_eq!(repo.id(&a, "@"), before, "dry-run must not sync");
@@ -633,8 +625,8 @@ fn wildcard_group_skips_mixed_checkouts_in_one_line_and_uses_registered_names() 
     }
     assert!(warning.starts_with("warning: skipped 3 "), "{warning}");
     let stdout = success(output);
-    assert!(stdout.contains("OK worker-z:"), "{stdout}");
-    assert!(stdout.contains("OK worker-a:"), "{stdout}");
+    assert!(stdout.contains("complete worker-z:"), "{stdout}");
+    assert!(stdout.contains("complete worker-a:"), "{stdout}");
     // The real run syncs both workers to the donor's current commit.
     assert_eq!(repo.id(&a, "@-"), repo.baseline);
     assert_eq!(fs::read_to_string(a.join("modified")).unwrap(), "baseline\n");
@@ -693,7 +685,7 @@ fn wildcard_group_warning_survives_later_source_failure() {
         .unwrap();
     assert!(!output.status.success());
     assert!(skip_warning(&output).contains("workspace-unrelated"));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("source tracked tree does not match"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("explicit source_at live assertion"));
     assert_eq!(frozen_id(&repo, &target), before);
 }
 
@@ -747,7 +739,7 @@ fn wildcard_group_name_and_path_selectors_deduplicate_across_legacy_groups() {
         .unwrap();
     assert!(skip_warning(&output).contains("missing"));
     let stdout = success(output);
-    assert_eq!(stdout.lines().filter(|l| l.starts_with("PLAN feature:")).count(), 1);
+    assert_eq!(stdout.lines().filter(|l| l.starts_with("planned feature:")).count(), 1);
     for origin in ["positional", "name_globs", "path_globs", "legacy"] {
         assert!(stdout.contains(origin), "{stdout}");
     }
@@ -875,7 +867,7 @@ fn source_assertions_keep_cli_over_local_precedence_and_reject_before_target_sna
         let output = repo.jw(&target).args(["reseed", "feature"]).args(extra).output().unwrap();
         assert!(!output.status.success());
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("source tracked tree does not match source_at"),
+            String::from_utf8_lossy(&output.stderr).contains("explicit source_at live assertion"),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -891,7 +883,7 @@ fn source_assertions_keep_cli_over_local_precedence_and_reject_before_target_sna
 }
 
 #[test]
-fn bare_reseed_borrows_snapshotted_primary_and_syncs_current_registered_variant() {
+fn bare_reseed_borrows_recorded_prepared_primary_and_syncs_current_registered_variant() {
     let Some(repo) = Repo::new() else { return };
     repo.jj_at(&repo.root, &["workspace", "rename", "primary"]);
     let target = repo.workspace("feature");
@@ -902,7 +894,10 @@ fn bare_reseed_borrows_snapshotted_primary_and_syncs_current_registered_variant(
     // Keep the mutable donor off the target's ancestry, as ordinary users must.
     repo.jj_at(&repo.root, &["new", &repo.baseline]);
     let old_source = frozen_id(&repo, &repo.root);
-    fs::write(repo.root.join("modified"), "unsnapshotted donor\n").unwrap();
+    fs::write(repo.root.join("modified"), "prepared donor\n").unwrap();
+    repo.jj_at(&repo.root, &["status"]);
+    let prepared_source = frozen_id(&repo, &repo.root);
+    assert_ne!(prepared_source, old_source);
     fs::write(target.join("modified"), "feature work\n").unwrap();
     fs::write(decoy.join("modified"), "not the donor or target\n").unwrap();
     let decoy_id = frozen_id(&repo, &decoy);
@@ -910,16 +905,16 @@ fn bare_reseed_borrows_snapshotted_primary_and_syncs_current_registered_variant(
     let subdir = target.join("cache/subdirectory");
     fs::create_dir_all(&subdir).unwrap();
     let output = success(repo.jw(&subdir).arg("reseed").output().unwrap());
-    assert!(output.contains("OK feature"), "{output}");
-    assert!(!output.contains("OK default"), "{output}");
+    assert!(output.contains("complete feature"), "{output}");
+    assert!(!output.contains("complete default"), "{output}");
     assert_eq!(identities, [identity(&target), identity(&target.join(".jj"))]);
     assert_eq!(frozen_id(&repo, &decoy), decoy_id, "never snapshot another variant");
-    assert_ne!(frozen_id(&repo, &repo.root), old_source);
+    assert_eq!(frozen_id(&repo, &repo.root), prepared_source, "plain reseed does not snapshot the donor");
     assert!(output.contains(&format!("source: {}", repo.root.display())), "{output}");
     assert!(output.contains(&frozen_id(&repo, &repo.root)), "{output}");
     // Bare reseed syncs the current variant onto the donor's snapshotted commit.
     assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &repo.root));
-    assert_eq!(fs::read(target.join("modified")).unwrap(), b"unsnapshotted donor\n");
+    assert_eq!(fs::read(target.join("modified")).unwrap(), b"prepared donor\n");
     assert_shared_extents(&repo.root.join("shared"), &target.join("shared"));
 }
 
@@ -940,11 +935,7 @@ fn explicit_selection_suppresses_current_and_preflight_failures_do_not_snapshot(
     for (cwd, args, message) in [
         (repo.root.as_path(), vec!["reseed"], "primary checkout requires literal target names"),
         (target.as_path(), vec!["reseed", "--group", "missing"], "no workspaces selected"),
-        (
-            target.as_path(),
-            vec!["reseed", "--from", target.to_str().unwrap()],
-            "primary/source or overlaps",
-        ),
+        (target.as_path(), vec!["reseed", "--from", target.to_str().unwrap()], "primary/source"),
         (
             target.as_path(),
             vec!["reseed", "--freshen", "--dry-run"],
@@ -967,8 +958,8 @@ fn explicit_selection_suppresses_current_and_preflight_failures_do_not_snapshot(
     let current = frozen_id(&repo, &target);
     for args in [vec!["reseed", "other", "--dry-run"], vec!["reseed", "--group", "others", "--dry-run"]] {
         let output = success(repo.jw(&target).args(args).output().unwrap());
-        assert!(output.contains("PLAN other"), "{output}");
-        assert!(!output.contains("PLAN feature"), "{output}");
+        assert!(output.contains("planned other"), "{output}");
+        assert!(!output.contains("planned feature"), "{output}");
         assert_eq!(frozen_id(&repo, &target), current);
     }
 }
@@ -1052,7 +1043,7 @@ exec "$JW_REAL_JJ" "$@"
         .output()
         .unwrap();
     assert!(marker.is_file(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("source changed during target refresh"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("donor coordinate changed during receiving snapshots"));
     repo.unchanged_failure(&target, output, &before);
     assert!(repo.pending_records().is_empty());
 }
