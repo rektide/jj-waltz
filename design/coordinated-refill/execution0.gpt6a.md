@@ -4,12 +4,12 @@ title: Coordinated refill execution — shared command and two renewal routes
 description: Sol-ready command, producer, inherited-policy, native replacement, reporting and public-cutover contracts, with bounded installed-JJ replacement evidence.
 resource: /design/coordinated-refill/execution0.gpt6a.md
 status: commissioned-design-with-bounded-protocol-proof
-generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-29 }
+generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-29 }
 sources:
   - resource: "opencode://ses_e7a26147bffeOIk9jHWPYXJrHI"
     title: Designs the JW execution boundary, proves same-tree-child authorized replacement and native reparenting on the installed JJ, and prepares implementation/API handoff
   - resource: "opencode://ses_e7a2771c3ffez3sv1oPgD5gPH4"
-    title: Parent commissions Astra designs then Sol xhigh execution of annealing, pulling forward architectural contracts and supporting both proactive renewal routes
+    title: Parent commissions Astra designs then Sol xhigh execution, selects both proactive renewal routes, and corrects model provenance from the completed design session's measured xhigh execution
   - resource: "file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md"
     title: Selected renewal baseline, two mechanisms, four lifetimes and contextual persisted-provider requirements
   - resource: /design/coordinated-refill/trajectory1.gpt6ax.md
