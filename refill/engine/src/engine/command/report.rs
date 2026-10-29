@@ -86,8 +86,8 @@ pub struct NativeOutcome {
 #[derive(Debug, Clone, Default)]
 pub struct OrdinaryOutcome {
     pub state: OrdinaryState,
-    /// None with Partial means the old N1 adapter cannot expose actual progress;
-    /// the provider adapter must retain cursor reports, not manufacture zeros.
+    /// Actual provider cursor report, including failure prefixes. None means no
+    /// valid cursor could be constructed; it never stands in for zero work.
     pub report: Option<diff_dirs_sync::coordinated::LaneReport>,
 }
 #[derive(Debug, Clone, Default)]

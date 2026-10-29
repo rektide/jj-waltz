@@ -8,7 +8,7 @@ publish = false
 description = "Shared workspace inventory, configuration, ownership records, metadata, and link storage for jj-waltz"
 
 [dependencies]
-jj-waltz-native-jj = { version = "=0.8.0", path = "../../native/jj" }
+jj-waltz-native-jj = { version = "=0.9.0", path = "../../native/jj" }
 anyhow = "1.0.100"
 fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }

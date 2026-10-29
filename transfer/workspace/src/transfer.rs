@@ -181,11 +181,10 @@ impl Visitor for WorkspaceClear {
     }
 }
 
-pub fn applier<'a>(
-    source: &Path,
-    target: &Path,
-    visitor: &'a Auxiliary,
-) -> Result<Applier<diff_dirs_sync::FullPolicy<diff_dirs::NoCheck, diff_dirs::NoScope, diff_dirs_sync::RemoveAll, diff_dirs::VisitorRef<'a, Auxiliary>>>> {
+pub type AuxiliaryPolicy<'a> =
+    diff_dirs_sync::FullPolicy<diff_dirs::NoCheck, diff_dirs::NoScope, diff_dirs_sync::RemoveAll, diff_dirs::VisitorRef<'a, Auxiliary>>;
+
+pub fn applier<'a>(source: &Path, target: &Path, visitor: &'a Auxiliary) -> Result<Applier<AuxiliaryPolicy<'a>>> {
     Ok(Applier::new(source, target, CopyPolicy::ReflinkRequired)?.visitor(visitor.borrowed()))
 }
 

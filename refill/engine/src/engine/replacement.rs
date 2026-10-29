@@ -1,6 +1,6 @@
 //! Compatibility projection for existing first-slice callers. All command/native
-//! orchestration now lives in `command`; this is only the narrow old N1 ordinary
-//! adapter and report projection, to be removed at public cutover.
+//! orchestration now lives in `command`; this report projection delegates N1 to
+//! the same actual cohort as N2, and can be removed at public cutover.
 use super::command::*;
 use crate::ReseedRequest;
 use anyhow::{Result, ensure};

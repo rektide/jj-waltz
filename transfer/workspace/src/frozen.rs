@@ -525,6 +525,15 @@ mod oracle_tests {
                     oracle.is_ignored(Path::new(path), directory).unwrap(),
                     "{path:?}, dir={directory}"
                 );
+                if directory {
+                    let mut state = pure.root();
+                    let mut at = PathBuf::new();
+                    for part in Path::new(path).components() {
+                        at.push(part);
+                        state = pure.descend(&state, &at);
+                    }
+                    assert_eq!(state.ignored(), pure.ignored(Path::new(path), true), "incremental ignore chain: {path}");
+                }
             }
         }
         // Matching does not consult live files after compilation.

@@ -1,5 +1,5 @@
 //! Bounded native/producer evidence, isolated process environments and one donor
-//! with at most two receivers. Not a contextual ordinary-transfer/cohort proof.
+//! with at most two receivers, including the actual contextual ordinary cohort.
 #![cfg(unix)]
 use jj_waltz_native_jj::jj::commit_id_revset;
 use jj_waltz_refill_engine::{PrepareRequest, ReseedRequest, command::*};
@@ -37,7 +37,11 @@ impl Fixture {
             s: String::new(),
         };
         f.jj(f.temp.path(), &["git", "init", "--no-colocate", f.source.to_str().unwrap()]);
-        fs::write(f.source.join(".gitignore"), "cache/\n.env\n.jwlinks.toml\n.jwreseed.local.toml\n").unwrap();
+        fs::write(
+            f.source.join(".gitignore"),
+            "cache/\nbuild/\ncache-link\n.env\n.jwlinks.toml\n.jwreseed.local.toml\n",
+        )
+        .unwrap();
         fs::write(f.source.join("a"), "baseline\n").unwrap();
         fs::write(f.source.join("zz"), "last leaf\n").unwrap();
         f.jj(&f.source, &["status"]);
@@ -149,6 +153,10 @@ fn report_value(report: &CommandReport) -> Value {
         "receivers": report.receivers.iter().map(|r| json!({"name": r.name, "status": format!("{:?}", r.status), "phase": r.reached.to_string(), "old": r.old.as_ref().map(|o| &o.commit),
             "child": r.child.as_ref().map(|c| &c.commit_id), "change": r.child.as_ref().map(|c| &c.change_id), "native": format!("{:?}", r.native.state), "manifest": r.native.manifest_complete,
             "clones": r.native.installed.files_reflinked, "copies": r.native.installed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "ordinary_report": r.ordinary.report.is_some(),
+            "ordinary_clones": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_reflinked),
+            "ordinary_removed": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_removed),
+            "ordinary_satisfied": r.ordinary.report.as_ref().map(|r| r.satisfied),
             "links_created": r.finish.links.linked})).collect::<Vec<_>>()})
 }
 fn preparation_value(r: &PreparationReport) -> Value {
@@ -199,10 +207,11 @@ fn execute_command_child() {
                 "desired": format!("{:?}", p.desired), "probed": p.clone_capability_probed, "inspected": p.obstructions_inspected}),
             );
         }
-        Ok(match command.execute(&mut NoOrdinary, &mut diagnostic) {
+        Ok(match command.execute(&mut ContextualOrdinary::default(), &mut diagnostic) {
             Ok(r) => json!({"ok": true, "report": report_value(&r)}),
             Err(e) => json!({"ok": false, "error": format!("{e:#}"), "phase": e.location.phase.to_string(), "receiver": e.location.receiver,
-                "native_cause": e.source.downcast_ref::<jj_waltz_native_jj::jj::JjCommandError>().is_some(), "report": report_value(&e.report)}),
+                "native_cause": e.source.downcast_ref::<jj_waltz_native_jj::jj::JjCommandError>().is_some(),
+                "ordinary_cause": e.source.downcast_ref::<diff_dirs_sync::coordinated::Error>().is_some(), "report": report_value(&e.report)}),
         })
     };
     let value = match run() {
@@ -592,17 +601,103 @@ fn later_finish_failure_keeps_earlier_complete_receiver_and_actual_link_count() 
     let b = f.receiver("b");
     fs::create_dir(a.join("cache")).unwrap();
     fs::write(a.join("cache/tool"), "local tool\n").unwrap();
+    fs::create_dir(f.source.join("build")).unwrap();
+    fs::write(f.source.join("build/payload"), "ordinary before finish\n").unwrap();
     fs::write(f.source.join(".jwlinks.toml"), "[[link]]\nsource='.env'\ntarget='cache/tool'\nrequired=true\n").unwrap();
-    let (value, _) = f.run("execute", &f.request(&["a", "b"]), None);
+    let mut request = f.request(&["a", "b"]);
+    request.copy_ignored = Some(vec!["build".into()]);
+    let (value, _) = f.run("execute", &request, None);
     assert_eq!(value["ok"], false, "{value:#}");
-    assert_eq!(value["receiver"], "b");
-    assert_eq!(value["phase"], "loaded link finish");
+    assert_eq!(value["receiver"], "b", "{value:#}");
+    assert_eq!(value["phase"], "loaded link finish", "{value:#}");
     assert_eq!(value["report"]["receivers"][0]["status"], "Complete");
     assert_eq!(value["report"]["receivers"][0]["links_created"], 1);
     assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
     assert_eq!(value["report"]["receivers"][1]["native"], "Established");
     assert_eq!(value["report"]["receivers"][1]["links_created"], 0);
+    for (i, root) in [&a, &b].into_iter().enumerate() {
+        assert_eq!(value["report"]["receivers"][i]["ordinary_satisfied"], true);
+        assert_eq!(value["report"]["receivers"][i]["ordinary_clones"], 1);
+        assert_eq!(fs::read(root.join("build/payload")).unwrap(), b"ordinary before finish\n");
+    }
     assert!(fs::symlink_metadata(a.join(".env")).unwrap().is_symlink());
     assert_eq!(fs::read(a.join(".env")).unwrap(), b"local tool\n");
     assert!(!b.join(".env").exists());
+}
+
+#[test]
+fn real_command_mixed_n2_ordinary_cohort_then_loaded_finish_and_clean_repeat() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    let b = f.receiver("b");
+    fs::create_dir_all(f.source.join("pkg/cache/empty")).unwrap();
+    fs::write(f.source.join("pkg/cache/payload"), "cohort payload\n").unwrap();
+    fs::create_dir_all(b.join("pkg/cache/stale/deep")).unwrap();
+    fs::write(b.join("pkg/cache/stale/deep/file"), "stale\n").unwrap();
+    fs::create_dir_all(b.join("vanished/cache")).unwrap();
+    fs::write(b.join("vanished/cache/keep"), "retained\n").unwrap();
+    fs::write(a.join(".env"), "private\n").unwrap();
+    fs::write(
+        f.source.join(".jwlinks.toml"),
+        "[[link]]\nsource='cache-link'\ntarget='pkg/cache'\nrequired=true\n",
+    )
+    .unwrap();
+    let mut request = f.request(&["a", "b"]);
+    request.copy_ignored = Some(vec!["**/cache".into()]);
+    for repeat in [false, true] {
+        let (value, _) = f.run("execute", &request, None);
+        assert_eq!(value["ok"], true, "{value:#}");
+        for (i, root) in [&a, &b].into_iter().enumerate() {
+            let r = &value["report"]["receivers"][i];
+            assert_eq!(r["status"], "Complete");
+            assert_eq!(r["ordinary_satisfied"], true);
+            assert_eq!(r["ordinary_clones"], if repeat { 0 } else { 1 });
+            assert_eq!(r["clones"], 3, "native tracked clean repeats still renew");
+            assert!(root.join("pkg/cache/empty").is_dir());
+            assert_eq!(fs::read(root.join("cache-link/payload")).unwrap(), b"cohort payload\n");
+            assert_eq!(f.jj(root, &["--ignore-working-copy", "log", "--no-graph", "-r", "@-", "-T", "commit_id"]), f.s);
+        }
+    }
+    assert!(!b.join("pkg/cache/stale").exists());
+    assert_eq!(fs::read(b.join("vanished/cache/keep")).unwrap(), b"retained\n");
+    assert_eq!(fs::read(a.join(".env")).unwrap(), b"private\n");
+    fs::write(a.join("pkg/cache/payload"), "private write\n").unwrap();
+    assert_eq!(fs::read(f.source.join("pkg/cache/payload")).unwrap(), b"cohort payload\n");
+}
+
+#[test]
+fn real_command_ordinary_failure_keeps_actual_both_lane_work_and_stops_finish() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    let b = f.receiver("b");
+    fs::create_dir_all(f.source.join("cache")).unwrap();
+    fs::write(f.source.join("cache/a-visible"), "visible\n").unwrap();
+    fs::create_dir_all(b.join("cache/z-stale/deep/.git")).unwrap();
+    fs::write(b.join("cache/z-stale/deep/.git/keep"), "veto\n").unwrap();
+    fs::write(
+        f.source.join(".jwlinks.toml"),
+        "[[link]]\nsource='.env'\ntarget='cache/a-visible'\nrequired=true\n",
+    )
+    .unwrap();
+    let mut request = f.request(&["a", "b"]);
+    request.copy_ignored = Some(vec!["cache".into()]);
+    let (value, _) = f.run("execute", &request, None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert_eq!(value["receiver"], "b");
+    assert_eq!(value["phase"], "ordinary coordinated transfer");
+    assert_eq!(
+        value["ordinary_cause"], true,
+        "original typed provider application failure survives command wrapping"
+    );
+    for (i, root) in [&a, &b].into_iter().enumerate() {
+        let r = &value["report"]["receivers"][i];
+        assert_eq!(r["native"], "Established");
+        assert_eq!(r["ordinary_report"], true);
+        assert_eq!(r["ordinary_clones"], 1);
+        assert_eq!(r["finish"], false);
+        assert_eq!(fs::read(root.join("cache/a-visible")).unwrap(), b"visible\n");
+        assert!(!root.join(".env").exists(), "no finish after ordinary failure");
+    }
+    assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
+    assert!(b.join("cache/z-stale/deep/.git/keep").exists());
 }

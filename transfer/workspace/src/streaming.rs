@@ -59,10 +59,12 @@ pub struct OrdinarySource {
 impl OrdinarySource {
     pub fn new(patterns: Arc<Patterns>, native: &BTreeSet<PathBuf>) -> Self {
         let mut hash = Sha256::new();
+        hash.update((patterns.declarations().len() as u64).to_le_bytes());
         for p in patterns.declarations() {
             frame(&mut hash, p.as_bytes());
         }
         frame(&mut hash, b"native");
+        hash.update((native.len() as u64).to_le_bytes());
         for p in native {
             frame(&mut hash, p.as_os_str().as_encoded_bytes());
         }
@@ -159,6 +161,9 @@ impl SourceQualified {
         }))
     }
     fn seal(&self, mut state: SearchState) -> SearchState {
+        // A frozen-value checksum, not a secret or an authorization token. The
+        // provider already binds the caller's policy interpretation; this detects
+        // damaged/mismatched residual values without replaying path admission.
         state.seal = [0; 32];
         let mut hash = Sha256::new();
         hash.update(&self.identity.parameters);
@@ -187,7 +192,9 @@ impl Policy for SourceQualified {
     fn validate_context(&self, site: ContextSite<'_>, context: &OrdinaryRegion) -> Result<(), CheckError> {
         let result = (|| {
             ensure!(
-                site.relative.components().all(|c| matches!(c, std::path::Component::Normal(_))),
+                site.relative
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(n) if n != ".jj" && n != ".git")),
                 "invalid ordinary coordinate"
             );
             match context {
@@ -196,12 +203,15 @@ impl Policy for SourceQualified {
                     "initial ordinary context outside root admission"
                 ),
                 OrdinaryRegion::Search(state) => {
+                    ensure!(!site.structural_root || site.role.is_some(), "search context cannot replace initial admission");
                     ensure!(state.at == site.relative, "search context coordinate differs");
                     ensure!(state.at.to_str().is_some(), "non-UTF-8 search coordinate");
                     // Frozen-value integrity, not selector/ignore/ownership replay.
                     ensure!(state == &self.seal(state.clone()), "search context differs from frozen inputs");
                 }
                 OrdinaryRegion::SelectedMirror { root, admission } => {
+                    ensure!(!site.structural_root, "selected region cannot replace structural root context");
+                    ensure!(root.to_str().is_some(), "selected root is not a UTF-8 selector coordinate");
                     ensure!(
                         !root.as_os_str().is_empty() && site.relative.starts_with(root),
                         "selected region does not contain coordinate"
@@ -223,6 +233,12 @@ impl Policy for SourceQualified {
             return Ok(());
         }
         for name in names.entries_mut() {
+            #[cfg(test)]
+            self.trace
+                .lock()
+                .unwrap()
+                .hints
+                .push((name.relative_path().to_owned(), name.source().map(|f| f.kind())));
             if name.name() == ".jj" || name.name() == ".git" {
                 if matches!(context, OrdinaryRegion::SelectedMirror { .. }) {
                     return Err(name.refuse("administrative entry inside selected ordinary root"));
@@ -238,6 +254,8 @@ impl Policy for SourceQualified {
     fn shape(&self, context: &OrdinaryRegion, batch: &mut ShapeChoices<'_, OrdinaryRegion>) -> Result<(), CheckError> {
         let root = batch.info().structural_root;
         for mut entry in batch.entries_mut() {
+            #[cfg(test)]
+            self.trace.lock().unwrap().shapes.push(entry.coordinate().to_path_buf());
             let shape = entry.shape();
             let mut routing = false;
             let next = if root {
@@ -360,6 +378,8 @@ struct Trace {
     search_steps: usize,
     admissions: Vec<PathBuf>,
     source_attributes: BTreeMap<PathBuf, usize>,
+    hints: Vec<(PathBuf, Option<FileKind>)>,
+    shapes: Vec<PathBuf>,
 }
 
 pub struct CohortLane {
@@ -386,14 +406,20 @@ impl std::error::Error for CohortFailure {
 
 /// One physical-union machine for N1 and N2. Inspect every lane before applying
 /// any of the group; apply in stable target order and stop at first returned error.
+/// Inputs are canonical, already bound workspace roots. An all-empty selection
+/// returns without runtime construction or source/target I/O.
 pub fn sync_cohort(
     source: &Path,
     lanes: Vec<CohortLane>,
     resources: diff_dirs::ObservationResources,
 ) -> std::result::Result<Vec<diff_dirs_sync::coordinated::LaneReport>, CohortFailure> {
+    if lanes.iter().all(|lane| lane.policy.source.patterns.is_empty()) {
+        return Ok(vec![]);
+    }
     use diff_dirs::Comparator;
     use diff_dirs::coordinated::{Bindings, Parts, TargetBinding, TargetId};
     use diff_dirs_sync::coordinated::{SyncCursor, SyncParts, SyncRuntime, SyncTarget};
+    let target_ids = lanes.iter().map(|lane| TargetId(lane.name.clone())).collect::<Vec<_>>();
     let bindings = Bindings {
         source: source.to_owned(),
         targets: lanes
@@ -454,18 +480,18 @@ pub fn sync_cohort(
         while let Some(group) = cursor.next_group(&runtime)? {
             let mut first = None;
             for outcome in &group.outcomes {
-                if let Err(error) = &outcome.outcome {
-                    if first.is_none() {
-                        failed_lane = cursor.reports().iter().position(|r| r.target == outcome.target);
-                        first = Some(anyhow::Error::new(Arc::clone(error)));
-                    }
+                if let Err(error) = &outcome.outcome
+                    && first.is_none()
+                {
+                    failed_lane = target_ids.iter().position(|id| *id == outcome.target);
+                    first = Some(anyhow::Error::new(Arc::clone(error)));
                 }
             }
             if let Some(error) = first {
                 return Err(error);
             }
             for target in cursor.pending() {
-                failed_lane = cursor.reports().iter().position(|r| r.target == target);
+                failed_lane = target_ids.iter().position(|id| *id == target);
                 cursor.apply(&runtime, &group.token, &target)?;
             }
             failed_lane = None;
@@ -563,6 +589,12 @@ mod tests {
         };
         independent.validate_context(site, &search).unwrap();
         independent.validate_context(site, &restored).unwrap();
+        assert!(!Arc::ptr_eq(&v.source, &independent.source));
+        let mut damaged = search.clone();
+        if let OrdinaryRegion::Search(state) = &mut damaged {
+            state.native = Some(usize::MAX);
+        }
+        assert!(independent.validate_context(site, &damaged).is_err());
         assert!(changed.validate_context(site, &restored).is_err());
         assert!(v.trace.lock().unwrap().admissions.is_empty());
     }
@@ -664,6 +696,14 @@ mod tests {
         assert!(done.satisfied);
         assert_eq!(done.totals.completed, Default::default());
         assert!(!f.target.join("pkg").exists());
+        fs::create_dir_all(f.source.join("pkg/deep/node_modules")).unwrap();
+        let empty = f.run(&["**/node_modules"]).unwrap().unwrap();
+        assert!(
+            f.target.join("pkg/deep/node_modules").is_dir(),
+            "an explicitly selected empty Q realizes its conditional ancestry"
+        );
+        assert!(!f.target.join("pkg/no-match").exists());
+        assert_eq!(empty.totals.completed.directories_created, 3);
         // Nonexistent roots are fine only because empty policy does no runtime I/O.
         assert!(
             sync_one(
@@ -729,5 +769,252 @@ mod tests {
         assert!(format!("{:#}", f.run(&["cache"]).unwrap_err()).contains("administrative"));
         let v = f.visitor(&["cache"], &["cache/forced"], &[]);
         assert!(format!("{:#}", sync_one(&f.source, &f.target, "overlap", v).unwrap_err()).contains("overlaps native"));
+        let v = f.visitor(&["cache"], &[], &["cache"]);
+        assert!(format!("{:#}", sync_one(&f.source, &f.target, "link-overlap", v).unwrap_err()).contains("overlaps active link"));
+    }
+
+    fn lane(name: &str, target: &Path, policy: SourceQualified) -> CohortLane {
+        CohortLane {
+            name: name.into(),
+            target: target.into(),
+            policy,
+        }
+    }
+    fn file(path: impl AsRef<Path>, text: &str) {
+        let path = path.as_ref();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn paired_n2_shares_actual_source_attributes_and_qualifies_each_region_once() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir(&b).unwrap();
+        file(f.source.join("pkg/cache/deep/file"), "shared source");
+        for target in [&f.target, &b] {
+            fs::create_dir_all(target.join("pkg/cache/deep")).unwrap();
+        }
+        let a_policy = f.visitor(&["**/cache"], &[], &[]);
+        let b_policy = SourceQualified::new(
+            Arc::clone(&a_policy.source),
+            Arc::clone(&a_policy.source_ignore),
+            Arc::new(FrozenIgnore::test_rules(b"cache/\n.env\n")),
+            &BTreeSet::new(),
+            a_policy.devices,
+        );
+        assert!(Arc::ptr_eq(&a_policy.source, &b_policy.source));
+        assert_ne!(
+            a_policy.identity(),
+            b_policy.identity(),
+            "lane-specific excludes remain distinct over shared source indexes"
+        );
+        let a_trace = Arc::clone(&a_policy.trace);
+        let b_trace = Arc::clone(&b_policy.trace);
+        let reports = sync_cohort(
+            &f.source,
+            vec![lane("z-first", &f.target, a_policy), lane("a-second", &b, b_policy)],
+            Default::default(),
+        )
+        .unwrap();
+        assert!(reports.iter().all(|r| r.satisfied && r.totals.completed.files_reflinked == 1));
+        assert_eq!(reports[0].target.0, "z-first", "binding order, not lexical order");
+        let a = a_trace.lock().unwrap();
+        let b = b_trace.lock().unwrap();
+        assert_eq!(a.admissions, [PathBuf::from("pkg/cache")]);
+        assert_eq!(b.admissions, a.admissions);
+        assert_eq!(a.search_steps, 2, "selected descendants never replay search");
+        assert_eq!(b.search_steps, 2);
+        for path in ["pkg/cache", "pkg/cache/deep", "pkg/cache/deep/file"] {
+            assert_eq!(
+                a.source_attributes[Path::new(path)],
+                b.source_attributes[Path::new(path)],
+                "actual shared Metadata allocation: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_missing_paired_n2_inherits_opaque_and_removal_authority_without_readmission() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir(&b).unwrap();
+        file(f.source.join("pkg/cache/deep/file"), "payload");
+        fs::create_dir_all(f.source.join("pkg/cache/empty")).unwrap();
+        file(b.join("pkg/cache/stale/deep/file"), "stale only inside Q");
+        file(b.join("vanished/cache/keep"), "vanished source retains this");
+        let a = f.visitor(&["**/cache"], &[], &[]);
+        let b_policy = f.visitor(&["**/cache"], &[], &[]);
+        let at = Arc::clone(&a.trace);
+        let bt = Arc::clone(&b_policy.trace);
+        let reports = sync_cohort(&f.source, vec![lane("a", &f.target, a), lane("b", &b, b_policy)], Default::default()).unwrap();
+        assert_eq!(reports[0].totals.completed.files_reflinked, 1, "opaque population counted for A");
+        assert_eq!(reports[1].totals.completed.files_reflinked, 1, "paired population counted for B");
+        assert_eq!(reports[1].totals.completed.files_removed, 1);
+        assert!(!b.join("pkg/cache/stale").exists());
+        assert_eq!(fs::read(b.join("vanished/cache/keep")).unwrap(), b"vanished source retains this");
+        assert!(f.target.join("pkg/cache/empty").is_dir());
+        assert!(b.join("pkg/cache/empty").is_dir());
+        for trace in [at, bt] {
+            let t = trace.lock().unwrap();
+            assert_eq!(t.admissions, [PathBuf::from("pkg/cache")]);
+            assert_eq!(t.search_steps, 2);
+        }
+    }
+
+    #[test]
+    fn distinct_desired_excludes_refuse_before_healthy_peer_effects() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir(&b).unwrap();
+        file(f.source.join("cache/file"), "payload");
+        let a = f.visitor(&["cache"], &[], &[]);
+        let bad = SourceQualified::new(
+            Arc::clone(&a.source),
+            Arc::clone(&a.source_ignore),
+            Arc::new(FrozenIgnore::default()),
+            &BTreeSet::new(),
+            a.devices,
+        );
+        let failure = sync_cohort(&f.source, vec![lane("first", &f.target, a), lane("second", &b, bad)], Default::default()).unwrap_err();
+        assert_eq!(failure.lane, Some(1));
+        assert!(format!("{failure:#}").contains("not ignored under frozen desired"));
+        assert_eq!(failure.reports.len(), 2);
+        assert!(failure.reports.iter().all(|r| r.totals.completed == Default::default() && !r.satisfied));
+        assert!(!f.target.join("cache").exists());
+        assert!(!b.join("cache").exists());
+    }
+
+    #[test]
+    fn opaque_second_lane_failure_retains_first_work_and_reports_every_lane() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir(&b).unwrap();
+        file(f.source.join("cache/a-good"), "visible");
+        file(b.join("cache/z-stale/deep/.git/keep"), "administrative veto");
+        let failure = sync_cohort(
+            &f.source,
+            vec![
+                lane("a", &f.target, f.visitor(&["cache"], &[], &[])),
+                lane("b", &b, f.visitor(&["cache"], &[], &[])),
+            ],
+            Default::default(),
+        )
+        .unwrap_err();
+        assert_eq!(failure.lane, Some(1));
+        assert_eq!(failure.reports.len(), 2);
+        assert_eq!(failure.reports[0].totals.completed.files_reflinked, 1);
+        assert_eq!(failure.reports[1].totals.completed.files_reflinked, 1);
+        assert_eq!(fs::read(f.target.join("cache/a-good")).unwrap(), b"visible");
+        assert_eq!(fs::read(b.join("cache/a-good")).unwrap(), b"visible");
+        assert!(b.join("cache/z-stale/deep/.git/keep").exists());
+        assert!(failure.reports[0].satisfied, "A's actual cursor completion is retained, not made partial by B");
+        assert!(!failure.reports[1].satisfied);
+    }
+
+    #[test]
+    fn first_application_failure_never_starts_pending_peer_in_same_group() {
+        let f = Fixture::new();
+        let b = f._temp.path().join("b");
+        fs::create_dir(&b).unwrap();
+        file(f.source.join("cache/a-visible"), "visible before refusal");
+        fs::create_dir_all(f.source.join("cache/z/.git")).unwrap();
+        let failure = sync_cohort(
+            &f.source,
+            vec![
+                lane("z-first", &f.target, f.visitor(&["cache"], &[], &[])),
+                lane("a-second", &b, f.visitor(&["cache"], &[], &[])),
+            ],
+            Default::default(),
+        )
+        .unwrap_err();
+        assert_eq!(failure.lane, Some(0));
+        assert_eq!(failure.reports[0].totals.completed.files_reflinked, 1);
+        assert_eq!(failure.reports[1].totals.applications, 0);
+        assert_eq!(failure.reports[1].totals.completed, Default::default());
+        assert!(!b.join("cache").exists());
+        assert!(f.target.join("cache/a-visible").is_file());
+    }
+
+    #[test]
+    fn coupled_collapse_refusal_is_intact_and_private_expansion_cleans_up() {
+        let f = Fixture::new();
+        file(f.source.join("cache/collapse"), "new leaf");
+        file(f.target.join("cache/collapse/a-removable"), "old");
+        file(f.target.join("cache/collapse/z/.jj/keep"), "veto");
+        let failure = sync_cohort(&f.source, vec![lane("a", &f.target, f.visitor(&["cache"], &[], &[]))], Default::default()).unwrap_err();
+        assert_eq!(failure.reports[0].totals.completed, Default::default());
+        assert!(f.target.join("cache/collapse/a-removable").exists());
+        fs::remove_dir_all(f.target.join("cache/collapse/z")).unwrap();
+        let done = f.run(&["cache"]).unwrap().unwrap();
+        assert_eq!(done.totals.completed.files_removed, 1);
+        assert_eq!(fs::read(f.target.join("cache/collapse")).unwrap(), b"new leaf");
+        // A separate private expansion fails after staging a child; that child
+        // is discarded while the old destination and visible sibling survive.
+        fs::remove_file(f.source.join("cache/collapse")).unwrap();
+        file(f.source.join("cache/a-visible"), "visible");
+        file(f.source.join("cache/z-expand/good"), "private staging");
+        fs::create_dir_all(f.source.join("cache/z-expand/nested/.git")).unwrap();
+        file(f.target.join("cache/z-expand"), "old leaf");
+        let failure = sync_cohort(&f.source, vec![lane("a", &f.target, f.visitor(&["cache"], &[], &[]))], Default::default()).unwrap_err();
+        assert_eq!(failure.reports[0].totals.completed.files_reflinked, 1);
+        assert_eq!(fs::read(f.target.join("cache/z-expand")).unwrap(), b"old leaf");
+        assert!(
+            fs::read_dir(f.target.join("cache"))
+                .unwrap()
+                .all(|e| !e.unwrap().file_name().as_encoded_bytes().starts_with(b".diff-dirs-sync-"))
+        );
+    }
+
+    #[test]
+    fn actual_listing_hints_preserve_unknown_routing_and_skip_known_unselected_leaves() {
+        let f = Fixture::new();
+        file(f.source.join("unselected"), "not ordinary");
+        file(f.source.join("cache/file"), "ordinary");
+        let v = f.visitor(&["cache"], &[], &[]);
+        let trace = Arc::clone(&v.trace);
+        sync_one(&f.source, &f.target, "a", v).unwrap();
+        let trace = trace.lock().unwrap();
+        let hint = trace.hints.iter().find(|(p, _)| p == Path::new("unselected")).unwrap().1.unwrap();
+        if cfg!(all(target_os = "linux", feature = "native-dirent")) {
+            assert_eq!(hint, FileKind::RegularFile);
+            assert!(
+                !trace.shapes.contains(&PathBuf::from("unselected")),
+                "known leaf is excluded before shape acquisition"
+            );
+        } else {
+            assert_eq!(hint, FileKind::Unknown);
+            assert!(
+                trace.shapes.contains(&PathBuf::from("unselected")),
+                "Unknown must acquire kind before leaf preservation"
+            );
+        }
+        assert!(!trace.source_attributes.contains_key(Path::new("unselected")));
+        assert_eq!(trace.admissions, [PathBuf::from("cache")]);
+        assert!(!f.target.join("unselected").exists());
+    }
+
+    #[test]
+    fn byte_named_routing_directory_refuses_but_admitted_source_interiors_support_bytes() {
+        let f = Fixture::new();
+        let name = OsString::from_vec(vec![0xff]);
+        file(f.source.join(&name).join("cache/file"), "cannot select through byte directory");
+        assert!(format!("{:#}", f.run(&["**/cache"]).unwrap_err()).contains("directory selection entry not UTF-8"));
+        fs::remove_dir_all(f.source.join(&name)).unwrap();
+        file(f.source.join("cache").join(&name).join(&name), "admitted byte payload");
+        let first = f.run(&["cache"]).unwrap().unwrap();
+        assert_eq!(first.totals.completed.files_reflinked, 1);
+        let v = f.visitor(&["cache"], &[], &[]);
+        let trace = Arc::clone(&v.trace);
+        let clean = sync_one(&f.source, &f.target, "a", v).unwrap().unwrap();
+        assert_eq!(clean.totals.completed, Default::default());
+        assert!(
+            trace
+                .lock()
+                .unwrap()
+                .source_attributes
+                .contains_key(&Path::new("cache").join(&name).join(&name)),
+            "even equal admitted leaves request actual device-guard attributes"
+        );
     }
 }
