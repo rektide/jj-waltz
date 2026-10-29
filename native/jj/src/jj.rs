@@ -414,6 +414,11 @@ impl JjClient {
         parse_json_string_lines(output.stdout()?, "current workspace name")
     }
 
+    pub fn current_workspace_names_at(&self, operation: &str) -> Result<Vec<String>> {
+        let output = self.run_at(operation, ["workspace", "list", "-T", CURRENT_WORKSPACE_NAMES_TEMPLATE])?;
+        parse_json_string_lines(output.stdout()?, "current workspace name")
+    }
+
     /// Read workspace target facts at one frozen repository operation.
     pub fn workspace_target_facts_at(&self, operation_id: impl AsRef<OsStr>) -> Result<BTreeMap<String, WorkspaceTargetFacts>> {
         let output = self.run_at(operation_id, ["workspace", "list", "-T", WORKSPACE_FACTS_TEMPLATE])?;

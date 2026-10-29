@@ -11,8 +11,33 @@ const LINKS_LOCAL_FILE: &str = ".jwlinks.local.toml";
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkApplyReport {
     pub linked: usize,
+    pub directories_created: usize,
     pub satisfied: usize,
     pub skipped_missing_target: usize,
+}
+
+/// Returned effects are actual successes, not the number of links in the plan.
+#[derive(Debug)]
+pub struct LinkFinishFailure {
+    pub completed: LinkApplyReport,
+    pub path: Option<PathBuf>,
+    pub source: anyhow::Error,
+}
+
+impl std::fmt::Display for LinkFinishFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "link finish partial effects: {} links, {} directories created; no rollback: {}",
+            self.completed.linked, self.completed.directories_created, self.source
+        )
+    }
+}
+
+impl std::error::Error for LinkFinishFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,8 +164,14 @@ impl LoadedWorkspaceLinks {
 /// Forward-only finish for reseed. Local path checks happen against the actual
 /// final tree. Failure leaves earlier links/directories; lifecycle's reversible
 /// application below retains its separate contract.
-pub fn apply_loaded_workspace_links(loaded: &LoadedWorkspaceLinks) -> Result<LinkApplyReport> {
-    LinkPlan::build(&loaded.root, loaded.rules.clone())?.apply_forward()
+pub fn apply_loaded_workspace_links(loaded: &LoadedWorkspaceLinks) -> std::result::Result<LinkApplyReport, LinkFinishFailure> {
+    LinkPlan::build(&loaded.root, loaded.rules.clone())
+        .map_err(|source| LinkFinishFailure {
+            completed: LinkApplyReport::default(),
+            path: None,
+            source,
+        })?
+        .apply_forward()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -258,22 +289,27 @@ fn normalize_rule(workspace_root: &Path, raw: LinkRuleRaw) -> Result<LinkRule> {
 }
 
 impl LinkPlan {
-    fn apply_forward(self) -> Result<LinkApplyReport> {
-        let mut directories = 0;
-        let mut links = 0;
+    fn apply_forward(self) -> std::result::Result<LinkApplyReport, LinkFinishFailure> {
+        let mut completed = self.report;
+        let mut path = None;
         let result = (|| {
             for directory in &self.directories_to_create {
+                path = Some(directory.clone());
                 if create_planned_directory(directory)? {
-                    directories += 1;
+                    completed.directories_created += 1;
                 }
             }
             for rule in &self.links_to_create {
+                path = Some(rule.source.clone());
                 create_symlink(&rule.target, &rule.source)?;
-                links += 1;
+                completed.linked += 1;
             }
-            Ok::<_, anyhow::Error>(self.report)
+            Ok::<_, anyhow::Error>(())
         })();
-        result.with_context(|| format!("link finish partial effects: {links} links, {directories} directories created; no rollback"))
+        match result {
+            Ok(()) => Ok(completed),
+            Err(source) => Err(LinkFinishFailure { completed, path, source }),
+        }
     }
     fn build(workspace_root: &Path, rules: Vec<LinkRule>) -> Result<Self> {
         if !workspace_root.is_dir() {
@@ -332,7 +368,6 @@ impl LinkPlan {
         }
 
         let directories_to_create = preflight_creation_paths(workspace_root, &links_to_create, &skipped_sources)?;
-        report.linked = links_to_create.len();
 
         Ok(Self {
             links_to_create,
@@ -365,8 +400,11 @@ impl LinkPlan {
             });
         }
 
+        let mut report = self.report;
+        report.linked = created_links.len();
+        report.directories_created = created_directories.len();
         Ok(LinkApplication {
-            report: self.report,
+            report,
             created_links,
             created_directories,
         })
@@ -775,7 +813,10 @@ mod tests {
         let plan = LinkPlan::build(root, loaded.rules).unwrap();
         fs::write(root.join("late"), "late claimant").unwrap();
         let error = plan.apply_forward().unwrap_err();
-        assert!(format!("{error:#}").contains("1 links, 1 directories created; no rollback"));
+        assert_eq!(error.completed.linked, 1);
+        assert_eq!(error.completed.directories_created, 1);
+        assert_eq!(error.path.as_deref(), Some(root.join("late").as_path()));
+        assert!(error.source.downcast_ref::<std::io::Error>().is_some());
         assert!(fs::symlink_metadata(root.join("nested/first")).unwrap().is_symlink());
         assert_eq!(fs::read(root.join("late")).unwrap(), b"late claimant");
     }

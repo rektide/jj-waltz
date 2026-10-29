@@ -161,8 +161,28 @@ fn same_path(left: &Path, right: &Path) -> Result<bool> {
 }
 
 fn registrations(client: &JjClient) -> Result<Vec<PathBuf>> {
-    let output = client.run_unchecked(["--ignore-working-copy", "git", "root"])?;
+    registrations_at(client, None)
+}
+
+/// Command-owned, snapshot-free inventory. Unlike lifecycle's live helper this
+/// cannot reconcile divergent JJ operations or rediscover the primary per lane.
+pub fn refill_registrations_at(client: &JjClient, operation: &str) -> Result<Vec<PathBuf>> {
+    registrations_at(client, Some(operation))
+}
+
+fn registrations_at(client: &JjClient, operation: Option<&str>) -> Result<Vec<PathBuf>> {
+    let output = match operation {
+        Some(operation) => client.run_at_unchecked(operation, ["git", "root"]),
+        None => client.run_unchecked(["--ignore-working-copy", "git", "root"]),
+    }?;
     if !output.success() {
+        if operation.is_some() {
+            let repo = jj_waltz_native_jj::context::repository_path(client.cwd()).map_err(anyhow::Error::msg)?;
+            if fs::read_to_string(repo.join("store/type")).is_ok_and(|kind| kind.trim() == "local") {
+                return Ok(Vec::new());
+            }
+            bail!("cannot verify Git registrations: {}", output.stderr());
+        }
         let report = jj_waltz_native_jj::context::discover(Some(client.cwd()));
         if report
             .jj
@@ -184,6 +204,21 @@ fn registrations(client: &JjClient) -> Result<Vec<PathBuf>> {
         .skip(1)
         .filter_map(|record| record.split('\0').find_map(|field| field.strip_prefix("worktree ").map(PathBuf::from)))
         .collect())
+}
+
+/// Refill has already bound the exact native root/name and refuses linked or
+/// external owners, including jw-created colocated worktrees. No cleanup authority
+/// is conferred by this read-only check.
+pub fn ensure_refill_allowed(root: &Path, metadata: Option<&ManagedWorkspaceMetadata>, registrations: &[PathBuf]) -> Result<()> {
+    if metadata.is_some_and(|m| m.external_owner.is_some() || m.owned_git_worktree.is_some()) || detect(root)?.is_some() {
+        bail!("workspace has external/colocated ownership");
+    }
+    for registered in registrations {
+        if same_path(root, registered)? {
+            bail!("workspace still has an external Git worktree registration");
+        }
+    }
+    Ok(())
 }
 
 pub fn ensure_removal_allowed(client: &JjClient, name: &str, path: Option<&Path>, metadata: Option<&ManagedWorkspaceMetadata>) -> Result<()> {
