@@ -119,6 +119,12 @@ Named tracked regulars are normalized to the fixture's fixed full permission mas
 outside timing: native JJ materialization may otherwise produce `0600` versus
 `0644` despite identical bytes and executable state. Matched signatures still check
 the actual full modes; no oracle is weakened to hide reset variation.
+Final native physical conformance checks exact leaf membership, bytes, kinds,
+literal link targets and **executable state**, which JJ actually records, not a
+full Unix permission mask. Required leaf ancestors must be real directories.
+Additional empty structural directories are reported, not implicitly pruned;
+no extra regular/link leaf is accepted. Ordinary Q still checks its byte/stat
+contract separately, and clean Q retains full inode/mtime identity.
 
 An adapter-only correction requires explicit `renewal rebind-adapter ROOT NEW_OUTPUT`
 before reusing roots. It checks the unchanged fixture/candidate/build sidecar/profile,

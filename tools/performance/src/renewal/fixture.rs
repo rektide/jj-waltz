@@ -404,9 +404,7 @@ impl Fixture {
             }
             let now = inventory(&worker)?;
             let expected_tree = if case == Case::DesiredN2 { &self.desired_tree } else { &self.source_tree };
-            if tracked_signature(&now) != *expected_tree {
-                return Err("physical D files/types/literal links/executable mode differ".into());
-            }
+            let native_physical = native_tree_conformance(&tracked_signature(&now), expected_tree)?;
             let payload = payload_nodes(&now);
             if signature(&payload, true) != signature(&payload_nodes(&self.donor), true) {
                 return Err("ordinary Q did not converge (including stale removal)".into());
@@ -440,8 +438,10 @@ impl Fixture {
             if !isolated {
                 return Err("receiver write changed donor".into());
             }
-            lanes.push(json!({"root":worker,"old":start.old[index],"parent":desired,"private_write":true,
-                "final_D_sharing":"not claimed; D-only/changed/native-restored leaves may come from native store"}));
+            lanes.push(
+                json!({"root":worker,"old":start.old[index],"parent":desired,"private_write":true,"native_physical":native_physical,
+                "final_D_sharing":"not claimed; D-only/changed/native-restored leaves may come from native store"}),
+            );
         }
         Ok(
             json!({"lanes":lanes,"budget":self.budget()?,"source_install_regular_obligations_per_receiver":FILES.len(),
@@ -557,6 +557,47 @@ fn tracked_signature(nodes: &BTreeMap<PathBuf, Node>) -> Value {
         false,
     )
 }
+fn native_tree_conformance(actual: &Value, expected: &Value) -> Result<Value> {
+    // JJ records leaf kind/content/executable state, not full Unix file/dir
+    // permission masks or empty directory membership. Compare that exact native
+    // contract independently of the strict full-metadata matched-start oracle.
+    let actual = actual.as_object().ok_or("missing physical native tree")?;
+    let expected = expected.as_object().ok_or("missing expected native tree")?;
+    let leaves = |nodes: &serde_json::Map<String, Value>| -> Value {
+        json!(
+            nodes
+                .iter()
+                .filter(|(_, n)| n["kind"] != "dir")
+                .map(|(p, n)| {
+                    let executable = if n["kind"] == "file" {
+                        Some(n["mode"].as_u64().expect("inventory mode") & 0o111 != 0)
+                    } else {
+                        None
+                    };
+                    (
+                        p.clone(),
+                        json!({"kind":n["kind"],"content":n["content"],"bytes":n["bytes"],"executable":executable}),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        )
+    };
+    if leaves(actual) != leaves(expected) {
+        return Err("physical D leaf membership/bytes/kinds/literal links/executable state differ".into());
+    }
+    for (path, node) in expected {
+        if node["kind"] == "dir" && actual.get(path).is_none_or(|n| n["kind"] != "dir") {
+            return Err("physical D recorded-leaf ancestor is not a real directory".into());
+        }
+    }
+    let retained = actual
+        .iter()
+        .filter(|(p, n)| n["kind"] == "dir" && !expected.contains_key(*p))
+        .map(|(p, _)| p)
+        .collect::<Vec<_>>();
+    Ok(json!({"native_leaf_contract":true,"retained_empty_structural_directories":retained,
+        "mode_scope":"native executable state, not full Unix permission masks; matched-start signatures still use full masks"}))
+}
 fn payload_nodes(nodes: &BTreeMap<PathBuf, Node>) -> BTreeMap<PathBuf, Node> {
     nodes.iter().filter(|(p, _)| p.starts_with("Q")).map(|(p, n)| (p.clone(), n.clone())).collect()
 }
@@ -651,6 +692,29 @@ fn reset_regular_modes(root: &Path, donor: &BTreeMap<PathBuf, Node>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_physical_contract_checks_all_leaves_and_executable_state_without_inventing_directory_pruning() {
+        let expected = json!({"mode":{"kind":"file","mode":0o755,"content":"bytes","bytes":5},
+            "dir":{"kind":"dir","mode":0o755},"dir/link":{"kind":"link","mode":0o777,"content":"../mode","bytes":7}});
+        let mut actual = expected.clone();
+        actual["mode"]["mode"] = json!(0o700);
+        actual["dir"]["mode"] = json!(0o700);
+        actual["old-empty"] = json!({"kind":"dir","mode":0o755});
+        let receipt = native_tree_conformance(&actual, &expected).unwrap();
+        assert_eq!(receipt["retained_empty_structural_directories"], json!(["old-empty"]));
+        for (pointer, value) in [
+            ("/mode/mode", json!(0o600)),
+            ("/mode/content", json!("wrong")),
+            ("/dir~1link/content", json!("wrong-target")),
+            ("/dir/kind", json!("link")),
+        ] {
+            let mut invalid = actual.clone();
+            *invalid.pointer_mut(pointer).unwrap() = value;
+            assert!(native_tree_conformance(&invalid, &expected).is_err(), "invalid {pointer}");
+        }
+        actual["unexpected"] = json!({"kind":"file","mode":0o600,"content":"foreign","bytes":7});
+        assert!(native_tree_conformance(&actual, &expected).is_err());
+    }
     #[test]
     fn named_mode_reset_removes_native_materializer_mask_variance_without_changing_executable_contract() {
         let own = super::super::tests::scratch();
