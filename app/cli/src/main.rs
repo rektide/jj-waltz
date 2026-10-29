@@ -2,6 +2,7 @@ use std::process::ExitCode;
 
 mod cli;
 mod manager;
+#[cfg_attr(not(unix), path = "refill_report_unsupported.rs")]
 mod refill_report;
 mod shell;
 

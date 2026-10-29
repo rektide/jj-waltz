@@ -332,7 +332,14 @@ fn command_sequence_runs_again_from_the_start_after_failure() {
     )
     .unwrap();
     let goal = f.advance();
-    let failure = fails(f.prepare(&[]), "step 2");
+    let output = f.prepare(&["--format=json"]);
+    let wire: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(wire["source"]["preparation"]["steps"][0]["status"], "succeeded");
+    assert_eq!(wire["source"]["preparation"]["steps"][1]["status"], "started");
+    assert_eq!(wire["source"]["preparation"]["steps"][2]["status"], "selected");
+    assert_eq!(wire["error"]["argv_step"], "1");
+    assert!(wire["source"]["source_commit_id"].is_null());
+    let failure = fails(output, "step 2");
     assert!(failure.contains("no rollback"));
     fs::write(&gate, "ok").unwrap();
     ok(f.prepare(&[]));
@@ -691,9 +698,16 @@ fn public_preparer_allows_final_repair_and_reports_failed_step_and_final_diverge
     let Some(f) = Fixture::new() else { return };
     let goal = f.advance();
     let settings = |commands: &[Vec<&str>]| {
-        fs::write(f.source.join(".jwreseed.local.toml"), format!("source_at='dev@origin'\n[freshen]\ncommands={}\n", serde_json::to_string(commands).unwrap())).unwrap();
+        fs::write(
+            f.source.join(".jwreseed.local.toml"),
+            format!("source_at='dev@origin'\n[freshen]\ncommands={}\n", serde_json::to_string(commands).unwrap()),
+        )
+        .unwrap();
     };
-    settings(&[vec!["sh", "-c", "printf dirty > lockfile; echo builder-stdout"], vec!["sh", "-c", "printf 'frozen\\n' > lockfile"]]);
+    settings(&[
+        vec!["sh", "-c", "printf dirty > lockfile; echo builder-stdout"],
+        vec!["sh", "-c", "printf 'frozen\\n' > lockfile"],
+    ]);
     let output = f.prepare(&["--format=json"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(String::from_utf8_lossy(&output.stderr).contains("builder-stdout"));
@@ -701,19 +715,30 @@ fn public_preparer_allows_final_repair_and_reports_failed_step_and_final_diverge
     assert_eq!(w["source"]["upstream_goal_commit_id"], goal);
     assert_ne!(w["source"]["source_commit_id"], goal);
     assert_eq!(w["source"]["preparation"]["final_conformance"], "succeeded");
-    for step in w["source"]["preparation"]["steps"].as_array().unwrap() { assert_eq!(step["status"], "succeeded"); assert!(step["elapsed_ms"].is_string()); }
+    for step in w["source"]["preparation"]["steps"].as_array().unwrap() {
+        assert_eq!(step["status"], "succeeded");
+        assert!(step["elapsed_ms"].is_string());
+    }
     settings(&[vec!["sh", "-c", "exit 17"], vec!["sh", "-c", "touch SHOULD_NOT_EXIST"]]);
     let output = f.prepare(&["--format=json"]);
-    assert!(!output.status.success()); let w: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(w["status"], "failed"); assert_eq!(w["error"]["kind"], "preparation"); assert_eq!(w["error"]["argv_step"], "0");
+    assert!(!output.status.success());
+    let w: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(w["status"], "failed");
+    assert_eq!(w["error"]["kind"], "preparation");
+    assert_eq!(w["error"]["argv_step"], "0");
     assert_eq!(w["source"]["preparation"]["steps"][0]["status"], "started");
     assert_eq!(w["source"]["preparation"]["steps"][1]["status"], "selected");
-    assert_eq!(w["source"]["preparation"]["final_conformance"], "pending"); assert!(w["source"]["source_commit_id"].is_null()); assert!(!f.source.join("SHOULD_NOT_EXIST").exists());
+    assert_eq!(w["source"]["preparation"]["final_conformance"], "pending");
+    assert!(w["source"]["source_commit_id"].is_null());
+    assert!(!f.source.join("SHOULD_NOT_EXIST").exists());
     settings(&[vec!["sh", "-c", "printf dirty > lockfile"]]);
-    let output = f.prepare(&["--format=json"]); assert!(!output.status.success());
+    let output = f.prepare(&["--format=json"]);
+    assert!(!output.status.success());
     let w: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(w["source"]["preparation"]["steps"][0]["status"], "succeeded");
-    assert_eq!(w["source"]["preparation"]["final_conformance"], "failed"); assert!(w["error"]["argv_step"].is_null()); assert!(w["source"]["source_commit_id"].is_null());
+    assert_eq!(w["source"]["preparation"]["final_conformance"], "failed");
+    assert!(w["error"]["argv_step"].is_null());
+    assert!(w["source"]["source_commit_id"].is_null());
 }
 
 #[test]
@@ -723,21 +748,36 @@ fn public_plain_asserted_preparing_and_source_only_previews_leave_native_config_
     fs::write(f.target.join("version"), "unsnapshotted receiver edit").unwrap();
     let repo_config = PathBuf::from(f.jj(&f.source, &["--ignore-working-copy", "config", "path", "--repo"]));
     for mode in ["plain", "asserted", "preparing", "source-only"] {
-        if mode == "plain" { fs::remove_file(f.source.join(".jwreseed.local.toml")).unwrap(); } else { f.policy(true, ""); }
-        let capture = || json!({
-            "operation": f.jj(&f.source, &["--ignore-working-copy", "operation", "log", "--limit=1", "--no-graph", "-T", "id"]),
-            "source_checkout": fs::read(f.source.join(".jj/working_copy/checkout")).unwrap(), "source_tree_state": fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(),
-            "target_checkout": fs::read(f.target.join(".jj/working_copy/checkout")).unwrap(), "target_tree_state": fs::read(f.target.join(".jj/working_copy/tree_state")).unwrap(),
-            "source_disk": disk_stamp(&f.source), "target_disk": disk_stamp(&f.target), "repo_config": fs::read(&repo_config).ok(),
-            "lock": fs::read(f.lock_path()).ok(), "store_exists": repo_config.parent().unwrap().join("jj-waltz").exists()
-        });
+        if mode == "plain" {
+            fs::remove_file(f.source.join(".jwreseed.local.toml")).unwrap();
+        } else {
+            f.policy(true, "");
+        }
+        let capture = || {
+            json!({
+                "operation": f.jj(&f.source, &["--ignore-working-copy", "operation", "log", "--limit=1", "--no-graph", "-T", "id"]),
+                "source_checkout": fs::read(f.source.join(".jj/working_copy/checkout")).unwrap(), "source_tree_state": fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(),
+                "target_checkout": fs::read(f.target.join(".jj/working_copy/checkout")).unwrap(), "target_tree_state": fs::read(f.target.join(".jj/working_copy/tree_state")).unwrap(),
+                "source_disk": disk_stamp(&f.source), "target_disk": disk_stamp(&f.target), "repo_config": fs::read(&repo_config).ok(),
+                "lock": fs::read(f.lock_path()).ok(), "store_exists": repo_config.parent().unwrap().join("jj-waltz").exists()
+            })
+        };
         let before = capture();
         let mut cmd = f.jw();
-        cmd.args(if mode == "source-only" { vec!["prepare", "--dry-run", "--format=json"] } else { vec!["reseed", "--dry-run", "--format=json"] });
-        if mode == "preparing" { cmd.arg("--prepare"); }
-        let output = cmd.output().unwrap(); assert!(output.status.success(), "{mode}: {}", text(&output));
+        cmd.args(if mode == "source-only" {
+            vec!["prepare", "--dry-run", "--format=json"]
+        } else {
+            vec!["reseed", "--dry-run", "--format=json"]
+        });
+        if mode == "preparing" {
+            cmd.arg("--prepare");
+        }
+        let output = cmd.output().unwrap();
+        assert!(output.status.success(), "{mode}: {}", text(&output));
         let w: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(w["status"], "planned"); assert!(w["source"]["source_commit_id"].is_null()); assert!(w["source"]["elapsed_ms"].is_null());
+        assert_eq!(w["status"], "planned");
+        assert!(w["source"]["source_commit_id"].is_null());
+        assert!(w["source"]["elapsed_ms"].is_null());
         assert_eq!(w["source"]["evidence"], if mode == "plain" { json!("assumed_prepared") } else { Value::Null });
         assert_eq!(capture(), before, "{mode} preview mutated native/config/lock state");
         assert!(!f.log.exists());

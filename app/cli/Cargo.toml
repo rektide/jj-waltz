@@ -34,6 +34,7 @@ diff-dirs-inspect = { package = "diff-dirs-tree-inspect", version = "=0.7.0", pa
 
 [dev-dependencies]
 assert_cmd = "2.0.17"
+jsonschema = { version = "0.58.6", default-features = false }
 predicates = "3.1.3"
 tempfile = "3.19.1"
 

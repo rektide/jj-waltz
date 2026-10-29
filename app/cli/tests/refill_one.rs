@@ -204,6 +204,14 @@ fi\nexec '{}' \"$@\"\n",
         let wire: Value = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|e| panic!("{e}: {} / {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)));
         assert_eq!(wire["schema_version"], 1);
+        static SCHEMA: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+        let schema = SCHEMA
+            .get_or_init(|| jsonschema::validator_for(&serde_json::from_str(include_str!("../../../docs/schema/refill-v1.schema.json")).unwrap()).unwrap());
+        assert!(
+            schema.is_valid(&wire),
+            "schema rejected outcome: {:?}",
+            schema.iter_errors(&wire).map(|e| e.to_string()).collect::<Vec<_>>()
+        );
         assert_eq!(output.status.success(), wire["status"] == "complete" || wire["status"] == "planned");
         let row = &wire["receivers"][0];
         // Test-only aliases retain the physical assertions from the native N1
@@ -563,6 +571,32 @@ fn public_schema_both_routes_n1_n2_and_omitted_default() {
 }
 
 #[test]
+fn public_ordinary_retention_is_not_reconstructed_from_deviation() {
+    let f = Fixture::new();
+    let target = f.workspace("target", &f.s);
+    fs::create_dir_all(f.source.join("cache/routing/selected")).unwrap();
+    fs::write(f.source.join("cache/routing/selected/good"), "selected").unwrap();
+    fs::write(f.source.join(".env"), "equal retained secret").unwrap();
+    fs::copy(f.source.join(".env"), target.join(".env")).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(target.join(".env"))
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(fs::metadata(f.source.join(".env")).unwrap().modified().unwrap()))
+        .unwrap();
+    let (result, _) = f.run(ReseedRequest {
+        allow_unbookmarked: true,
+        copy_ignored: Some(vec!["cache/routing/selected".into()]),
+        ..f.request(None)
+    });
+    assert_eq!(result["wire"]["status"], "complete");
+    let ordinary = &result["wire"]["receivers"][0]["ordinary"]["report"];
+    assert_ne!(ordinary["retained"], ordinary["deviated"], "{ordinary:#}");
+    assert_eq!(ordinary["completed"]["files_reflinked"], "1");
+    assert_eq!(fs::read(target.join(".env")).unwrap(), b"equal retained secret");
+}
+
+#[test]
 fn public_partial_native_failure_keeps_known_peers_and_last_child_facts_without_hint_queries() {
     use jj_waltz_refill_engine::command::RenewalRoute;
     for route in [RenewalRoute::ClearThenPopulate, RenewalRoute::ReplaceAuthorized] {
@@ -582,11 +616,13 @@ fn public_partial_native_failure_keeps_known_peers_and_last_child_facts_without_
         assert_eq!(w["status"], "failed");
         assert_eq!(w["error"]["receiver"], "peer");
         assert!(
-            w["error"]["message"].as_str().unwrap().contains("public native sentinel") || w["error"]["causes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c.as_str().unwrap().contains("public native sentinel")), "{result:#}"
+            w["error"]["message"].as_str().unwrap().contains("public native sentinel")
+                || w["error"]["causes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|c| c.as_str().unwrap().contains("public native sentinel")),
+            "{result:#}"
         );
         assert_eq!(w["receivers"][0]["status"], "partial");
         assert_eq!(w["receivers"][0]["native"]["state"], "established");
@@ -623,6 +659,39 @@ fn public_final_barrier_failure_can_leave_every_receiver_complete() {
     assert_eq!(w["receivers"][0]["status"], "complete");
     assert!(result["error"].as_str().unwrap().contains("public final barrier sentinel"));
     assert_eq!(Path::new(&calls.last().unwrap()[0]), f.source);
+}
+
+#[test]
+fn public_finish_failure_keeps_earlier_complete_receiver_and_actual_link_counts() {
+    use jj_waltz_refill_engine::command::RenewalRoute;
+    for route in [RenewalRoute::ClearThenPopulate, RenewalRoute::ReplaceAuthorized] {
+        let f = Fixture::new();
+        let target = f.workspace("target", &f.s);
+        f.workspace("peer", &f.s);
+        fs::write(target.join(".env"), "retained first-lane target").unwrap();
+        fs::create_dir_all(f.source.join("cache")).unwrap();
+        fs::write(f.source.join("cache/tool"), "ordinary work").unwrap();
+        fs::write(f.source.join(".jwlinks.toml"), "[[link]]\nsource='tool'\ntarget='.env'\nrequired=true\n").unwrap();
+        let (result, _) = f.run(ReseedRequest {
+            renewal_route: route,
+            names: vec!["target".into(), "peer".into()],
+            allow_unbookmarked: true,
+            ..f.request(None)
+        });
+        let w = &result["wire"];
+        assert_eq!(w["status"], "failed", "{result:#}");
+        assert_eq!(w["error"]["phase"], "links");
+        assert_eq!(w["error"]["receiver"], "peer");
+        assert_eq!(w["receivers"][0]["status"], "complete");
+        assert_eq!(w["receivers"][0]["finish"]["links"]["linked"], "1");
+        assert_eq!(w["receivers"][1]["status"], "failed");
+        assert_eq!(w["receivers"][1]["finish"]["state"], "partial");
+        assert_eq!(w["receivers"][1]["finish"]["links"]["linked"], "0");
+        for row in w["receivers"].as_array().unwrap() {
+            assert_eq!(row["native"]["state"], "established");
+            assert_eq!(row["ordinary"]["report"]["completed"]["files_reflinked"], "1");
+        }
+    }
 }
 
 #[test]

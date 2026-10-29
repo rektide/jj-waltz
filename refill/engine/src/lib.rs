@@ -5,6 +5,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RenewalRoute {
+    #[default]
+    ClearThenPopulate,
+    ReplaceAuthorized,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnmatchedPolicy {
@@ -16,7 +24,7 @@ pub enum UnmatchedPolicy {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReseedRequest {
     #[serde(default)]
-    pub renewal_route: command::RenewalRoute,
+    pub renewal_route: RenewalRoute,
     /// Literal targets; empty names/groups select the current variant.
     pub names: Vec<String>,
     pub groups: Vec<String>,

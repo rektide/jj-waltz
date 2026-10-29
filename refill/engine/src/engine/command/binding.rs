@@ -170,7 +170,7 @@ impl Resolution {
             path: registry.repository.clone(),
             profile,
         });
-        let source = Arc::new(BoundWorkspace::capture(&source, &registry, repo, false)?);
+        let source = Arc::new(BoundWorkspace::capture(&source, &registry, repo, false).with_context(|| ErrorPath(source.clone()))?);
         let recorded = source.client().commit_facts_at(&registry.operation, "@")?;
         facts.source = Some(SourceContext {
             name: source.name.clone(),

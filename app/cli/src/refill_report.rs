@@ -434,7 +434,9 @@ impl Envelope {
     }
     fn fail(&mut self, error: &anyhow::Error, kind: &'static str, location: &FailureLocation) {
         self.status = if self.mode == "preview" { Status::Blocked } else { Status::Failed };
-        if self.mode == "preview" && let Some(row) = self.receivers.iter_mut().find(|r| Some(&r.name) == location.receiver.as_ref()) {
+        if self.mode == "preview"
+            && let Some(row) = self.receivers.iter_mut().find(|r| Some(&r.name) == location.receiver.as_ref())
+        {
             row.status = "blocked";
         }
         self.error = Some(Error::project(error, kind, location));
@@ -1001,15 +1003,17 @@ pub fn reseed(request: ReseedRequest) -> Outcome {
         }
         Ok(())
     })();
-    if let Err(error) = &result && e.error.is_none() {
-            e.fail(
-                error,
-                "resolution",
-                &FailureLocation {
-                    phase: Phase::Resolve,
-                    receiver: None,
-                },
-            );
+    if let Err(error) = &result
+        && e.error.is_none()
+    {
+        e.fail(
+            error,
+            "resolution",
+            &FailureLocation {
+                phase: Phase::Resolve,
+                receiver: None,
+            },
+        );
     }
     e.timings.command_ms = Some(ms(started.elapsed()));
     Outcome {
@@ -1061,15 +1065,17 @@ pub fn prepare(request: PrepareRequest) -> Outcome {
         }
         Ok(())
     })();
-    if let Err(error) = &result && e.error.is_none() {
-            e.fail(
-                error,
-                "resolution",
-                &FailureLocation {
-                    phase: Phase::Resolve,
-                    receiver: None,
-                },
-            );
+    if let Err(error) = &result
+        && e.error.is_none()
+    {
+        e.fail(
+            error,
+            "resolution",
+            &FailureLocation {
+                phase: Phase::Resolve,
+                receiver: None,
+            },
+        );
     }
     e.timings.command_ms = Some(ms(started.elapsed()));
     Outcome {
@@ -1082,6 +1088,63 @@ pub fn prepare(request: PrepareRequest) -> Outcome {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    #[test]
+    fn schema_and_explicit_fixtures_accept_nulls_and_reject_numeric_noncanonical_and_overflow_counts() {
+        let schema: Value = serde_json::from_str(include_str!("../../../docs/schema/refill-v1.schema.json")).unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        for fixture in [
+            include_str!("../tests/fixtures/refill/resolution-failed.json"),
+            include_str!("../tests/fixtures/refill/prepare-planned.json"),
+            include_str!("../tests/fixtures/refill/prepare-complete.json"),
+            include_str!("../tests/fixtures/refill/reseed-complete.json"),
+        ] {
+            let value: Value = serde_json::from_str(fixture).unwrap();
+            assert!(
+                validator.is_valid(&value),
+                "{:?}",
+                validator.iter_errors(&value).map(|e| e.to_string()).collect::<Vec<_>>()
+            );
+        }
+        let complete: Value = serde_json::from_str(include_str!("../tests/fixtures/refill/reseed-complete.json")).unwrap();
+        for field in ["renewal_effects", "manifest"] {
+            let mut invalid = complete.clone();
+            invalid["receivers"][0]["native"][field] = Value::Null;
+            assert!(!validator.is_valid(&invalid));
+            invalid["receivers"][0]["native"].as_object_mut().unwrap().remove(field);
+            assert!(!validator.is_valid(&invalid));
+        }
+        let mut incomplete = complete;
+        incomplete["receivers"][0]["native"]["manifest"]["complete"] = json!(false);
+        assert!(!validator.is_valid(&incomplete));
+        let counts =
+            jsonschema::validator_for(&json!({"$schema": "https://json-schema.org/draft/2020-12/schema", "$defs": schema["$defs"], "$ref": "#/$defs/N"}))
+                .unwrap();
+        for good in ["0", "1", "9007199254740993", "18446744073709551616", "340282366920938463463374607431768211455"] {
+            assert!(counts.is_valid(&json!(good)));
+        }
+        for bad in [
+            json!(0),
+            json!(null),
+            json!("01"),
+            json!("-1"),
+            json!("340282366920938463463374607431768211456"),
+            json!("999999999999999999999999999999999999999"),
+        ] {
+            assert!(!counts.is_valid(&bad), "{bad}");
+        }
+        let ordinary: Value = serde_json::from_str(include_str!("../tests/fixtures/refill/ordinary-wide.json")).unwrap();
+        let lane = jsonschema::validator_for(
+            &json!({"$schema": "https://json-schema.org/draft/2020-12/schema", "$defs": schema["$defs"], "$ref": "#/$defs/ordinaryReport"}),
+        )
+        .unwrap();
+        assert!(lane.is_valid(&ordinary));
+        let mut missing = ordinary.clone();
+        missing.as_object_mut().unwrap().remove("completed");
+        assert!(!lane.is_valid(&missing));
+        let mut null = ordinary;
+        null["completed"] = Value::Null;
+        assert!(!lane.is_valid(&null));
+    }
     #[test]
     fn wide_counts_are_decimal_and_retention_is_not_deviation() {
         let mut totals = diff_dirs_sync::coordinated::LaneTotals {

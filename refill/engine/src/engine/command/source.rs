@@ -111,6 +111,9 @@ impl ResolvedSource {
         let mut facts = ResolutionFacts::default();
         let result = (|| {
             let resolution = Resolution::capture(cwd, &request, true, &mut facts)?;
+            if resolution.config.legacy_prepare {
+                eprintln!("warning: [prepare] is a deprecated local alias for [freshen]; rename it to [freshen]");
+            }
             let registrations = jj_waltz_workspace_state::ownership::refill_registrations_at(&resolution.caller, &resolution.registry.operation)?;
             resolution.check_ownership(&resolution.source, &registrations)?;
             Topology::capture()?.workspace(&resolution.source.root, true)?;
@@ -185,7 +188,10 @@ impl ResolvedSource {
             self.handoff(None, evidence, None, context.clone())
         })();
         context.elapsed = Some(started.elapsed());
-        if result.is_err() && let Some(assertion) = &mut context.assertion && !matches!(assertion.status, AssertionStatus::Succeeded) {
+        if result.is_err()
+            && let Some(assertion) = &mut context.assertion
+            && !matches!(assertion.status, AssertionStatus::Succeeded)
+        {
             assertion.status = AssertionStatus::Failed;
         }
         result.map(|mut ready| {
@@ -319,17 +325,17 @@ pub fn prepare_source(source: &ResolvedSource, diagnostic: &mut dyn FnMut(&str))
                 index + 1
             );
             step.status = StepStatus::Succeeded;
-            completed.failed_step = None;
             // No snapshot/live diff here: later argv may repair tracked edits.
             source_identity(source, &goal, &child.change_id)?;
+            completed.failed_step = None;
         }
         completed.final_conformance_started = true;
         native_diff(&client, &goal).context("preparer changed tracked tree; final conformance failed")?;
+        completed.final_conformance_succeeded = true;
         source_identity(source, &goal, &child.change_id)?;
         let operation = client.operation_id()?;
         let facts = client.commit_facts_at(&operation, "@")?;
         ensure!(facts.ordinary_empty_child(), "prepared source is not an empty child");
-        completed.final_conformance_succeeded = true;
         completed.source_commit = Some(facts.commit_id);
         completed.elapsed_ms = started.elapsed().as_millis();
         source.handoff(Some(goal), SourceEvidence::Produced, Some(completed.clone()), context.clone())

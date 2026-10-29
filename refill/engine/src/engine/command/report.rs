@@ -1,12 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RenewalRoute {
-    #[default]
-    ClearThenPopulate,
-    ReplaceAuthorized,
-}
+pub use crate::RenewalRoute;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {

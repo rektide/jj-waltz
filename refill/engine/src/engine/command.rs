@@ -45,7 +45,6 @@ pub struct ResolvedCommand {
     started: Instant,
     resolution: Resolution,
     request: ReseedRequest,
-    pub route: RenewalRoute,
     pub source: ResolvedSource,
     pub receivers: Vec<Arc<BoundWorkspace>>,
     pub facts: ResolutionFacts,
@@ -172,17 +171,19 @@ impl ResolvedCommand {
                     root != &registry.primary_root && root != &resolution.source.root,
                     "primary/source is not an eligible receiver"
                 );
-                let binding = Arc::new(BoundWorkspace::capture(root, registry, Arc::clone(&resolution.source.repository), true)?);
+                let binding = Arc::new(
+                    BoundWorkspace::capture(root, registry, Arc::clone(&resolution.source.repository), true).with_context(|| ErrorPath(root.clone()))?,
+                );
                 ensure!(binding.name == selected.name, "selected root registration differs");
+                facts.selections.push(crate::ReseedSelection {
+                    root: root.clone(),
+                    ..selected
+                });
                 resolution.check_ownership(&binding, &registrations)?;
                 topology.workspace(root, false)?;
                 roots.push(root.clone());
                 links.push(LoadedWorkspaceLinks::new(link_config.as_ref(), root)?);
                 receivers.push(binding);
-                facts.selections.push(crate::ReseedSelection {
-                    root: root.clone(),
-                    ..selected
-                });
             }
             receiver = None;
             topology.separate(&roots)?;
@@ -194,7 +195,6 @@ impl ResolvedCommand {
             Ok(Self {
                 started,
                 resolution,
-                route: request.renewal_route,
                 request,
                 facts: facts.clone(),
                 source,
@@ -246,7 +246,7 @@ impl ResolvedCommand {
             label: "PLANNED — payload/path obstructions not inspected",
             source,
             desired,
-            route: self.route,
+            route: self.request.renewal_route,
             receivers: self.receivers.iter().map(|b| (b.name.clone(), b.root.clone())).collect(),
             patterns: self.pattern_declarations.clone(),
             clone_capability_probed: false,
@@ -290,7 +290,7 @@ impl ResolvedCommand {
                 .map(|b| ReceiverReport {
                     name: b.name.clone(),
                     root: b.root.clone(),
-                    route: self.route,
+                    route: self.request.renewal_route,
                     old: None,
                     desired: None,
                     child: None,
@@ -423,7 +423,15 @@ impl ResolvedCommand {
                 indexes: membership.count(),
                 ..Default::default()
             });
-            let input = native::inputs(&membership, &source, &desired, &saved, self.route, self.request.replace_content, capture)?;
+            let input = native::inputs(
+                &membership,
+                &source,
+                &desired,
+                &saved,
+                self.request.renewal_route,
+                self.request.replace_content,
+                capture,
+            )?;
             report.tracked_source = Some(input.tracked.source.diagnostics());
             let native_paths = if Arc::ptr_eq(&input.source, &input.desired) {
                 Arc::clone(&input.source.index)

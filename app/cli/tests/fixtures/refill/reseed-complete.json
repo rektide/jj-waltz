@@ -1,0 +1,35 @@
+{
+  "schema_version": 1, "command": "reseed", "mode": "execute", "status": "complete", "renewal_route": "replace-authorized",
+  "native_profile": {"id": "local-tree-state-33d3a595", "raw_version": "jj 0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b"},
+  "selection": {"names": ["worker"], "groups": [], "resolved": [{"name": "worker", "root": {"display": "/receiver", "unix_bytes_hex": "2f7265636569766572"}, "origins": ["positional"]}], "skipped": []},
+  "source": {
+    "name": "default", "root": {"display": "/donor", "unix_bytes_hex": "2f646f6e6f72"}, "operation_id": "accepted-operation", "recorded_commit_id": "source-S",
+    "source_commit_id": "source-S", "source_change_id": "donor-change", "upstream_goal_commit_id": null, "state": "ready", "evidence": "assumed_prepared",
+    "assertion": null, "upstream": null, "preparation": null, "elapsed_ms": "1"
+  },
+  "desired": {"kind": "source", "revset": null, "commit_id": "source-S", "state": "resolved"}, "preview": null,
+  "receivers": [{
+    "name": "worker", "root": {"display": "/receiver", "unix_bytes_hex": "2f7265636569766572"}, "renewal_route": "replace-authorized", "status": "complete", "phase": "complete",
+    "saved": {"commit_id": "saved-O", "history": {"status": "covered", "work_tip_commit_id": "saved-O", "bookmark": "saved-work", "remote": null, "bookmark_target_commit_id": "saved-O"}},
+    "desired_commit_id": "source-S", "child": {"commit_id": "receiving-C", "change_id": "new-receiving-change", "parent_commit_ids": ["source-S"]},
+    "native": {
+      "state": "established", "manifest": {"desired": "1", "installed": "1", "owned_obsolete": "0", "owned_retired": "0", "complete": true},
+      "renewal_effects": {"files_copied": "0", "files_reflinked": "1", "bytes_copied": "0", "bytes_reflinked": "3", "symlinks_created": "0", "directories_created": "0", "files_removed": "0", "symlinks_removed": "0", "directories_removed": "0", "directory_permissions_set": "0"},
+      "explicit_clear_effects": null, "source_state_adopted": true,
+      "steps": [{"phase": "capture", "status": "succeeded", "elapsed_ms": "1"}, {"phase": "native_child", "status": "succeeded", "elapsed_ms": "1"}, {"phase": "install", "status": "succeeded", "elapsed_ms": "1"}, {"phase": "admit_desired", "status": "succeeded", "elapsed_ms": "0"}, {"phase": "adopt", "status": "succeeded", "elapsed_ms": "0"}, {"phase": "reparent", "status": "succeeded", "elapsed_ms": "1"}, {"phase": "native_verify", "status": "succeeded", "elapsed_ms": "1"}],
+      "elapsed_ms": "5", "tracked_install_ms": "1"
+    },
+    "ordinary": {"state": "disabled", "report": null, "application_ms": null},
+    "finish": {"state": "complete", "links": {"linked": "0", "directories_created": "0", "satisfied": "0", "skipped_missing_target": "0"}, "failed_path": null, "elapsed_ms": "1"}
+  }],
+  "capture": {"distinct_trees": "1", "membership_queries": "1", "indexes": "1", "donor_cache_reads": "1", "desired_manifests": "1", "owned_manifests": "1"},
+  "source_diagnostics": {
+    "native": {
+      "paired": {"listings": "0", "metadata_acquisitions": "0", "link_acquisitions": "0", "fact_hits": "0", "cache_hits": "0", "cache_misses": "0"},
+      "opaque": {"listings": "0", "metadata_acquisitions": "0", "link_acquisitions": "0", "fact_hits": "0", "cache_hits": "0", "cache_misses": "0"},
+      "declared": {"listings": "0", "metadata_acquisitions": "1", "link_acquisitions": "0", "fact_hits": "1", "cache_hits": "0", "cache_misses": "0"},
+      "retained_batches": "1", "retained_charged_capacity": "1024", "active_batches": "0", "evictions": "0"
+    }, "ordinary": null
+  },
+  "timings": {"command_ms": "10", "engine_ms": "10", "pre_native_ms": "3", "ordinary_ms": null}, "error": null
+}

@@ -35,7 +35,12 @@
     }}},
     {"if": {"properties": {"status": {"enum": ["complete", "planned"]}}}, "then": {"properties": {"error": {"type": "null"}}}, "else": {"properties": {"error": {"$ref": "#/$defs/error"}}}},
     {"if": {"properties": {"status": {"const": "planned"}}}, "then": {"properties": {"mode": {"const": "preview"}, "preview": {"$ref": "#/$defs/preview"}}}},
-    {"if": {"properties": {"mode": {"const": "execute"}}}, "then": {"properties": {"preview": {"type": "null"}, "status": {"enum": ["complete", "failed"]}}}}
+    {"if": {"properties": {"mode": {"const": "execute"}}}, "then": {"properties": {"preview": {"type": "null"}, "status": {"enum": ["complete", "failed"]}}}},
+    {"if": {"properties": {"status": {"const": "complete"}}}, "then": {"properties": {
+      "mode": {"const": "execute"}, "native_profile": {"type": "object"},
+      "source": {"type": "object", "properties": {"state": {"const": "ready"}, "source_commit_id": {"type": "string"}, "source_change_id": {"type": "string"}, "evidence": {"enum": ["assumed_prepared", "live_assertion", "produced"]}}},
+      "receivers": {"items": {"properties": {"status": {"const": "complete"}}}}
+    }}}
   ],
   "$defs": {
     "N": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$", "maxLength": 39, "description": "Canonical unsigned decimal, checked u128 (0..340282366920938463463374607431768211455). No floating-point coercion.", "allOf": [{"pattern": "^(?:[0-9]{1,38}|[1-2][0-9]{38}|3[0-3][0-9]{37}|340[0-1][0-9]{35}|3402[0-7][0-9]{34}|34028[0-1][0-9]{33}|340282[0-2][0-9]{32}|3402823[0-5][0-9]{31}|34028236[0-5][0-9]{30}|340282366[0-8][0-9]{29}|3402823669[0-1][0-9]{28}|340282366920[0-8][0-9]{26}|3402823669209[0-2][0-9]{25}|34028236692093[0-7][0-9]{24}|340282366920938[0-3][0-9]{23}|3402823669209384[0-5][0-9]{22}|34028236692093846[0-2][0-9]{21}|340282366920938463[0-3][0-9]{20}|3402823669209384634[0-5][0-9]{19}|34028236692093846346[0-2][0-9]{18}|340282366920938463463[0-2][0-9]{17}|3402823669209384634633[0-6][0-9]{16}|34028236692093846346337[0-3][0-9]{15}|340282366920938463463374[0-5][0-9]{14}|34028236692093846346337460[0-6][0-9]{12}|340282366920938463463374607[0-3][0-9]{11}|3402823669209384634633746074[0-2][0-9]{10}|340282366920938463463374607430[0-9]{9}|340282366920938463463374607431[0-6][0-9]{8}|3402823669209384634633746074317[0-5][0-9]{7}|34028236692093846346337460743176[0-7][0-9]{6}|340282366920938463463374607431768[0-1][0-9]{5}|34028236692093846346337460743176820[0-9]{4}|340282366920938463463374607431768210[0-9]{3}|340282366920938463463374607431768211[0-3][0-9]{2}|3402823669209384634633746074317682114[0-4][0-9]{1}|34028236692093846346337460743176821145[0-4]|340282366920938463463374607431768211455)$"}]},
@@ -102,7 +107,10 @@
     "ordinary": {"type": "object", "required": ["state", "report", "application_ms"], "properties": {
       "state": {"enum": ["disabled", "unstarted", "partial", "satisfied"]}, "application_ms": {"$ref": "#/$defs/optionalN"},
       "report": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/ordinaryReport"}]}
-    }},
+    }, "allOf": [
+      {"if": {"properties": {"state": {"const": "disabled"}}}, "then": {"properties": {"report": {"type": "null"}, "application_ms": {"type": "null"}}}},
+      {"if": {"properties": {"state": {"const": "satisfied"}}}, "then": {"properties": {"report": {"type": "object", "properties": {"satisfied": {"const": true}}}}}}
+    ]},
     "ordinaryReport": {"type": "object", "required": ["satisfied", "deviated", "retained", "applications", "planned", "completed", "opaque_deviated", "additional_retained", "excluded", "end", "pruned", "observed"], "properties": {
       "satisfied": {"type": "boolean"}, "deviated": {"$ref": "#/$defs/N"}, "retained": {"$ref": "#/$defs/N"}, "applications": {"$ref": "#/$defs/N"}, "planned": {"$ref": "#/$defs/N"}, "completed": {"$ref": "#/$defs/effects"}, "opaque_deviated": {"$ref": "#/$defs/N"}, "additional_retained": {"$ref": "#/$defs/N"}, "excluded": {"$ref": "#/$defs/N"}, "end": {"enum": ["comparison_failed", "application_failed", "refresh_failed", "decision_changed", "abandoned", null]}, "pruned": {"type": "boolean"}, "observed": {"$ref": "#/$defs/observed"}
     }},

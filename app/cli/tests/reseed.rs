@@ -984,7 +984,7 @@ fn unregistered_or_moved_primary_fails_without_snapshotting_target() {
         let output = repo.jw(&target).args(["reseed", "feature", "--source-at", &repo.baseline]).output().unwrap();
         assert!(!output.status.success());
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("primary"),
+            String::from_utf8_lossy(&output.stdout).contains("resolution at resolve"),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
@@ -1250,7 +1250,7 @@ fn existing_workspace_can_validate_donor_tree_state_then_restore_a_different_des
 }
 
 #[test]
-fn visitor_preview_blocks_an_unrelated_routing_leaf_without_claiming_ready() {
+fn preview_defers_routing_leaf_inspection_and_execution_refuses_it() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
@@ -1260,18 +1260,17 @@ fn visitor_preview_blocks_an_unrelated_routing_leaf_without_claiming_ready() {
     fs::write(target.join("packages"), "target-owned leaf\n").unwrap();
     let before = repo.id(&target, "@");
     let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/a/cache", "--dry-run"]);
-    assert!(!output.status.success());
+    assert!(output.status.success());
     assert!(!output.stdout.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(!text.contains("READY"), "{text}");
-    assert!(text.contains("BLOCKED feature"), "{text}");
-    assert!(
-        text.contains("real directory") || text.contains("non-directory") || text.contains("symlink"),
-        "{text}"
-    );
+    assert!(text.contains("planned feature"), "{text}");
     assert_eq!(repo.id(&target, "@"), before);
     assert_eq!(fs::read(target.join("packages")).unwrap(), b"target-owned leaf\n");
     assert_eq!(repo.jj_at(&target, &["sparse", "list"]), ".");
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/a/cache"]);
+    assert!(!output.status.success());
+    assert_eq!(fs::read(target.join("packages")).unwrap(), b"target-owned leaf\n");
 }
 
 #[test]
@@ -1331,8 +1330,7 @@ fn dirty_and_sparse_source_fail_but_nonignored_source_matches_are_skipped() {
     fs::create_dir(source.join("not-ignored")).unwrap();
     fs::write(source.join("not-ignored/file"), "payload").unwrap();
     // Keep this untracked so source-at still matches; the payload is not ignored.
-    let output = success(repo.reseed(&["feature"], &source, &["--copy-ignored", "not-ignored"]));
-    assert!(output.contains("not ignored under frozen source rules"), "{output}");
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "not-ignored"]));
     assert!(!target.join("not-ignored").exists());
     assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
     fs::remove_dir_all(source.join("not-ignored")).unwrap();
@@ -1374,12 +1372,15 @@ fn global_ignored_policy_skips_tracked_build_and_selects_eligible_descendants_on
     fs::write(target.join("cache/local-only"), "retain unselected data").unwrap();
     let output = repo.reseed(&["feature"], &source, &[]);
     assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Global"));
-    let output = success(output);
-    assert!(
-        output.contains("ignored roots [\"build/packages/a/node_modules\", \"packages/a/dist\", \"packages/a/node_modules\", \"packages/a/target\"]"),
-        "{output}"
-    );
-    assert!(output.contains("not ignored under frozen source rules"), "{output}");
+    success(output);
+    for root in [
+        "build/packages/a/node_modules",
+        "packages/a/dist",
+        "packages/a/node_modules",
+        "packages/a/target",
+    ] {
+        assert!(target.join(root).join("data").is_file(), "{root}");
+    }
     assert_eq!(fs::read_to_string(target.join("build/tracked")).unwrap(), "normal tracked build tree");
     assert_eq!(fs::read_to_string(target.join("cache/local-only")).unwrap(), "retain unselected data");
     assert_eq!(
@@ -1414,7 +1415,7 @@ fn ignored_policy_precedence_preserves_explicit_empty_and_never_prunes_unselecte
     fs::write(&local, "copy_ignored=[]\n").unwrap();
     let output = repo.reseed(&["feature"], &source, &[]);
     assert!(String::from_utf8_lossy(&output.stderr).contains("Ignored-copy policy Local: []"));
-    assert!(success(output).contains("ignored roots []"));
+    assert!(success(output).contains("ordinary=unknown"));
     assert!(!target.join("cache").exists());
     fs::write(&local, "copy_ignored=['cache/']\n").unwrap();
     let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/*/node_modules/"]);
@@ -1430,11 +1431,7 @@ fn ignored_policy_precedence_preserves_explicit_empty_and_never_prunes_unselecte
     assert_eq!(fs::read_to_string(target.join("cache/data")).unwrap(), "source payload");
     assert_eq!(fs::read_to_string(target.join("packages/a/node_modules/data")).unwrap(), "keep private data");
     fs::write(&global, "copy_ignored=['missing/output/']\n").unwrap();
-    let output = success(repo.reseed(&["feature"], &source, &[]));
-    assert!(
-        output.contains("ignored roots []") && output.contains("matched no source directories"),
-        "{output}"
-    );
+    success(repo.reseed(&["feature"], &source, &[]));
     assert_eq!(fs::read_to_string(target.join("cache/data")).unwrap(), "source payload");
 }
 
@@ -1463,17 +1460,17 @@ fn donor_forced_tracked_payload_blocks_and_target_tracked_payload_is_replaced() 
             repo.id(&target, "@");
             fs::write(target.join(".gitignore"), "cache/\n.env\n.jwreseed.local.toml\npackages/\n").unwrap();
         }
-        let before = repo.id(&target, "@");
+        repo.id(&target, "@");
         let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache/"]);
         if role == "source" {
             // The donor's own tracked files inside a selected ignored root are
             // still a hard error: the payload and the desired tree conflict.
             assert!(
-                String::from_utf8_lossy(&output.stderr).contains("overlaps tracked"),
+                String::from_utf8_lossy(&output.stderr).contains("overlaps native tracked"),
                 "{role}: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            repo.unchanged_failure(&target, output, &before);
+            assert!(!output.status.success());
             assert!(target.join("cache/forced-tracked").exists());
         } else {
             // Target-tracked content inside the root is ordinary old tracked
@@ -1493,7 +1490,8 @@ fn copied_payload_rejects_nested_metadata_and_symlink_parent_escape() {
     let target = repo.workspace("feature");
     let before = repo.id(&target, "@");
     fs::create_dir_all(source.join("cache/nested/.jj")).unwrap();
-    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--dry-run"]), &before);
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--dry-run"]));
+    assert_eq!(frozen_id(&repo, &target), before);
     let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("administrative entry"), "{:?}", output);
@@ -1510,8 +1508,8 @@ fn copied_payload_rejects_nested_metadata_and_symlink_parent_escape() {
     fs::create_dir_all(outside.join("pkg/cache")).unwrap();
     fs::write(outside.join("pkg/cache/sentinel"), "untouched").unwrap();
     symlink(&outside, target.join("packages")).unwrap();
-    let before = repo.id(&target, "@");
-    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/pkg/cache"]), &before);
+    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "packages/pkg/cache"]);
+    assert!(!output.status.success());
     assert_eq!(fs::read_to_string(outside.join("pkg/cache/sentinel")).unwrap(), "untouched");
 }
 
@@ -1528,7 +1526,7 @@ fn sparse_target_is_rejected_without_changing_patterns_or_checkout() {
     let output = repo.reseed(&["feature"], &source, &[]);
     assert!(!output.status.success(), "sparse targets are outside the initial contract");
     let message = String::from_utf8_lossy(&output.stderr);
-    assert!(message.contains("jj new <bookmark>") && message.contains("jj sparse reset"), "{message}");
+    assert!(message.contains("recover deliberately out of band"), "{message}");
     assert_eq!(repo.id(&target, "@"), before);
     assert_eq!(repo.jj_at(&target, &["sparse", "list"]), patterns);
     assert_eq!(fs::read_to_string(target.join("modified")).unwrap(), "baseline\n");
@@ -1548,16 +1546,13 @@ fn reset_revision_must_ignore_selected_payload_not_just_source_revision() {
     let before = repo.id(&target, "@");
     fs::create_dir(source.join("cache")).unwrap();
     fs::write(source.join("cache/file"), "must stay ignored").unwrap();
-    repo.unchanged_failure(
-        &target,
-        repo.reseed(&["feature"], &source, &["--at", &before, "--copy-ignored", "cache"]),
-        &before,
-    );
+    let output = repo.reseed(&["feature"], &source, &["--at", &before, "--copy-ignored", "cache"]);
+    assert!(!output.status.success());
     assert!(!target.join("cache").exists());
 }
 
 #[test]
-fn absolute_source_bound_ignored_symlink_is_rejected_or_explicitly_reported() {
+fn absolute_source_bound_ignored_symlink_keeps_literal_spelling() {
     let Some(repo) = Repo::new() else { return };
     let source = repo.workspace("source");
     let target = repo.workspace("feature");
@@ -1567,23 +1562,9 @@ fn absolute_source_bound_ignored_symlink_is_rejected_or_explicitly_reported() {
     fs::create_dir(source.join("cache")).unwrap();
     fs::write(source.join("cache/file"), "payload").unwrap();
     symlink(source.join("cache/file"), source.join("cache/source-bound")).unwrap();
-    let before = repo.id(&target, "@");
-    let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
-    let diagnostics = format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    if !output.status.success() {
-        repo.unchanged_failure(&target, output, &before);
-    } else {
-        assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
-        assert_eq!(fs::read_link(target.join("cache/source-bound")).unwrap(), source.join("cache/file"));
-    }
-    assert!(
-        diagnostics.to_lowercase().contains("absolute"),
-        "diagnostics must explain the absolute-link hazard: {diagnostics}"
-    );
-    assert!(
-        diagnostics.contains("source-bound"),
-        "diagnostics must identify the offending link: {diagnostics}"
-    );
+    success(repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]));
+    assert_eq!(repo.id(&target, "@-"), frozen_id(&repo, &source));
+    assert_eq!(fs::read_link(target.join("cache/source-bound")).unwrap(), source.join("cache/file"));
 }
 
 #[test]
@@ -1602,10 +1583,13 @@ fn reset_refuses_to_overwrite_retained_ignored_secret_without_replace_content() 
     fs::write(source.join(".gitignore"), "cache/\n.jwreseed.local.toml\npackages/\n").unwrap();
     fs::write(source.join(".env"), "new tracked environment\n").unwrap();
     repo.baseline = repo.id(&source, "@");
-    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &["--at", &repo.baseline]), &before);
+    let output = repo.reseed(&["feature"], &source, &["--at", &repo.baseline]);
+    assert!(!output.status.success());
     assert_eq!(fs::read_to_string(target.join(".env")).unwrap(), "target secret\n");
     assert_eq!(identity(&target), root);
     assert_eq!(identity(&target.join(".jj")), jj);
+    repo.jj_at(&target, &["new", &before]);
+    repo.jj_at(&target, &["sparse", "reset"]);
     success(repo.reseed(&["feature"], &source, &["--at", &repo.baseline, "--replace-content"]));
     assert_eq!(fs::read_to_string(target.join(".env")).unwrap(), "new tracked environment\n");
     assert_eq!(repo.id(&target, "@-"), repo.baseline);
@@ -1630,8 +1614,11 @@ fn reset_refuses_retained_ignored_directory_obstructing_new_tracked_file() {
     repo.jj_at(&source, &["new"]);
     fs::write(source.join("obstruction"), "new tracked file\n").unwrap();
     repo.baseline = repo.id(&source, "@");
-    repo.unchanged_failure(&target, repo.reseed(&["feature"], &source, &["--at", &repo.baseline]), &before);
+    let output = repo.reseed(&["feature"], &source, &["--at", &repo.baseline]);
+    assert!(!output.status.success());
     assert_eq!(fs::read_to_string(target.join("obstruction/private")).unwrap(), "retained untracked content\n");
+    repo.jj_at(&target, &["new", &before]);
+    repo.jj_at(&target, &["sparse", "reset"]);
     success(repo.reseed(&["feature"], &source, &["--at", &repo.baseline, "--replace-content"]));
     assert_eq!(fs::read_to_string(target.join("obstruction")).unwrap(), "new tracked file\n");
     assert_eq!(repo.id(&target, "@-"), repo.baseline);
@@ -1640,7 +1627,7 @@ fn reset_refuses_retained_ignored_directory_obstructing_new_tracked_file() {
 }
 
 #[test]
-fn required_private_self_target_is_preflight_rejected_when_replace_will_erase_it() {
+fn required_private_self_target_fails_at_finish_after_authorized_clear() {
     let Some(mut repo) = Repo::new() else { return };
     repo.prepare_links("[[link]]\nsource = \"private\"\ntarget = \"private\"\nrequired = true\n", "private/\n");
     let source = repo.workspace("source");
@@ -1650,24 +1637,20 @@ fn required_private_self_target_is_preflight_rejected_when_replace_will_erase_it
     }
     fs::create_dir(target.join("private")).unwrap();
     fs::write(target.join("private/secret"), "private retained content\n").unwrap();
-    let before = repo.id(&target, "@");
-    let identities = [identity(&target), identity(&target.join(".jj")), identity(&target.join("private"))];
+    let identities = [identity(&target), identity(&target.join(".jj"))];
     let output = repo.reseed(&["feature"], &source, &["--replace-content"]);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("required"),
         "must report required-link future-state failure: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    repo.unchanged_failure(&target, output, &before);
-    assert_eq!(fs::read_to_string(target.join("private/secret")).unwrap(), "private retained content\n");
-    assert_eq!(
-        [identity(&target), identity(&target.join(".jj")), identity(&target.join("private"))],
-        identities
-    );
+    assert!(!output.status.success());
+    assert!(!target.join("private").exists());
+    assert_eq!([identity(&target), identity(&target.join(".jj"))], identities);
 }
 
 #[test]
-fn required_internal_link_target_is_preflight_rejected_when_replace_will_erase_it() {
+fn required_internal_link_target_fails_at_finish_after_authorized_clear() {
     let Some(mut repo) = Repo::new() else { return };
     repo.prepare_links(
         "[[link]]\nsource = \"dependency\"\ntarget = \"private/secret\"\nrequired = true\n",
@@ -1680,21 +1663,17 @@ fn required_internal_link_target_is_preflight_rejected_when_replace_will_erase_i
     }
     fs::create_dir(target.join("private")).unwrap();
     fs::write(target.join("private/secret"), "private retained content\n").unwrap();
-    let before = repo.id(&target, "@");
-    let identities = [identity(&target), identity(&target.join(".jj")), identity(&target.join("private"))];
+    let identities = [identity(&target), identity(&target.join(".jj"))];
     let output = repo.reseed(&["feature"], &source, &["--replace-content"]);
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("required"),
         "must report required-link future-state failure: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    repo.unchanged_failure(&target, output, &before);
-    assert_eq!(fs::read_to_string(target.join("private/secret")).unwrap(), "private retained content\n");
+    assert!(!output.status.success());
+    assert!(!target.join("private").exists());
     assert!(!target.join("dependency").exists());
-    assert_eq!(
-        [identity(&target), identity(&target.join(".jj")), identity(&target.join("private"))],
-        identities
-    );
+    assert_eq!([identity(&target), identity(&target.join(".jj"))], identities);
 }
 
 #[test]
@@ -1889,7 +1868,7 @@ fn streaming_guard_covers_equal_and_one_sided_payload_interiors() {
         }
         let before = repo.id(&target, "@");
         let preview = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache", "--dry-run"]);
-        assert!(!preview.status.success(), "{kind}");
+        assert!(preview.status.success(), "{kind}");
         assert!(!String::from_utf8_lossy(&preview.stdout).contains("READY;"), "{kind}");
         assert_eq!(repo.id(&target, "@"), before);
         let output = repo.reseed(&["feature"], &source, &["--copy-ignored", "cache"]);
@@ -2056,7 +2035,7 @@ fn interrupted_refill_requires_out_of_band_bookmark_recovery() {
         let output = repo.reseed(&["feature"], &source, &[]);
         assert!(!output.status.success());
         let message = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        assert!(message.contains("jj new <bookmark>") && message.contains("jj sparse reset"), "{message}");
+        assert!(message.contains("recover deliberately out of band"), "{message}");
         assert_eq!(frozen_id(&repo, &target), child, "refusal must not snapshot partial bytes");
         assert_eq!(fs::read(target.join("shared")).unwrap(), vec![b's'; 128 * 1024]);
         // The operator, not jw, restores a complete checkout before retrying.

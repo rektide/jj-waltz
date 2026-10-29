@@ -309,7 +309,9 @@ fn refuse_residual(root: &Path, old: &[Entry]) -> Result<()> {
     for entry in old {
         tracked::confined_parents(root, &entry.path)?;
         match fs::symlink_metadata(root.join(&entry.path)) {
-            Ok(_) => bail!("recorded O path remains after native clear: {}", entry.path.display()),
+            Ok(_) => {
+                return Err(anyhow::anyhow!("recorded O path remains after native clear: {}", entry.path.display())).context(ErrorPath(root.join(&entry.path)));
+            }
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
@@ -325,7 +327,9 @@ fn admit_additions(root: &Path, source: &NativePathIndex, additions: &[Entry]) -
                 Ok(_) if source.contains(&path) => break,
                 Ok(m) if m.is_dir() && path != entry.path => {}
                 Ok(m) if m.is_dir() && source.descendants(&path) => break,
-                Ok(_) => bail!("D-only path obstructed by unrelated receiving name: {}", path.display()),
+                Ok(_) => {
+                    return Err(anyhow::anyhow!("D-only path obstructed by unrelated receiving name: {}", path.display())).context(ErrorPath(root.join(&path)));
+                }
                 Err(e) if e.kind() == ErrorKind::NotFound => break,
                 Err(e) => return Err(e.into()),
             }

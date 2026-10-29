@@ -442,7 +442,7 @@ enum RenewalRouteArg {
     ClearThenPopulate,
     ReplaceAuthorized,
 }
-impl From<RenewalRouteArg> for reseed::command::RenewalRoute {
+impl From<RenewalRouteArg> for reseed::RenewalRoute {
     fn from(route: RenewalRouteArg) -> Self {
         match route {
             RenewalRouteArg::ClearThenPopulate => Self::ClearThenPopulate,
