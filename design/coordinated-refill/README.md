@@ -8,7 +8,7 @@ generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
-    title: Connects the cross-project check-in and subsequent staged discussion of native architecture, persistence-preserving lightness, inherited decisions and observation reuse
+    title: Connects the check-in and staged architecture discussion, then organizes native delivery and library improvements into an actionable work map and tickets
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
     title: Orchestrates foundation, implementation and review, then writes the requested forward trajectory as a preserved brain dump and refined technical delivery plan
   - resource: /design/coordinated-refill/trajectory0.gpt6ax.md
@@ -43,6 +43,10 @@ sources:
 
 ## Start here
 
+- **[Actionable work map](work-map0.gpt6ax.md):** start here to choose work. It
+  separates the known JW command-delivery chain, a bounded persisted-engine
+  efficiency change and the optional dirent experiment from later architectural
+  ideas. Includes native epic/ticket ownership and a short recommended queue.
 - [Forward trajectory — technical plan](trajectory1.gpt6ax.md): the next delivery
   sequence from shared command inputs to a real N1/N2 CLI, preparation/preview,
   attributable evidence and release. Product assumptions are explicit; native

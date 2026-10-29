@@ -50,6 +50,10 @@ sources:
 
 # Staged architectural discussion
 
+For what to work on next, use the [actionable work map](work-map0.gpt6ax.md).
+It organizes the known implementation chain and these additional requirements
+without making every discussion a prerequisite for delivery.
+
 The [assessment](reseed-checkin0.gpt6ax.md) remains the baseline. This document
 captures subsequent steering and develops one problem at a time. CLI adoption
 standing is recorded there; it is not the architectural argument for this discussion.
