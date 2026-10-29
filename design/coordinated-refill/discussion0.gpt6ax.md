@@ -30,8 +30,22 @@ sources:
   - resource: /transfer/workspace/Cargo.toml
     revision: 76fb0656
     title: Current receiving features do not enable native-dirent
+  - resource: /transfer/workspace/src/streaming.rs
+    revision: 76fb0656
+    title: SourceQualified preserves known non-directory source leaves outside admitted regions, while Unknown can require late observation
   - resource: "file:///home/rektide/src/diff-dirs/design/transfer/modes0.gpt6am.md"
     title: Prior inherited-region and residual-obligation research, not delivered general mode selection
+  - resource: "file:///home/rektide/src/diff-dirs/transfer/sync/src/coordinated/mod.rs"
+    revision: 10361cf0
+    title: Concrete next_group decision projection and deep clone motivating a bounded ownership change
+  - resource: "file:///home/rektide/src/diff-dirs/transfer/sync/src/coordinated/decision.rs"
+    revision: 10361cf0
+    title: DirectoryDecision::of duplicates selected names and action descriptions from the live plan
+  - resource: /app/cli/tests/refill_one.rs
+    revision: 76fb0656
+    title: Existing fixture explicitly requires different source/target inodes and separately checks physical sharing with FIEMAP; inspected, not rerun
+  - resource: "file:///home/rektide/src/diff-dirs/design/performance/opportunity-also.md"
+    title: Existing filesystem identity/checksum inquiry and shared/compressed extent qualifications
 ---
 
 # Staged architectural discussion
@@ -60,6 +74,12 @@ standing is recorded there; it is not the architectural argument for this discus
 <a id="native-transition"></a>
 
 ## Thread A — what the native reseed sequence buys and costs
+
+**Short version:** the current algorithm constructs a donor-shaped tracked tree
+so the donor's native cache knowledge is usable, then lets JJ establish D. It buys
+renewed sharing and a coherent native state, but pays tracked reinstall costs even
+on a clean repeat. Requiring renewal does not necessarily require clearing first;
+an alternative must maintain truthful native state while doing less work.
 
 ### The current protocol establishes a known state
 
@@ -178,6 +198,32 @@ not receive cached `d_type`. Enabling the native feature would help some early
 classification/exclusion; it would not turn Linux size/mtime equality into a
 zero-stat operation. We should track activation and demand shaping separately.
 
+### Follow-up: inode identity is not reflink identity
+
+A reflink has an independent inode while sharing some or all underlying data
+extents. Matching live `(device, inode)` identifies the same file object/hardlinks,
+not a private reflink. A dirent inode by itself also lacks filesystem identity.
+Different inodes do not tell us whether data extents are shared.
+
+The existing native fixture makes this distinction explicitly: it asserts different
+source/target inode numbers, then separately uses FIEMAP to check a representative
+extent's physical sharing. FIEMAP is additional work, and a `SHARED` extent flag
+alone does not identify the donor or prove whole-file sharing. Partial writes,
+holes, inline/compressed extents and coverage need explicit treatment in any general
+sharing predicate. There is no dirent-only reflink certificate here.
+
+Native dirents remain useful for early type-based exclusion/routing and identity
+hints. Their value should be evaluated on that basis, rather than on an assumed
+ability to replace size/mtime or extent inspection.
+
+There is a concrete JW discriminator: with a broad selector such as
+`**/node_modules`, known regular files outside an admitted region can be preserved
+before child metadata, while Unknown candidates may need late classification.
+The native backend can therefore remove some unnecessary observations in routing
+regions. Files already inside an admitted mirror still need their comparison/copy
+attributes. Measure those populations separately; neither universal speedup nor
+zero-stat payload comparison follows.
+
 ## Queued threads — seeds, not designs selected today
 
 <a id="lightness"></a>
@@ -189,8 +235,57 @@ state from duplicate views and wire projection. A supported yield must still be
 checkpointable with its partial parents, lane memberships and unresolved choices.
 Lazy projection, immutable sharing and cheaper live views are candidates only if
 they retain exactly that behavior and do not rerun policy to reconstruct a lost
-decision. Next discussion: trace one wide group through live execution, checkpoint
-and restore, and identify which copies are actually necessary.
+decision.
+
+#### First technical candidate: one selection, separate live observations
+
+Current `SyncCursor::next_group` does three things for a successful lane:
+
+```text
+retain DirectoryPlan (observations plus selected actions)
+→ DirectoryDecision::of(plan) copies selected names/actions into another object
+→ decision.clone() copies that description for the barrier and returned group
+```
+
+That is a concrete ownership opportunity. Refactor toward this conceptual shape:
+
+```rust,ignore
+struct PendingBatch {
+    selected: Arc<SelectedBatch>,       // names, actions, exclusions, coverage
+    observed: Option<ObservedBatch>,    // actual metadata/link facts; runtime-only
+}
+```
+
+The immutable selection is the one authority shared by execution, reporting and
+checkpoint projection. Actual observations have a separate lifetime. The selection
+does not contain old `Metadata` or become a historical content certificate.
+
+| Transition | What happens |
+| --- | --- |
+| Inspect and select | Finalize one selection and its live facts. Consumer views share the immutable selection rather than deep-copying its entries. |
+| Apply in this process | Execute that selection using the retained observations, then accept the existing lane result. |
+| Export checkpoint | Encode the selection, frontier and application disposition. Omit runtime observations; `Arc` is an ownership option, never a serialized address. |
+| Restore an unstarted batch | Restore the same selection, acquire fresh facts through the existing shared refresh, and require equivalent selected decisions before effects. |
+
+Two bounded steps would make this practical:
+
+1. First remove the avoidable deep copy between the current barrier and returned
+   group, sharing immutable decision data. This leaves the existing plan and all
+   continuation semantics intact. Public views/parts may need deliberate API
+   adjustment; this is not a claim of a source-compatible one-line change.
+2. Then examine factoring selected fields out of the finalized plan itself, so
+   `DirectoryDecision::of` no longer recreates them. This is a larger inspection/
+   execution interface change and should follow a traced ownership model.
+
+Neither step creates a second driver or makes checkpoint support conditional.
+Existing supported pause points, selected child memberships, error ordering and
+restored controls must remain equivalent. Use the existing process tests plus a
+wide clean-group allocation/retained-memory comparison; fewer copies are source-
+visible, but their end-to-end speed impact still needs measurement.
+
+This is the proposed first lightness experiment, not an implementation commission.
+Route-admission reuse and inherited contexts remain separate decisions rather than
+being bundled into the first ownership change.
 
 <a id="inherited-modes"></a>
 
