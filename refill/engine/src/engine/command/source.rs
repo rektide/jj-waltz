@@ -48,7 +48,7 @@ pub struct PreparationReport {
 }
 #[derive(Debug)]
 pub struct PreparationFailure {
-    pub completed: PreparationReport,
+    pub completed: Box<PreparationReport>,
     pub source: anyhow::Error,
 }
 impl std::fmt::Display for PreparationFailure {
@@ -243,7 +243,10 @@ pub fn prepare_source(source: &ResolvedSource, diagnostic: &mut dyn FnMut(&str))
         source.handoff(Some(goal), SourceEvidence::Produced, Some(completed.clone()))
     })();
     completed.elapsed_ms = started.elapsed().as_millis();
-    result.map_err(|source| PreparationFailure { completed, source })
+    result.map_err(|source| PreparationFailure {
+        completed: Box::new(completed),
+        source,
+    })
 }
 
 fn source_identity(source: &ResolvedSource, goal: &str, change: &str) -> Result<()> {
@@ -261,4 +264,36 @@ fn source_identity(source: &ResolvedSource, goal: &str, change: &str) -> Result<
         "source selected revision changed during preparation"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn preparation_failure_keeps_progress_and_original_cause() {
+        let failure = PreparationFailure {
+            completed: Box::new(PreparationReport {
+                saved_commit: Some("saved source".into()),
+                steps: vec![PreparationStep {
+                    argv: vec!["builder".into()],
+                    status: StepStatus::Started,
+                }],
+                ..Default::default()
+            }),
+            source: anyhow::Error::new(std::io::Error::new(ErrorKind::PermissionDenied, "builder refused")).context("start builder"),
+        };
+        assert!(std::mem::size_of::<PreparationFailure>() < 128);
+        assert_eq!(failure.completed.saved_commit.as_deref(), Some("saved source"));
+        assert_eq!(failure.completed.steps[0].status, StepStatus::Started);
+        assert_eq!(failure.source.downcast_ref::<std::io::Error>().unwrap().kind(), ErrorKind::PermissionDenied);
+        assert_eq!(failure.source().unwrap().to_string(), "start builder");
+        let error = anyhow::Error::new(failure);
+        assert_eq!(
+            error.chain().find_map(|cause| cause.downcast_ref::<std::io::Error>()).unwrap().kind(),
+            ErrorKind::PermissionDenied
+        );
+        assert!(format!("{error:#}").contains("start builder: builder refused"));
+    }
 }

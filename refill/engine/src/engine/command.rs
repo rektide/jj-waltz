@@ -292,7 +292,7 @@ impl ResolvedCommand {
                 None if self.request.prepare => match prepare_source(&self.source, diagnostic) {
                     Ok(source) => source,
                     Err(failure) => {
-                        report.preparation = Some(failure.completed.clone());
+                        report.preparation = Some(failure.completed.as_ref().clone());
                         return Err(failure.into());
                     }
                 },
