@@ -424,7 +424,15 @@ pub struct CohortLane {
 pub struct CohortFailure {
     pub lane: Option<usize>,
     pub reports: Vec<diff_dirs_sync::coordinated::LaneReport>,
+    /// Snapshot of the one ordinary source session, including failure work.
+    pub diagnostics: Option<diff_dirs_inspect::SourceDiagnostics>,
     pub source: anyhow::Error,
+}
+#[derive(Debug, Default)]
+pub struct CohortReport {
+    pub reports: Vec<diff_dirs_sync::coordinated::LaneReport>,
+    /// None means no session was constructed (for example disabled selection).
+    pub diagnostics: Option<diff_dirs_inspect::SourceDiagnostics>,
 }
 impl std::fmt::Display for CohortFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -441,13 +449,9 @@ impl std::error::Error for CohortFailure {
 /// any of the group; apply in stable target order and stop at first returned error.
 /// Inputs are canonical, already bound workspace roots. An all-empty selection
 /// returns without runtime construction or source/target I/O.
-pub fn sync_cohort(
-    source: &Path,
-    lanes: Vec<CohortLane>,
-    resources: diff_dirs::ObservationResources,
-) -> std::result::Result<Vec<diff_dirs_sync::coordinated::LaneReport>, CohortFailure> {
+pub fn sync_cohort(source: &Path, lanes: Vec<CohortLane>, resources: diff_dirs::ObservationResources) -> std::result::Result<CohortReport, CohortFailure> {
     if lanes.iter().all(|lane| lane.policy.source.patterns.is_empty()) {
-        return Ok(vec![]);
+        return Ok(CohortReport::default());
     }
     use diff_dirs::Comparator;
     use diff_dirs::coordinated::{Bindings, Parts, TargetBinding, TargetId};
@@ -471,6 +475,7 @@ pub fn sync_cohort(
     let comparison = Parts::fresh(bindings).map_err(|source| CohortFailure {
         lane: None,
         reports: vec![],
+        diagnostics: None,
         source: source.into(),
     })?;
     let mut cursor = SyncCursor::from_parts(
@@ -486,6 +491,7 @@ pub fn sync_cohort(
     .map_err(|source| CohortFailure {
         lane: None,
         reports: vec![],
+        diagnostics: None,
         source: source.into(),
     })?;
     let mut failed_lane = None;
@@ -504,12 +510,13 @@ pub fn sync_cohort(
     .map_err(|source| CohortFailure {
         lane: failed_lane,
         reports: cursor.reports(),
+        diagnostics: None,
         source,
     })?;
     failed_lane = None;
     let session = Arc::new(diff_dirs::SourceSession::with_resources(source, resources));
     let result = (|| {
-        cursor.bind_with_source(&runtime, session)?;
+        cursor.bind_with_source(&runtime, Arc::clone(&session))?;
         while let Some(group) = cursor.next_group(&runtime)? {
             let mut first = None;
             for outcome in &group.outcomes {
@@ -534,11 +541,17 @@ pub fn sync_cohort(
         Ok::<_, anyhow::Error>(())
     })();
     let reports = cursor.reports();
+    // Release the runtime's bound source and any active observations before
+    // taking the compact lifetime snapshot. No cache escapes to the command.
+    drop(cursor);
+    drop(runtime);
+    let diagnostics = Some(session.diagnostics());
     match result {
-        Ok(()) => Ok(reports),
+        Ok(()) => Ok(CohortReport { reports, diagnostics }),
         Err(source) => Err(CohortFailure {
             lane: failed_lane,
             reports,
+            diagnostics,
             source,
         }),
     }
@@ -558,6 +571,7 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, policy: SourceQualifie
         }],
         Default::default(),
     )?
+    .reports
     .pop())
 }
 
@@ -1000,8 +1014,8 @@ mod tests {
             Default::default(),
         )
         .unwrap();
-        assert!(reports.iter().all(|r| r.satisfied && r.totals.completed.files_reflinked == 1));
-        assert_eq!(reports[0].target.0, "z-first", "binding order, not lexical order");
+        assert!(reports.reports.iter().all(|r| r.satisfied && r.totals.completed.files_reflinked == 1));
+        assert_eq!(reports.reports[0].target.0, "z-first", "binding order, not lexical order");
         let a = a_trace.lock().unwrap();
         let b = b_trace.lock().unwrap();
         assert_eq!(a.admissions, [PathBuf::from("pkg/cache")]);
@@ -1031,9 +1045,9 @@ mod tests {
         let at = Arc::clone(&a.trace);
         let bt = Arc::clone(&b_policy.trace);
         let reports = sync_cohort(&f.source, vec![lane("a", &f.target, a), lane("b", &b, b_policy)], Default::default()).unwrap();
-        assert_eq!(reports[0].totals.completed.files_reflinked, 1, "opaque population counted for A");
-        assert_eq!(reports[1].totals.completed.files_reflinked, 1, "paired population counted for B");
-        assert_eq!(reports[1].totals.completed.files_removed, 1);
+        assert_eq!(reports.reports[0].totals.completed.files_reflinked, 1, "opaque population counted for A");
+        assert_eq!(reports.reports[1].totals.completed.files_reflinked, 1, "paired population counted for B");
+        assert_eq!(reports.reports[1].totals.completed.files_removed, 1);
         assert!(!b.join("pkg/cache/stale").exists());
         assert_eq!(fs::read(b.join("vanished/cache/keep")).unwrap(), b"vanished source retains this");
         assert!(f.target.join("pkg/cache/empty").is_dir());

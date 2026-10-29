@@ -82,6 +82,10 @@ impl Fixture {
         );
         root
     }
+    fn capture_source(&mut self) {
+        self.jj(&self.source, &["status"]);
+        self.s = self.jj(&self.source, &["--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "commit_id"]);
+    }
     fn request(&self, names: &[&str]) -> ReseedRequest {
         ReseedRequest {
             names: names.iter().map(|n| n.to_string()).collect(),
@@ -111,7 +115,7 @@ impl Fixture {
         fs::create_dir_all(&bin).unwrap();
         let real = success(Command::new("sh").args(["-c", "command -v jj"]).output().unwrap());
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\t' \"$PWD\" \"$@\" >> \"$JW_COMMAND_TRACE\"\nprintf '\\n' >> \"$JW_COMMAND_TRACE\"\nif [ \"$PWD\" = \"$JW_FAIL_CLEAR\" ]; then\n for arg in \"$@\"; do if [ \"$arg\" = --clear ]; then echo 'injected native clear failure' >&2; exit 73; fi; done\nfi\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\t' \"$PWD\" \"$@\" >> \"$JW_COMMAND_TRACE\"\nprintf '\\n' >> \"$JW_COMMAND_TRACE\"\nif [ \"$PWD\" = \"$JW_FAIL_CLEAR\" ]; then\n for arg in \"$@\"; do if [ \"$arg\" = \"$JW_FAIL_NATIVE\" ]; then echo 'injected native clear failure' >&2; exit 73; fi; done\nfi\nexec '{}' \"$@\"\n",
             real.replace('\'', "'\\''")
         );
         fs::write(bin.join("jj"), script).unwrap();
@@ -125,6 +129,16 @@ impl Fixture {
             .env("JW_COMMAND_TRACE", &trace)
             .env("JW_COMMAND_REPORT", &report)
             .env("JW_FAIL_CLEAR", fail_clear.unwrap_or(Path::new("")))
+            .env(
+                "JW_FAIL_NATIVE",
+                if mode.contains("fail-reparent") {
+                    "rebase"
+                } else if mode.contains("fail-child") {
+                    "new"
+                } else {
+                    "--clear"
+                },
+            )
             .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()));
         success(cmd.output().unwrap());
         let report = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
@@ -143,21 +157,35 @@ impl OrdinaryTransfer for NoOrdinary {
         anyhow::ensure!(!enabled, "fixture has no ordinary adapter");
         Ok(())
     }
-    fn transfer(&mut self, _: &OrdinaryCohort, _: &mut [OrdinaryOutcome]) -> Result<(), OrdinaryFailure> {
+    fn transfer(&mut self, _: &OrdinaryCohort, _: &mut [OrdinaryOutcome]) -> Result<Option<diff_dirs_inspect::SourceDiagnostics>, OrdinaryFailure> {
         panic!("empty policy must not enter transfer")
     }
 }
 fn report_value(report: &CommandReport) -> Value {
     json!({"source": report.source.as_ref().map(|s| json!({"commit": s.commit, "goal": s.upstream_goal, "evidence": format!("{:?}", s.evidence)})),
         "trees": report.capture.distinct_trees, "cache_reads": report.capture.donor_cache_reads,
+        "desired_manifests": report.capture.desired_manifests, "owned_manifests": report.capture.owned_manifests,
+        "tracked_source": report.tracked_source.map(diagnostics_value), "ordinary_source": report.ordinary_source.map(diagnostics_value),
+        "ordinary_ns": report.ordinary_elapsed.map(|d| d.as_nanos()),
         "receivers": report.receivers.iter().map(|r| json!({"name": r.name, "status": format!("{:?}", r.status), "phase": r.reached.to_string(), "old": r.old.as_ref().map(|o| &o.commit),
-            "child": r.child.as_ref().map(|c| &c.commit_id), "change": r.child.as_ref().map(|c| &c.change_id), "native": format!("{:?}", r.native.state), "manifest": r.native.manifest_complete,
-            "clones": r.native.installed.files_reflinked, "copies": r.native.installed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "child": r.child.as_ref().map(|c| &c.commit_id), "change": r.child.as_ref().map(|c| &c.change_id), "native": format!("{:?}", r.native.state), "manifest": r.native.manifest.is_some_and(|m| m.complete),
+            "clones": r.native.completed.files_reflinked, "copies": r.native.completed.files_copied, "ordinary": format!("{:?}", r.ordinary.state), "finish": r.finish.complete,
+            "route": format!("{:?}", r.route), "temporary_s": r.native.temporary_source_installation,
+            "installed": r.native.manifest.map(|m| m.installed), "desired_leaves": r.native.manifest.map(|m| m.desired),
+            "obsolete": r.native.manifest.map(|m| m.owned_obsolete), "retired": r.native.manifest.map(|m| m.owned_retired),
+            "removed_files": r.native.completed.files_removed, "removed_links": r.native.completed.symlinks_removed,
+            "attempted": r.native.attempted.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
+            "timings": r.native.timings.iter().map(|t| json!({"phase": format!("{:?}", t.phase), "ns": t.elapsed.as_nanos(), "ok": t.succeeded})).collect::<Vec<_>>(),
+            "finish_ns": r.finish.elapsed.map(|d| d.as_nanos()),
             "ordinary_report": r.ordinary.report.is_some(),
             "ordinary_clones": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_reflinked),
             "ordinary_removed": r.ordinary.report.as_ref().map(|r| r.totals.completed.files_removed),
             "ordinary_satisfied": r.ordinary.report.as_ref().map(|r| r.satisfied),
             "links_created": r.finish.links.linked})).collect::<Vec<_>>()})
+}
+fn diagnostics_value(d: diff_dirs_inspect::SourceDiagnostics) -> Value {
+    let work = |w: diff_dirs_inspect::SourceWorkDiagnostics| json!({"listings": w.listings, "metadata": w.metadata_acquisitions, "links": w.link_acquisitions, "facts": w.fact_hits, "hits": w.cache_hits});
+    json!({"declared": work(d.declared), "paired": work(d.paired), "opaque": work(d.opaque), "active": d.active_batches, "retained": d.retained_batches})
 }
 fn preparation_value(r: &PreparationReport) -> Value {
     json!({"saved": r.saved_commit, "goal": r.upstream_goal, "source": r.source_commit, "steps": r.steps.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>(),
@@ -199,7 +227,12 @@ fn execute_command_child() {
                 Err(e) => json!({"ok": false, "error": format!("{e:#}"), "report": report_value(&e.report)}),
             });
         }
-        let command = ResolvedCommand::resolve(&cwd, request, RenewalRoute::ClearThenPopulate, &mut diagnostic)?;
+        let route = if mode.starts_with("replace") {
+            RenewalRoute::ReplaceAuthorized
+        } else {
+            RenewalRoute::ClearThenPopulate
+        };
+        let command = ResolvedCommand::resolve(&cwd, request, route, &mut diagnostic)?;
         if mode == "preview" {
             let p = command.preview()?;
             return Ok(
@@ -273,12 +306,15 @@ fn incomplete_manifest_returns_actual_progress_and_never_adopts_source_cache() {
     fs::remove_file(f.source.join("zz")).unwrap();
     let (value, _) = f.run("execute", &f.request(&["a"]), None);
     assert_eq!(value["ok"], false, "{value:#}");
-    assert_eq!(value["phase"], "strict full-S install");
+    assert_eq!(value["phase"], "full-S tracked installation");
     assert_eq!(value["report"]["source"]["evidence"], "AssumedPrepared");
-    assert_eq!(value["report"]["receivers"][0]["clones"], 2);
+    assert_eq!(
+        value["report"]["receivers"][0]["clones"], 0,
+        "complete immediate manifest validation precedes effects"
+    );
     assert_eq!(value["report"]["receivers"][0]["manifest"], false);
     assert_eq!(f.jj(&a, &["--at-operation", "@", "--ignore-working-copy", "sparse", "list"]), "");
-    assert_eq!(fs::read(a.join("a")).unwrap(), b"baseline\n");
+    assert!(!a.join("a").exists());
     assert!(!a.join("zz").exists());
 }
 
@@ -627,42 +663,233 @@ fn later_finish_failure_keeps_earlier_complete_receiver_and_actual_link_count() 
 
 #[test]
 fn real_command_mixed_n2_ordinary_cohort_then_loaded_finish_and_clean_repeat() {
-    let f = Fixture::new();
-    let a = f.receiver("a");
-    let b = f.receiver("b");
-    fs::create_dir_all(f.source.join("pkg/cache/empty")).unwrap();
-    fs::write(f.source.join("pkg/cache/payload"), "cohort payload\n").unwrap();
-    fs::create_dir_all(b.join("pkg/cache/stale/deep")).unwrap();
-    fs::write(b.join("pkg/cache/stale/deep/file"), "stale\n").unwrap();
-    fs::create_dir_all(b.join("vanished/cache")).unwrap();
-    fs::write(b.join("vanished/cache/keep"), "retained\n").unwrap();
-    fs::write(a.join(".env"), "private\n").unwrap();
-    fs::write(
-        f.source.join(".jwlinks.toml"),
-        "[[link]]\nsource='cache-link'\ntarget='pkg/cache'\nrequired=true\n",
-    )
-    .unwrap();
-    let mut request = f.request(&["a", "b"]);
-    request.copy_ignored = Some(vec!["**/cache".into()]);
-    for repeat in [false, true] {
-        let (value, _) = f.run("execute", &request, None);
-        assert_eq!(value["ok"], true, "{value:#}");
-        for (i, root) in [&a, &b].into_iter().enumerate() {
-            let r = &value["report"]["receivers"][i];
-            assert_eq!(r["status"], "Complete");
-            assert_eq!(r["ordinary_satisfied"], true);
-            assert_eq!(r["ordinary_clones"], if repeat { 0 } else { 1 });
-            assert_eq!(r["clones"], 3, "native tracked clean repeats still renew");
-            assert!(root.join("pkg/cache/empty").is_dir());
-            assert_eq!(fs::read(root.join("cache-link/payload")).unwrap(), b"cohort payload\n");
-            assert_eq!(f.jj(root, &["--ignore-working-copy", "log", "--no-graph", "-r", "@-", "-T", "commit_id"]), f.s);
+    for mode in ["execute", "replace"] {
+        let f = Fixture::new();
+        let a = f.receiver("a");
+        let b = f.receiver("b");
+        fs::create_dir_all(f.source.join("pkg/cache/empty")).unwrap();
+        fs::write(f.source.join("pkg/cache/payload"), "cohort payload\n").unwrap();
+        fs::create_dir_all(b.join("pkg/cache/stale/deep")).unwrap();
+        fs::write(b.join("pkg/cache/stale/deep/file"), "stale\n").unwrap();
+        fs::create_dir_all(b.join("vanished/cache")).unwrap();
+        fs::write(b.join("vanished/cache/keep"), "retained\n").unwrap();
+        fs::write(a.join(".env"), "private\n").unwrap();
+        fs::write(
+            f.source.join(".jwlinks.toml"),
+            "[[link]]\nsource='cache-link'\ntarget='pkg/cache'\nrequired=true\n",
+        )
+        .unwrap();
+        let mut request = f.request(&["a", "b"]);
+        request.copy_ignored = Some(vec!["**/cache".into()]);
+        for repeat in [false, true] {
+            let (value, _) = f.run(mode, &request, None);
+            assert_eq!(value["ok"], true, "{value:#}");
+            assert_eq!(value["report"]["desired_manifests"], 1);
+            assert_eq!(value["report"]["owned_manifests"], if mode == "replace" { 1 } else { 0 });
+            assert_eq!(
+                value["report"]["tracked_source"]["declared"]["metadata"], 3,
+                "shared source cells survive serial native calls"
+            );
+            assert!(value["report"]["tracked_source"]["declared"]["facts"].as_u64().unwrap() >= 3);
+            assert_eq!(value["report"]["ordinary_source"]["active"], 0);
+            for (i, root) in [&a, &b].into_iter().enumerate() {
+                let r = &value["report"]["receivers"][i];
+                assert_eq!(r["status"], "Complete");
+                assert_eq!(r["ordinary_satisfied"], true);
+                assert_eq!(r["ordinary_clones"], if repeat { 0 } else { 1 });
+                assert_eq!(r["clones"], 3, "native tracked clean repeats still renew");
+                assert!(root.join("pkg/cache/empty").is_dir());
+                assert_eq!(fs::read(root.join("cache-link/payload")).unwrap(), b"cohort payload\n");
+                assert_eq!(f.jj(root, &["--ignore-working-copy", "log", "--no-graph", "-r", "@-", "-T", "commit_id"]), f.s);
+            }
+        }
+        assert!(!b.join("pkg/cache/stale").exists());
+        assert_eq!(fs::read(b.join("vanished/cache/keep")).unwrap(), b"retained\n");
+        assert_eq!(fs::read(a.join(".env")).unwrap(), b"private\n");
+        fs::write(a.join("pkg/cache/payload"), "private write\n").unwrap();
+        assert_eq!(fs::read(f.source.join("pkg/cache/payload")).unwrap(), b"cohort payload\n");
+    }
+}
+
+#[test]
+fn production_both_native_routes_exact_s_and_distinct_d_preserve_history_identity_and_private_writes() {
+    for mode in ["execute", "replace"] {
+        for distinct in [false, true] {
+            let mut f = Fixture::new();
+            fs::create_dir(f.source.join("expand")).unwrap();
+            fs::write(f.source.join("expand/leaf"), "selected S child\n").unwrap();
+            fs::write(f.source.join("expand/.env"), "unlisted source child\n").unwrap();
+            fs::write(f.source.join("collapse"), "collapsed S leaf\n").unwrap();
+            fs::write(f.source.join("s-only"), "temporary S\n").unwrap();
+            fs::write(f.source.join("mode"), "executable S\n").unwrap();
+            fs::set_permissions(f.source.join("mode"), fs::Permissions::from_mode(0o755)).unwrap();
+            std::os::unix::fs::symlink("a", f.source.join("link")).unwrap();
+            f.capture_source();
+            let s_tree = f.s.clone();
+            let desired = if distinct {
+                f.jj(&f.source, &["new", &commit_id_revset(&f.s).unwrap()]);
+                fs::write(f.source.join("a"), "final D\n").unwrap();
+                fs::remove_file(f.source.join("s-only")).unwrap();
+                fs::write(f.source.join("d-only"), "from D store\n").unwrap();
+                fs::set_permissions(f.source.join("mode"), fs::Permissions::from_mode(0o644)).unwrap();
+                f.capture_source();
+                let d = f.s.clone();
+                f.jj(&f.source, &["new", &commit_id_revset(&s_tree).unwrap()]);
+                f.capture_source();
+                d
+            } else {
+                f.s.clone()
+            };
+            let a = f.receiver("a");
+            fs::remove_file(a.join("expand/leaf")).unwrap();
+            fs::remove_dir(a.join("expand")).unwrap();
+            fs::write(a.join("expand"), "old owned leaf\n").unwrap();
+            fs::remove_file(a.join("collapse")).unwrap();
+            fs::create_dir(a.join("collapse")).unwrap();
+            fs::write(a.join("collapse/old"), "old owned descendant\n").unwrap();
+            fs::write(a.join("obsolete"), "obsolete O\n").unwrap();
+            fs::write(a.join("a"), "saved O\n").unwrap();
+            f.jj(&a, &["status"]);
+            f.jj(&a, &["bookmark", "create", "saved-old"]);
+            let old = f.jj(&a, &["--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "commit_id"]);
+            let old_change = f.jj(&a, &["--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "change_id"]);
+            fs::hard_link(a.join("a"), a.join(".env")).unwrap();
+            let old_alias = fs::metadata(a.join(".env")).unwrap().ino();
+            let identities = [a.clone(), a.join(".jj"), a.join(".jj/working_copy")].map(|p| {
+                let m = fs::metadata(p).unwrap();
+                (m.dev(), m.ino())
+            });
+            let pointer = fs::read(a.join(".jj/repo")).unwrap();
+            let source_state = fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap();
+            let mut request = f.request(&["a"]);
+            request.at = Some(commit_id_revset(&desired).unwrap());
+            request.allow_unbookmarked = false;
+            for repeat in [false, true] {
+                // The saved predecessor of a repeat is also explicitly covered.
+                if repeat {
+                    f.jj(&a, &["bookmark", "create", "saved-repeat"]);
+                }
+                let (value, calls) = f.run(mode, &request, None);
+                assert_eq!(value["ok"], true, "{mode} distinct={distinct}: {value:#}");
+                let r = &value["report"]["receivers"][0];
+                assert_eq!(r["manifest"], true);
+                assert_eq!(r["desired_leaves"], 8);
+                assert_eq!(r["installed"], 8);
+                assert_eq!(r["clones"], 7);
+                assert_eq!(r["copies"], 0);
+                assert_eq!(r["temporary_s"], distinct);
+                assert_eq!(r["finish"], true);
+                assert_eq!(r["route"], if mode == "replace" { "ReplaceAuthorized" } else { "ClearThenPopulate" });
+                assert_ne!(r["change"], old_change);
+                let attempted = r["attempted"].as_array().unwrap();
+                assert_eq!(attempted.contains(&json!("NativeClear")), mode == "execute");
+                assert_eq!(attempted.contains(&json!("Reparent")), mode == "replace");
+                assert_eq!(attempted.contains(&json!("Restore")), distinct);
+                assert_eq!(r["timings"].as_array().unwrap().len(), attempted.len());
+                assert!(
+                    r["timings"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|t| t["ns"].as_u64().unwrap() > 0 && t["ok"] == true)
+                );
+                assert!(value["report"]["ordinary_ns"].is_null(), "disabled phase is unexecuted, not zero time");
+                assert_eq!(
+                    f.jj(&a, &["--ignore-working-copy", "log", "--no-graph", "-r", "@-", "-T", "commit_id"]),
+                    desired
+                );
+                assert_eq!(
+                    f.jj(
+                        &a,
+                        &[
+                            "--ignore-working-copy",
+                            "log",
+                            "--no-graph",
+                            "-r",
+                            "@",
+                            "-T",
+                            "empty ++ \" \" ++ conflict ++ \" \" ++ divergent"
+                        ]
+                    ),
+                    "true false false"
+                );
+                assert_eq!(f.jj(&a, &["--ignore-working-copy", "sparse", "list"]), ".");
+                let recorded = f.jj(
+                    &a,
+                    &[
+                        "--ignore-working-copy",
+                        "file",
+                        "list",
+                        "-T",
+                        "json(path) ++ \" \" ++ json(file_type) ++ \" \" ++ json(executable) ++ \"\\n\"",
+                    ],
+                );
+                let expected = f.jj(
+                    &a,
+                    &[
+                        "--ignore-working-copy",
+                        "file",
+                        "list",
+                        "-r",
+                        &commit_id_revset(&desired).unwrap(),
+                        "-T",
+                        "json(path) ++ \" \" ++ json(file_type) ++ \" \" ++ json(executable) ++ \"\\n\"",
+                    ],
+                );
+                assert_eq!(recorded, expected);
+                if mode == "replace" {
+                    for call in calls_named(&calls, "rebase") {
+                        assert!(call.windows(2).any(|w| w == ["-r", "@"]));
+                        assert!(call.windows(2).any(|w| w == ["-d", &commit_id_revset(&desired).unwrap()]));
+                        assert!(!call.iter().any(|s| matches!(s.as_str(), "-s" | "--skip-emptied")));
+                    }
+                    if !repeat {
+                        assert_eq!(r["obsolete"], 3);
+                        assert_eq!(r["retired"], 3);
+                        assert_eq!(r["removed_files"], 3);
+                    }
+                }
+            }
+            assert_eq!(
+                fs::read(a.join("a")).unwrap(),
+                if distinct { b"final D\n".as_slice() } else { b"baseline\n".as_slice() }
+            );
+            assert_eq!(fs::read(a.join(".env")).unwrap(), b"saved O\n");
+            assert_eq!(fs::metadata(a.join(".env")).unwrap().ino(), old_alias);
+            assert_ne!(fs::metadata(a.join("a")).unwrap().ino(), old_alias);
+            assert!(!a.join("obsolete").exists());
+            assert!(!a.join("expand/.env").exists(), "only declared S children enter expansion");
+            assert_eq!(fs::read(a.join("expand/leaf")).unwrap(), b"selected S child\n");
+            assert_eq!(fs::read_link(a.join("link")).unwrap(), Path::new("a"));
+            assert_eq!(a.join("s-only").exists(), !distinct);
+            assert_eq!(a.join("d-only").exists(), distinct);
+            assert_eq!(fs::metadata(a.join("mode")).unwrap().permissions().mode() & 0o111 != 0, !distinct);
+            assert_eq!(
+                [a.clone(), a.join(".jj"), a.join(".jj/working_copy")].map(|p| {
+                    let m = fs::metadata(p).unwrap();
+                    (m.dev(), m.ino())
+                }),
+                identities
+            );
+            assert_eq!(fs::read(a.join(".jj/repo")).unwrap(), pointer);
+            assert_eq!(
+                f.jj(&a, &["--ignore-working-copy", "log", "--no-graph", "-r", "saved-old", "-T", "commit_id"]),
+                old
+            );
+            assert_eq!(
+                f.jj(&a, &["--ignore-working-copy", "file", "show", "-r", &commit_id_revset(&old).unwrap(), "a"]),
+                "saved O"
+            );
+            assert_eq!(fs::read(f.source.join(".jj/working_copy/tree_state")).unwrap(), source_state);
+            assert_eq!(
+                f.jj(&f.source, &["--ignore-working-copy", "log", "--no-graph", "-r", "@", "-T", "commit_id"]),
+                f.s
+            );
+            fs::write(a.join("expand/leaf"), "receiver private write\n").unwrap();
+            assert_eq!(fs::read(f.source.join("expand/leaf")).unwrap(), b"selected S child\n");
+            assert!(f.jj(&a, &["diff", "--summary"]).contains("expand/leaf"));
         }
     }
-    assert!(!b.join("pkg/cache/stale").exists());
-    assert_eq!(fs::read(b.join("vanished/cache/keep")).unwrap(), b"retained\n");
-    assert_eq!(fs::read(a.join(".env")).unwrap(), b"private\n");
-    fs::write(a.join("pkg/cache/payload"), "private write\n").unwrap();
-    assert_eq!(fs::read(f.source.join("pkg/cache/payload")).unwrap(), b"cohort payload\n");
 }
 
 #[test]

@@ -42,13 +42,13 @@ pub fn refill_one_from(cwd: &Path, request: ReseedRequest, mut diagnostic: impl 
         old_commit: receiver.old.unwrap().commit,
         final_commit: child.commit_id,
         change_id: child.change_id,
-        native_install: receiver.native.installed,
+        native_install: receiver.native.completed,
         explicit_clear: receiver.native.explicit_clear,
         ordinary: receiver.ordinary.report,
         links: receiver.finish.links,
-        native_ms: report.setup_ms + receiver.native.elapsed_ms,
-        ordinary_ms: report.ordinary_ms,
-        finish_ms: receiver.finish.elapsed_ms,
-        elapsed_ms: report.elapsed_ms,
+        native_ms: (report.setup + receiver.native.elapsed.unwrap_or_default()).as_millis(),
+        ordinary_ms: report.ordinary_elapsed.unwrap_or_default().as_millis(),
+        finish_ms: receiver.finish.elapsed.unwrap_or_default().as_millis(),
+        elapsed_ms: report.elapsed.as_millis(),
     })
 }

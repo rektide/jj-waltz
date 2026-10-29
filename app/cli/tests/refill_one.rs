@@ -320,7 +320,7 @@ fn byte_and_stat_equal_s_only_local_is_refused_before_state_adoption() {
     assert_eq!(fs::metadata(&from).unwrap().modified().unwrap(), fs::metadata(&to).unwrap().modified().unwrap());
     let (result, _) = f.run(f.request(Some(&d)));
     assert_eq!(result["ok"], false);
-    assert!(result["error"].as_str().unwrap().contains("strict full-S install"), "{result:#}");
+    assert!(result["error"].as_str().unwrap().contains("full-S tracked installation"), "{result:#}");
     assert_eq!(fs::read(to).unwrap(), b"source only\n");
     assert_eq!(f.jj(&target, &["--ignore-working-copy", "sparse", "list"]), "");
 }

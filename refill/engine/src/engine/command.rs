@@ -58,11 +58,16 @@ pub struct ResolvedCommand {
 /// (O membership or reusable cache bytes) cross this interface.
 pub trait OrdinaryTransfer {
     fn admit(&self, receivers: usize, enabled: bool) -> Result<()>;
-    fn transfer(&mut self, cohort: &OrdinaryCohort, outcomes: &mut [OrdinaryOutcome]) -> std::result::Result<(), OrdinaryFailure>;
+    fn transfer(
+        &mut self,
+        cohort: &OrdinaryCohort,
+        outcomes: &mut [OrdinaryOutcome],
+    ) -> std::result::Result<Option<diff_dirs_inspect::SourceDiagnostics>, OrdinaryFailure>;
 }
 #[derive(Debug)]
 pub struct OrdinaryFailure {
     pub lane: Option<usize>,
+    pub diagnostics: Option<diff_dirs_inspect::SourceDiagnostics>,
     pub source: anyhow::Error,
 }
 pub struct OrdinaryCohort {
@@ -261,18 +266,16 @@ impl ResolvedCommand {
                 })
                 .collect(),
             capture: CaptureCounts::default(),
-            setup_ms: 0,
-            ordinary_ms: 0,
-            elapsed_ms: 0,
+            tracked_source: None,
+            ordinary_source: None,
+            setup: Default::default(),
+            ordinary_elapsed: None,
+            elapsed: Default::default(),
         };
         let mut phase = Phase::Resolve;
         let mut lane = None;
         let result = (|| {
             ensure!(!self.request.dry_run, "use preview() for a read-only PLANNED result");
-            ensure!(
-                self.route == RenewalRoute::ClearThenPopulate,
-                "ReplaceAuthorized requires the production provider renewal seam; no fallback selected"
-            );
             transfer.admit(self.receivers.len(), !self.patterns.is_empty())?;
             for binding in &self.receivers {
                 cow::probe_between(&self.source.binding.root, &binding.root).context("required CoW route admission")?;
@@ -377,8 +380,10 @@ impl ResolvedCommand {
             report.capture.distinct_trees = membership.count();
             report.capture.membership_queries = membership.count();
             report.capture.indexes = membership.count();
-            let input = native::inputs(&membership, &source, &desired, &saved)?;
+            let input = native::inputs(&membership, &source, &desired, &saved, self.route, self.request.replace_content)?;
             report.capture.donor_cache_reads = 1;
+            report.capture.desired_manifests = 1;
+            report.capture.owned_manifests = input.tracked.owned_count();
             let native_paths = if Arc::ptr_eq(&input.source, &input.desired) {
                 Arc::clone(&input.source.index)
             } else {
@@ -424,11 +429,12 @@ impl ResolvedCommand {
                     active_links,
                 });
             }
-            report.setup_ms = started.elapsed().as_millis();
+            report.setup = started.elapsed();
             setup_done = true;
             for (index, saved) in saved.iter().enumerate() {
                 lane = Some(index);
                 let result = native::establish(&source, &desired, saved, &input, self.request.replace_content, &mut report.receivers[index]);
+                report.tracked_source = Some(input.tracked.source.diagnostics());
                 phase = report.receivers[index].reached;
                 result?;
             }
@@ -451,10 +457,14 @@ impl ResolvedCommand {
                     r.ordinary = outcome;
                     r.reached = phase;
                 }
-                report.ordinary_ms = ordinary_started.elapsed().as_millis();
-                if let Err(failure) = result {
-                    lane = failure.lane;
-                    return Err(failure.source);
+                report.ordinary_elapsed = Some(ordinary_started.elapsed());
+                match result {
+                    Ok(diagnostics) => report.ordinary_source = diagnostics,
+                    Err(failure) => {
+                        report.ordinary_source = failure.diagnostics;
+                        lane = failure.lane;
+                        return Err(failure.source);
+                    }
                 }
                 ensure!(
                     report.receivers.iter().all(|r| r.ordinary.state == OrdinaryState::Satisfied),
@@ -467,7 +477,7 @@ impl ResolvedCommand {
                 phase = Phase::Links;
                 report.receivers[index].reached = phase;
                 let result = finish(saved, &ordinary.lanes[index], &desired, &mut report.receivers[index]);
-                report.receivers[index].finish.elapsed_ms = finish_started.elapsed().as_millis();
+                report.receivers[index].finish.elapsed = Some(finish_started.elapsed());
                 phase = report.receivers[index].reached;
                 result?;
             }
@@ -481,9 +491,9 @@ impl ResolvedCommand {
             );
             Ok(())
         })();
-        report.elapsed_ms = started.elapsed().as_millis();
+        report.elapsed = started.elapsed();
         if !setup_done {
-            report.setup_ms = report.elapsed_ms;
+            report.setup = report.elapsed;
         }
         match result {
             Ok(()) => Ok(report),

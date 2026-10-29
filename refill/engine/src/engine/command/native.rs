@@ -1,5 +1,7 @@
 use super::*;
 use jj_waltz_native_jj::jj::{adopt_tree_state, read_tree_state};
+mod listed;
+use listed::TrackedPhase;
 
 #[derive(Debug, Default)]
 pub struct NativePathIndex {
@@ -31,6 +33,7 @@ pub(super) struct NativeInputs {
     pub old_trees: BTreeMap<String, Arc<NativeTree>>,
     pub donor_tree_state: Vec<u8>,
     pub additions: Vec<Entry>,
+    pub tracked: TrackedPhase,
 }
 
 pub(super) struct Membership {
@@ -92,7 +95,14 @@ pub(super) struct SavedReceiver {
     pub links: LoadedWorkspaceLinks,
 }
 
-pub(super) fn inputs(membership: &Membership, source: &PreparedSource, desired: &str, saved: &[SavedReceiver]) -> Result<NativeInputs> {
+pub(super) fn inputs(
+    membership: &Membership,
+    source: &PreparedSource,
+    desired: &str,
+    saved: &[SavedReceiver],
+    route: RenewalRoute,
+    replace_content: bool,
+) -> Result<NativeInputs> {
     let source_tree = membership.get(&source.report.commit);
     let desired_tree = membership.get(desired);
     let additions = desired_tree.leaves.iter().filter(|e| !source_tree.index.contains(&e.path)).cloned().collect();
@@ -102,12 +112,13 @@ pub(super) fn inputs(membership: &Membership, source: &PreparedSource, desired: 
         old_trees: saved.iter().map(|s| (s.old_commit.clone(), membership.get(&s.old_commit))).collect(),
         donor_tree_state: read_tree_state(&source.binding.root)?,
         additions,
+        tracked: TrackedPhase::prepare(membership, source, saved, route, replace_content)?,
     })
 }
 
 /// One complete native transition, called serially for a vector of receivers.
-/// Replacement will plug its production manifest renewal into this boundary;
-/// no alternative orchestration or JW-owned filesystem copier is introduced.
+/// Both routes use the provider's complete manifest executor. Native authority,
+/// adoption and JJ convergence remain here; there is no JW filesystem copier.
 pub(super) fn establish(
     source: &PreparedSource,
     desired: &str,
@@ -120,10 +131,6 @@ pub(super) fn establish(
     report.status = ReceiverStatus::Partial;
     report.native.state = Establishment::InProgress;
     let result = (|| {
-        ensure!(
-            report.route == RenewalRoute::ClearThenPopulate,
-            "ReplaceAuthorized requires the production provider renewal seam"
-        );
         let binding = &saved.binding;
         let client = binding.client();
         // A preceding native receiver may rewrite history. Never silently repin
@@ -140,64 +147,111 @@ pub(super) fn establish(
             "saved receiver O moved before native transition"
         );
         bookmarks::verify_batch(&client, [&saved.guard])?;
-        report.reached = Phase::NativeClear;
-        report.native.attempted.push(Phase::NativeClear);
-        client.run_refill(["sparse", "set", "--clear"])?;
-        ensure!(
-            client.resolve_one("@")?.commit_id == saved.old_commit,
-            "receiving O changed during native clear snapshot"
-        );
-        refuse_residual(&binding.root, &input.old_trees[&saved.old_commit].leaves)?;
-        report.reached = Phase::NativeChild;
-        report.native.attempted.push(Phase::NativeChild);
-        client.run_refill(["new", &commit_id_revset(desired)?])?;
-        let child = client.commit_facts_at(&client.operation_id()?, "@")?;
-        ensure!(
-            child.parents == [desired] && child.ordinary_empty_child(),
-            "new child does not have exact D parent"
-        );
+        report.native.temporary_source_installation = source.report.commit != desired;
+        if report.route == RenewalRoute::ClearThenPopulate {
+            measured(report, Phase::NativeClear, |_| {
+                client.run_refill(["sparse", "set", "--clear"])?;
+                ensure!(
+                    client.resolve_one("@")?.commit_id == saved.old_commit,
+                    "receiving O changed during native clear snapshot"
+                );
+                refuse_residual(&binding.root, &input.old_trees[&saved.old_commit].leaves)
+            })?;
+        }
+        let parent = if report.route == RenewalRoute::ClearThenPopulate {
+            desired
+        } else {
+            &saved.old_commit
+        };
+        let child = measured(report, Phase::NativeChild, |_| {
+            client.run_refill(["new", &commit_id_revset(parent)?])?;
+            let operation = client.operation_id()?;
+            let child = client.commit_facts_at(&operation, "@")?;
+            ensure!(
+                child.parents == [parent] && child.ordinary_empty_child(),
+                "new child does not have its exact native parent"
+            );
+            ensure!(
+                client.resolve_one_at(&operation, &commit_id_revset(&saved.old_commit)?)?.commit_id == saved.old_commit,
+                "saved O changed during child creation"
+            );
+            binding.verify_at(&operation)?;
+            Ok(child)
+        })?;
         report.child = Some(child.clone());
         if replace_content {
-            report.reached = Phase::ExplicitClear;
-            match diff_dirs_sync::clear_with_visitor(&binding.root, cow::transfer::WorkspaceClear) {
-                Ok(done) => report.native.explicit_clear = done.completed,
-                Err(failure) => {
-                    report.native.explicit_clear = failure.completed.clone();
-                    return Err(failure.into());
+            measured(report, Phase::ExplicitClear, |report| {
+                match diff_dirs_sync::clear_with_visitor(&binding.root, cow::transfer::WorkspaceClear) {
+                    Ok(done) => report.native.explicit_clear = done.completed,
+                    Err(failure) => {
+                        report.native.explicit_clear = failure.completed.clone();
+                        return Err(failure.into());
+                    }
                 }
-            }
+                Ok(())
+            })?;
         }
-        report.reached = Phase::Install;
-        match tracked::seed(
-            &source.binding.root,
-            &binding.root,
-            &input.source.leaves,
-            (source.binding.device, binding.device),
-        ) {
-            Ok(done) => report.native.installed = done,
-            Err(failure) => {
-                report.native.installed = failure.completed.clone();
-                return Err(failure.into());
-            }
-        }
-        report.native.manifest_complete = true;
-        report.reached = Phase::AdmitDesired;
-        admit_additions(&binding.root, &input.source.index, &input.additions)?;
-        report.reached = Phase::Adopt;
-        adopt_tree_state(&binding.root, &input.donor_tree_state)?;
+        measured(report, Phase::Install, |report| input.tracked.install(saved, report))?;
+        measured(report, Phase::AdmitDesired, |_| {
+            admit_additions(&binding.root, &input.source.index, &input.additions)
+        })?;
+        measured(report, Phase::Adopt, |_| adopt_tree_state(&binding.root, &input.donor_tree_state))?;
         if source.report.commit != desired {
-            report.reached = Phase::Restore;
-            report.native.attempted.push(Phase::Restore);
-            client.run_refill(["restore", "--from", &commit_id_revset(desired)?])?;
+            measured(report, Phase::Restore, |_| {
+                client.run_refill(["restore", "--from", &commit_id_revset(desired)?])?;
+                Ok(())
+            })?;
         }
-        report.reached = Phase::NativeVerify;
-        report.native.attempted.push(Phase::NativeVerify);
-        native_diff(&client, desired)?;
-        report.child = Some(verify_native(binding, desired, &child.change_id)?);
+        if report.route == RenewalRoute::ReplaceAuthorized {
+            measured(report, Phase::Reparent, |_| {
+                let operation = client.operation_id()?;
+                binding.verify_at(&operation)?;
+                let current = client.commit_facts_at(&operation, "@")?;
+                ensure!(
+                    current.change_id == child.change_id && current.parents == [saved.old_commit.as_str()],
+                    "new receiving C changed before reparenting"
+                );
+                let descendants = client.run_at(
+                    &operation,
+                    [
+                        "log",
+                        "--no-graph",
+                        "-r",
+                        &format!("({})::", commit_id_revset(&current.commit_id)?),
+                        "-T",
+                        "commit_id ++ \"\\n\"",
+                    ],
+                )?;
+                ensure!(
+                    descendants.stdout()?.lines().collect::<Vec<_>>() == [current.commit_id.as_str()],
+                    "new receiving C acquired outside descendants"
+                );
+                client.run_refill(["rebase", "-r", "@", "-d", &commit_id_revset(desired)?])?;
+                Ok(())
+            })?;
+        }
+        let final_child = measured(report, Phase::NativeVerify, |_| {
+            native_diff(&client, desired)?;
+            verify_native(binding, desired, &child.change_id)
+        })?;
+        report.child = Some(final_child);
         report.native.state = Establishment::Established;
         Ok(())
     })();
-    report.native.elapsed_ms = started.elapsed().as_millis();
+    report.native.elapsed = Some(started.elapsed());
+    result
+}
+
+fn measured<T>(report: &mut ReceiverReport, phase: Phase, run: impl FnOnce(&mut ReceiverReport) -> Result<T>) -> Result<T> {
+    report.reached = phase;
+    report.native.attempted.push(phase);
+    let started = Instant::now();
+    let result = run(report);
+    report.native.timings.push(PhaseTiming {
+        phase,
+        elapsed: started.elapsed(),
+        succeeded: result.is_ok(),
+    });
     result
 }
 

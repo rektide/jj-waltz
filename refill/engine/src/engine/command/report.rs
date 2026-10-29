@@ -20,6 +20,7 @@ pub enum Phase {
     AdmitDesired,
     Adopt,
     Restore,
+    Reparent,
     NativeVerify,
     Ordinary,
     Links,
@@ -36,10 +37,11 @@ impl std::fmt::Display for Phase {
             Self::NativeClear => "clear tracked checkout",
             Self::NativeChild => "establish receiving child",
             Self::ExplicitClear => "explicit replace-content",
-            Self::Install => "strict full-S install",
+            Self::Install => "full-S tracked installation",
             Self::AdmitDesired => "D-addition namespace admission",
             Self::Adopt => "adopt captured source tree_state",
             Self::Restore => "native S-to-D restore",
+            Self::Reparent => "reparent new receiving change",
             Self::NativeVerify => "final native diff",
             Self::Ordinary => "ordinary coordinated transfer",
             Self::Links => "loaded link finish",
@@ -74,14 +76,28 @@ pub enum OrdinaryState {
 
 #[derive(Debug, Clone, Default)]
 pub struct NativeOutcome {
-    /// Actual successful S installations. Not a final-D storage-sharing count.
-    pub installed: diff_dirs_sync::Progress,
+    /// Actual provider-visible S installations, owned removals and directory
+    /// scope effects. Not a final-D storage-sharing count or stock-JJ effects.
+    pub completed: diff_dirs_sync::Progress,
     pub explicit_clear: diff_dirs_sync::Progress,
-    pub manifest_complete: bool,
+    /// Actual provider coverage, retained even on an unsuccessful lane. None
+    /// means no lane returned coverage, not an empty complete manifest.
+    pub manifest: Option<diff_dirs_sync::ManifestCoverage>,
+    /// Whether S is only a temporary installation before native D convergence.
+    pub temporary_source_installation: bool,
     pub state: Establishment,
     /// Stock JJ commands may have unenumerated effects even on process failure.
     pub attempted: Vec<Phase>,
-    pub elapsed_ms: u128,
+    /// Measured boundaries, including failed attempts. An absent optional phase
+    /// has no row; elapsed time is never inferred by subtracting other phases.
+    pub timings: Vec<PhaseTiming>,
+    pub elapsed: Option<std::time::Duration>,
+}
+#[derive(Debug, Clone)]
+pub struct PhaseTiming {
+    pub phase: Phase,
+    pub elapsed: std::time::Duration,
+    pub succeeded: bool,
 }
 #[derive(Debug, Clone, Default)]
 pub struct OrdinaryOutcome {
@@ -95,7 +111,7 @@ pub struct FinishOutcome {
     pub links: links::LinkApplyReport,
     pub failed_path: Option<PathBuf>,
     pub complete: bool,
-    pub elapsed_ms: u128,
+    pub elapsed: Option<std::time::Duration>,
 }
 #[derive(Debug, Clone)]
 pub enum HistoryCoverage {
@@ -146,6 +162,8 @@ pub struct CaptureCounts {
     pub membership_queries: usize,
     pub indexes: usize,
     pub donor_cache_reads: usize,
+    pub desired_manifests: usize,
+    pub owned_manifests: usize,
 }
 #[derive(Debug)]
 pub struct CommandReport {
@@ -154,9 +172,12 @@ pub struct CommandReport {
     pub preparation: Option<PreparationReport>,
     pub receivers: Vec<ReceiverReport>,
     pub capture: CaptureCounts,
-    pub setup_ms: u128,
-    pub ordinary_ms: u128,
-    pub elapsed_ms: u128,
+    /// One snapshot per source phase, never multiplied across receiver rows.
+    pub tracked_source: Option<diff_dirs_inspect::SourceDiagnostics>,
+    pub ordinary_source: Option<diff_dirs_inspect::SourceDiagnostics>,
+    pub setup: std::time::Duration,
+    pub ordinary_elapsed: Option<std::time::Duration>,
+    pub elapsed: std::time::Duration,
 }
 #[derive(Debug)]
 pub struct FailureLocation {
@@ -189,7 +210,7 @@ impl std::fmt::Display for CommandFailure {
             write!(
                 f,
                 "; receiver native files_reflinked: {}, files_copied: {}",
-                receiver.native.installed.files_reflinked, receiver.native.installed.files_copied,
+                receiver.native.completed.files_reflinked, receiver.native.completed.files_copied,
             )?;
             if let Some(report) = &receiver.ordinary.report {
                 write!(
@@ -239,7 +260,7 @@ mod tests {
             reached: Phase::Links,
             status: ReceiverStatus::Failed,
             native: NativeOutcome {
-                installed: diff_dirs_sync::Progress {
+                completed: diff_dirs_sync::Progress {
                     files_reflinked: 3,
                     ..Default::default()
                 },
@@ -263,9 +284,11 @@ mod tests {
                 preparation: None,
                 receivers: vec![earlier, receiver],
                 capture: CaptureCounts::default(),
-                setup_ms: 0,
-                ordinary_ms: 0,
-                elapsed_ms: 0,
+                tracked_source: None,
+                ordinary_source: None,
+                setup: Default::default(),
+                ordinary_elapsed: None,
+                elapsed: Default::default(),
             }),
             location: FailureLocation {
                 phase: Phase::Links,

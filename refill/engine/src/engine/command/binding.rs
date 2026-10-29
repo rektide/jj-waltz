@@ -23,6 +23,9 @@ pub struct BoundWorkspace {
     receiver: bool,
 }
 impl BoundWorkspace {
+    pub(super) fn root_identity(&self) -> (u64, u64) {
+        (self.root_identity.device, self.root_identity.inode)
+    }
     pub fn client(&self) -> JjClient {
         JjClient::new(&self.root)
     }

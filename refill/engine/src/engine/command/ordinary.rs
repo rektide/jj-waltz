@@ -12,10 +12,15 @@ impl OrdinaryTransfer for ContextualOrdinary {
         ensure!(receivers != 0, "ordinary cohort requires receivers");
         Ok(())
     }
-    fn transfer(&mut self, cohort: &OrdinaryCohort, outcomes: &mut [OrdinaryOutcome]) -> std::result::Result<(), OrdinaryFailure> {
+    fn transfer(
+        &mut self,
+        cohort: &OrdinaryCohort,
+        outcomes: &mut [OrdinaryOutcome],
+    ) -> std::result::Result<Option<diff_dirs_inspect::SourceDiagnostics>, OrdinaryFailure> {
         if outcomes.len() != cohort.lanes.len() {
             return Err(OrdinaryFailure {
                 lane: None,
+                diagnostics: None,
                 source: anyhow::anyhow!("ordinary outcome count differs from cohort"),
             });
         }
@@ -37,7 +42,7 @@ impl OrdinaryTransfer for ContextualOrdinary {
             .collect();
         let result = sync_cohort(&cohort.source.root, lanes, self.resources.clone());
         let reports = match &result {
-            Ok(reports) => reports,
+            Ok(report) => &report.reports,
             Err(failure) => &failure.reports,
         };
         for (lane, outcome) in cohort.lanes.iter().zip(outcomes) {
@@ -49,8 +54,9 @@ impl OrdinaryTransfer for ContextualOrdinary {
                 OrdinaryState::Partial
             };
         }
-        result.map(|_| ()).map_err(|failure| OrdinaryFailure {
+        result.map(|report| report.diagnostics).map_err(|failure| OrdinaryFailure {
             lane: failure.lane,
+            diagnostics: failure.diagnostics,
             source: failure.source,
         })
     }
