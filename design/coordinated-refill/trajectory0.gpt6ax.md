@@ -192,3 +192,10 @@ observation is needed before calling the command fast for the user's workload.
 The broad aim is **a small, useful product core with extensible shared mechanisms**.
 The narrowing question for the technical plan is: what must change to deliver that
 first whole command, and what should remain a conditional next investment?
+
+## Refinement
+
+[The technical forward plan](trajectory1.gpt6ax.md) turns this first pass into
+command-owned inputs, cohort execution, producer/preview integration, concrete
+delivery gates and evidence-selected follow-on work. It preserves the unresolved
+renewal/refresh decision rather than treating this recommendation as acceptance.

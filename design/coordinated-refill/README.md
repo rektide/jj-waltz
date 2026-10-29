@@ -5,12 +5,16 @@ description: Assessment and evidence for adopting diff-dirs source-to-many synch
 resource: /design/coordinated-refill/README.md
 status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
-updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-28" }
+updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
     title: Connects a new cross-project architecture/performance check-in, independent consumer/library reviews and maintained library-side feedback before CLI selection
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
-    title: Orchestrated foundation and two implementation slices, reviewed independent findings and completed path corrections, and holds CLI cutover at the human's product-discussion checkpoint
+    title: Orchestrates foundation, implementation and review, then writes the requested forward trajectory as a preserved brain dump and refined technical delivery plan
+  - resource: /design/coordinated-refill/trajectory0.gpt6ax.md
+    title: Broad forward-looking brain dump following the product discussion and cross-project assessments
+  - resource: /design/coordinated-refill/trajectory1.gpt6ax.md
+    title: Refined proposed plan for shared command inputs, cohort and CLI completion, bounded evidence and conditional optimization
   - resource: /design/coordinated-refill/implementation0.gpt6ax.md
     title: Completed Astra xhigh implementation plan, selected by the parent for construction with native/authority and end-to-end review checkpoints
   - resource: "opencode://ses_e7be6b24fffeDISpWdV1xNbqhD"
@@ -39,6 +43,14 @@ sources:
 
 ## Start here
 
+- [Forward trajectory — technical plan](trajectory1.gpt6ax.md): the next delivery
+  sequence from shared command inputs to a real N1/N2 CLI, preparation/preview,
+  attributable evidence and release. Product assumptions are explicit; native
+  and library optimizations follow their measured need. This is proposed planning,
+  not a new default selection or resumed implementation commission.
+- [Forward trajectory — brain dump](trajectory0.gpt6ax.md): the preserved broad
+  first pass behind that refinement, including renewal versus refresh, prepared
+  source/batch ownership, storage promises and library opportunities.
 - [Cross-project performance and architecture check-in](reseed-checkin0.gpt6ax.md):
   parent assessment and integrated independent findings. Separates public CLI,
   callable N1 and prospective cohort; reassesses renewal versus refresh, live
