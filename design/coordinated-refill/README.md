@@ -8,7 +8,7 @@ generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
-    title: Connects a new cross-project architecture/performance check-in, independent consumer/library reviews and maintained library-side feedback before CLI selection
+    title: Connects the cross-project check-in and subsequent staged discussion of native architecture, persistence-preserving lightness, inherited decisions and observation reuse
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
     title: Orchestrates foundation, implementation and review, then writes the requested forward trajectory as a preserved brain dump and refined technical delivery plan
   - resource: /design/coordinated-refill/trajectory0.gpt6ax.md
@@ -51,6 +51,11 @@ sources:
 - [Forward trajectory — brain dump](trajectory0.gpt6ax.md): the preserved broad
   first pass behind that refinement, including renewal versus refresh, prepared
   source/batch ownership, storage promises and library opportunities.
+- [Staged architectural discussion](discussion0.gpt6ax.md): current human steering,
+  a concrete native S-to-D trace, verified dirent/metadata reuse and separate
+  requirement tickets. The first turn develops native architecture; later turns
+  address lightness within persistence, inherited region judgments and modular
+  comparison. The full assessment below remains its baseline.
 - [Cross-project performance and architecture check-in](reseed-checkin0.gpt6ax.md):
   parent assessment and integrated independent findings. Separates public CLI,
   callable N1 and prospective cohort; reassesses renewal versus refresh, live

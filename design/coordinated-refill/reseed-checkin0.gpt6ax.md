@@ -5,9 +5,10 @@ description: Product and architecture assessment of the shipped reseed, callable
 resource: /design/coordinated-refill/reseed-checkin0.gpt6ax.md
 status: assessed-recommendations-open
 generated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-28 }
+updated: { by: "model:openai/gpt-6-astra#xhigh", at: 2026-10-29 }
 sources:
   - resource: "opencode://ses_e7eb31c84ffev4GUeYjdmZO7mY"
-    title: Assesses current adoption and historical measurements, records an independent parent position, then integrates two Sol reviews and library-side consumer feedback
+    title: Assesses adoption and performance evidence, integrates two independent reviews and opens the human-directed staged architectural discussion
   - resource: "opencode://ses_e7b386178ffe35om7FsR11rYky"
     title: Independent JW-side review of public versus callable paths, native outcomes, costs and product alternatives
   - resource: "opencode://ses_e7b37dd77ffeIu8mHUKf204c5B"
@@ -66,6 +67,12 @@ sources:
 ---
 
 # Reseed performance check-in
+
+**Follow-on discussion:** [staged architectural discussion](discussion0.gpt6ax.md)
+records the human's response and develops the native transition concretely. CLI
+adoption standing is provenance, not an architectural verdict. Lightness must
+retain the advanced persisted design; inherited judgments, modular comparison and
+observation reuse have separately tracked discussion scopes.
 
 ## Judgment
 
