@@ -183,6 +183,10 @@ pub(super) fn establish(
                 child.parents == [parent] && child.ordinary_empty_child(),
                 "new child does not have its exact native parent"
             );
+            ensure!(
+                child.change_id != old.change_id && child.change_id != source.report.change,
+                "new receiving child reused a source/old change identity"
+            );
             if route == RenewalRoute::ReplaceAuthorized {
                 ensure!(
                     client
