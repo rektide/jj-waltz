@@ -701,3 +701,34 @@ fn real_command_ordinary_failure_keeps_actual_both_lane_work_and_stops_finish() 
     assert_eq!(value["report"]["receivers"][1]["status"], "Failed");
     assert!(b.join("cache/z-stale/deep/.git/keep").exists());
 }
+
+#[test]
+fn real_command_keeps_lane_specific_active_link_policy_and_checks_all_lanes_before_effects() {
+    let f = Fixture::new();
+    let a = f.receiver("a");
+    let b = f.receiver("b");
+    fs::create_dir(f.source.join("cache")).unwrap();
+    fs::write(f.source.join("cache/file"), "not copied before peer admission\n").unwrap();
+    // The same loaded declaration is a private source==target directory in A,
+    // but an active link in B. It must not collapse into a cohort-wide policy.
+    fs::write(
+        f.source.join(".jwlinks.toml"),
+        format!("[[link]]\nsource='cache'\ntarget='{}'\nrequired=true\n", a.join("cache").display()),
+    )
+    .unwrap();
+    let mut request = f.request(&["a", "b"]);
+    request.copy_ignored = Some(vec!["cache".into()]);
+    let (value, _) = f.run("execute", &request, None);
+    assert_eq!(value["ok"], false, "{value:#}");
+    assert_eq!(value["receiver"], "b");
+    assert_eq!(value["phase"], "ordinary coordinated transfer");
+    assert!(value["error"].as_str().unwrap().contains("overlaps active link"));
+    for (i, root) in [&a, &b].into_iter().enumerate() {
+        let r = &value["report"]["receivers"][i];
+        assert_eq!(r["native"], "Established");
+        assert_eq!(r["ordinary_report"], true);
+        assert_eq!(r["ordinary_clones"], 0);
+        assert_eq!(r["finish"], false);
+        assert!(!root.join("cache").exists());
+    }
+}

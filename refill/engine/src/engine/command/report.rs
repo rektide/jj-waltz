@@ -225,6 +225,7 @@ mod tests {
             totals: Default::default(),
             observed: Default::default(),
             retained: 0,
+            deviated: 0,
             satisfied: true,
         };
         ordinary.totals.completed.files_reflinked = 1;

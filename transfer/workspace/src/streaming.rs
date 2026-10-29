@@ -442,7 +442,7 @@ pub fn sync_cohort(
     })?;
     let mut cursor = SyncCursor::from_parts(
         SyncParts {
-            version: 2,
+            version: 3,
             comparison,
             copy_policies: vec![diff_dirs_sync::CopyPolicy::ReflinkRequired; lanes.len()],
             lanes: vec![Default::default(); lanes.len()],
@@ -604,9 +604,7 @@ mod tests {
         let f = Fixture::new();
         let name = OsString::from_vec(vec![0xff]);
         fs::write(f.target.join(&name), "local").unwrap();
-        let mut v = f.visitor(&["cache"], &[], &[]);
-        v.source_ignore = Arc::new(FrozenIgnore::default());
-        v.desired_ignore = Arc::new(FrozenIgnore::default());
+        let v = f.visitor(&["cache"], &[], &[]);
         let done = sync_one(&f.source, &f.target, "byte-local", v).unwrap().unwrap();
         assert!(done.satisfied);
         assert_eq!(done.totals.completed, Default::default());
