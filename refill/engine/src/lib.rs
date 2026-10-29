@@ -146,4 +146,8 @@ mod engine;
 #[doc(hidden)]
 pub use engine::replacement::{RefillOneReport, refill_one_from};
 
+/// Callable shared command/producer boundary, pending public CLI cutover.
+#[cfg(unix)]
+pub use engine::command;
+
 pub mod freshen;

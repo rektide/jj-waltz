@@ -57,6 +57,15 @@ pub struct RegistrySnapshot {
 
 impl RegistrySnapshot {
     pub fn capture(cwd: &Path) -> Result<(JjClient, Self)> {
+        Self::capture_view(cwd, true)
+    }
+
+    /// Source-only preparation needs the primary and caller, not receiver roots.
+    pub fn capture_source(cwd: &Path) -> Result<(JjClient, Self)> {
+        Self::capture_view(cwd, false)
+    }
+
+    fn capture_view(cwd: &Path, all_roots: bool) -> Result<(JjClient, Self)> {
         let cwd = cwd.canonicalize()?;
         let root = cwd.ancestors().find(|p| p.join(".jj").is_dir()).context("no JJ workspace root")?.to_path_buf();
         let repository = repository_path(&root).map_err(anyhow::Error::msg)?.canonicalize()?;
@@ -66,9 +75,21 @@ impl RegistrySnapshot {
         let client = JjClient::new(&root);
         let operation = client.operation_id()?;
         let bindings = client.workspace_bindings_at(&operation)?;
+        let primary = repository
+            .parent()
+            .filter(|p| p.file_name().is_some_and(|n| n == ".jj"))
+            .and_then(Path::parent)
+            .context("unsupported detached repository owner layout")?
+            .to_path_buf();
+        config_guard(&primary, &repository)?;
+        let primary_names = JjClient::new(&primary).current_workspace_names_at(&operation)?;
+        let caller_names = client.current_workspace_names_at(&operation)?;
         let mut roots = BTreeMap::new();
         let mut registered = BTreeMap::new();
         for name in bindings.keys() {
+            if !all_roots && !primary_names.contains(name) && !caller_names.contains(name) {
+                continue;
+            }
             let output = client.run_at_unchecked(&operation, ["workspace", "root", "--name", name])?;
             let path = if output.success() {
                 Some(PathBuf::from(output.trimmed_stdout()?))

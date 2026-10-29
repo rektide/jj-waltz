@@ -25,6 +25,7 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 
 mod bookmarks;
+pub mod command;
 mod payload;
 mod prepare;
 pub mod replacement;
