@@ -45,10 +45,10 @@ libc = "0.2.190"
 
 [dev-dependencies.diff-dirs]
 package = "diff-dirs-tree-api"
-version = "=0.2.0"
+version = "=0.3.0"
 path = "../../../diff-dirs/tree/api"
 
 [dev-dependencies.diff-dirs-sync]
 package = "diff-dirs-transfer-sync"
-version = "=0.2.0"
+version = "=0.3.0"
 path = "../../../diff-dirs/transfer/sync"
