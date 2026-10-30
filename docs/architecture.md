@@ -5,9 +5,11 @@ description: Module ownership and workspace lifecycle safety boundaries.
 resource: /docs/architecture.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-29
+  by: model:openai/gpt-6.1-sol#high
+  at: 2026-10-30
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Records default refresh, pure bound retained-attribute policy, metadata effects, shared typed comparison/postcheck and schema2
   - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
     title: Records one public shared refill path, typed captured outcomes, both native routes, source-only final conformance and old-driver retirement
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
@@ -98,7 +100,7 @@ offline.
 The root is a virtual Cargo workspace. Its default members are the six production
 crates; the Unix development tool at `tools/performance` is selected explicitly.
 `app/cli` retains package `jj-waltz` and executable `jw`. Internal packages share
-version `0.8.0` with exact pins and currently disable registry publication.
+version `0.12.0` with exact pins and currently disable registry publication.
 
 | Crate | Primary owners |
 | --- | --- |
@@ -147,7 +149,7 @@ records extraction, correction and native-test evidence.
 - `refill/engine` owns existing-workspace batch reseeding: explicit selection and local
   configuration, frozen planning, sparse-prefill execution, ignored replacement,
   verification, and out-of-band failure guidance. Plans exist only in memory. It uses
-   commands through `JjClient`; complete full-S installation gates captured source
+   commands through `JjClient`; complete full-S installed + retained coverage gates captured source
    `tree_state` adoption while retaining receiving checkout identity.
   Filesystem cloning and validation remain in `cow`; configured links remain in
   `links`. Historical lifecycle metadata is not rewritten by reseeding.
@@ -369,7 +371,7 @@ introduced.
 that bookmark/remote through `JjClient::fetch_bookmark`, validates/pins the source
 goal, selects its empty child, and runs trusted configured argv in the donor. It
 performs one final tracked check after all successful argv and then reports actual
-S independently of goal in schema 1. A later argv can repair earlier tracked edits;
+S independently of goal in schema 2. A later argv can repair earlier tracked edits;
 process success is distinct from identity/final-check success. It never enters
 target planning and creates no worker-preservation bookmarks; it mutates only its
 selected donor — which may be the caller's own checkout — leaving other
@@ -380,7 +382,7 @@ No donor stamp/digest is captured for reuse by a later invocation. Failed
 preparation leaves progress in place: the operator fixes the donor and runs
 prepare again, potentially repeating every command and selecting/fetching anew.
 
-Both routes share prepared full-S manifests, required O indexes, effect bindings
+All three routes share prepared full-S manifests, required O indexes, effect bindings
 and one native source session across serial native receivers. Clear-first creates
 an exact-D child while sparse-empty then installs S create-absent. Authorized
 replacement creates a new same-O child, renews only owned O→S, and later reparents
@@ -390,6 +392,20 @@ native conformance follow; no route fallback exists. Broad `replace_content` rem
 independent authority and has separate returned effects. D≠S installs are not final-D
 sharing proof. After native-only owners are released, one `ContextualOrdinary`
 cohort runs, then loaded links and snapshot-free native identity finish.
+Default `Refresh` uses replacement's native lifecycle but selects provider
+`RefreshOwned(StatChecks)`. The single typed check set defaults to mtime+size and
+also binds ordinary StatComparator identity on every route. Full `mode` is optional.
+Native tracked targets alone opt into `ManifestExecutable` retained-attribute
+effects. The provider uses prepared actual metadata during successful retained
+acceptance, issues an in-place chmod only on executable-boolean mismatch, and
+reports successful corrections separately from installation progress. It does not
+mutate inside guards or transfer a retained-leaf catalog back to JW. Complete
+coverage is installed + retained, with failed normalization refusing adoption.
+General optional postcheck binds every tracked/ordinary installer; source metadata
+is still set when no read-back is requested. Ordinary continuation uses provider
+version4 with per-lane postchecks, not an unbound execution setting. See the
+[refresh account](../design/coordinated-refill/refresh0.sol61h.md) and
+[schema2](schema/refill-v2.schema.json).
 Bookmark coverage is captured after snapshots, checked for the whole batch, and
 rechecked before each target clears. There are no write-ahead phases, journal
 comparisons, receipts, or temporary markers.
@@ -464,7 +480,7 @@ and effective excludes. Creation's `IgnoreRules` oracle and actually used lifecy
 helpers remain; old reseed `FrozenRules`, payload audit/realization, `FutureContent`,
 Plan/execute, legacy producer, source-only old driver and temporary N1 export are
 retired. Public DTO serialization belongs only to `app/cli/src/refill_report.rs`.
-Its schema-1 projection preserves original typed errors, decimal-u128 counters,
+Its schema-2 projection preserves original typed errors, decimal-u128 counters,
 lossless Unix paths, explicit unavailable nulls and one command/source diagnostic
 snapshot. The CLI bypasses generic post-error context hints for handled outcomes.
 

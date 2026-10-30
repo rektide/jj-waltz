@@ -381,6 +381,13 @@ struct ReseedCommand {
     /// Native renewal protocol; independent of broad --replace-content authority.
     #[arg(long, value_enum, default_value_t)]
     renewal_route: RenewalRouteArg,
+    /// Whole regular-file set: mtime,size,mode (mode compares Unix 07777).
+    /// Links always compare literal text; stat equality is a seeded heuristic.
+    #[arg(long, default_value = "mtime,size", value_name = "CHECKS")]
+    refresh_check: reseed::StatChecks,
+    /// Optional regular-install mtime read-back; attributes are always set.
+    #[arg(long, value_enum, default_value_t)]
+    postcheck: PostcheckArg,
     #[arg(long, value_enum, default_value_t)]
     format: OutputFormat,
     /// Literal targets (default: current variant; primary requires names or --group).
@@ -410,7 +417,7 @@ struct ReseedCommand {
     /// Disable ignored copying for this run, including an explicit selection.
     #[arg(long)]
     no_copy_ignored: bool,
-    /// Delete unrecorded target contents except .jj before refilling.
+    /// Explicitly clear target contents except .jj, including refresh matches.
     #[arg(long)]
     replace_content: bool,
     /// Allow work without a covering local/remote bookmark; all other guards still apply.
@@ -439,14 +446,31 @@ struct PrepareCommand {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum RenewalRouteArg {
     #[default]
+    Refresh,
     ClearThenPopulate,
     ReplaceAuthorized,
 }
 impl From<RenewalRouteArg> for reseed::RenewalRoute {
     fn from(route: RenewalRouteArg) -> Self {
         match route {
+            RenewalRouteArg::Refresh => Self::Refresh,
             RenewalRouteArg::ClearThenPopulate => Self::ClearThenPopulate,
             RenewalRouteArg::ReplaceAuthorized => Self::ReplaceAuthorized,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+enum PostcheckArg {
+    #[default]
+    None,
+    Mtime,
+}
+impl From<PostcheckArg> for reseed::Postcheck {
+    fn from(value: PostcheckArg) -> Self {
+        match value {
+            PostcheckArg::None => Self::None,
+            PostcheckArg::Mtime => Self::Mtime,
         }
     }
 }
@@ -594,6 +618,8 @@ fn run_reseed(cmd: ReseedCommand) -> Result<()> {
 
     let outcome = crate::refill_report::reseed(ReseedRequest {
         renewal_route: cmd.renewal_route.into(),
+        refresh_check: cmd.refresh_check,
+        postcheck: cmd.postcheck.into(),
         names: cmd.names,
         groups: cmd.groups,
         on_unmatched: cmd.on_unmatched.map(reseed::UnmatchedPolicy::from),
@@ -1235,12 +1261,60 @@ mod reseed_cli_tests {
         assert!(cmd.at.is_none(), "plain reseed syncs to the donor; --at is not required");
         assert!(cmd.source_at.is_none(), "--source-at stays an optional assertion");
         assert!(!cmd.prepare, "plain reseed never prepares implicitly");
+        assert_eq!(cmd.renewal_route, RenewalRouteArg::Refresh);
+        assert_eq!(cmd.refresh_check, reseed::StatChecks::default());
+        assert_eq!(cmd.postcheck, PostcheckArg::None);
         let cli = Cli::try_parse_from(["jw", "reseed", "feature", "--at", "dev@origin"]).unwrap();
         let Some(Commands::Reseed(cmd)) = cli.command else {
             panic!("expected reseed command")
         };
         assert_eq!(cmd.at.as_deref(), Some("dev@origin"));
         assert!(cmd.source_at.is_none());
+    }
+
+    #[test]
+    fn refresh_check_is_a_whole_typed_set_and_postcheck_is_independent() {
+        for checks in ["mtime", "size", "mode", "size,mtime", "mtime,size,mode"] {
+            for route in ["refresh", "replace-authorized", "clear-then-populate"] {
+                let cli = Cli::try_parse_from([
+                    "jw",
+                    "reseed",
+                    "feature",
+                    "--refresh-check",
+                    checks,
+                    "--renewal-route",
+                    route,
+                    "--postcheck=mtime",
+                    "--replace-content",
+                ])
+                .unwrap();
+                let Some(Commands::Reseed(command)) = cli.command else {
+                    panic!("expected reseed")
+                };
+                assert_eq!(command.refresh_check, checks.parse().unwrap());
+                assert_eq!(command.postcheck, PostcheckArg::Mtime);
+            }
+        }
+        for checks in [
+            "",
+            ",",
+            "mtime,",
+            ",size",
+            "size,size",
+            "size,mtime,size",
+            "none",
+            "hash",
+            "mtime,unknown",
+            " mode",
+        ] {
+            assert!(
+                Cli::try_parse_from(["jw", "reseed", "feature", "--refresh-check", checks]).is_err(),
+                "accepted {checks:?}"
+            );
+        }
+        assert!(Cli::try_parse_from(["jw", "reseed", "feature", "--postcheck=mode"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "prepare", "--refresh-check=mtime"]).is_err());
+        assert!(Cli::try_parse_from(["jw", "prepare", "--postcheck=mtime"]).is_err());
     }
 
     #[test]

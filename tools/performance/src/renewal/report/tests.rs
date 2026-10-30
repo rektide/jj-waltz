@@ -95,7 +95,7 @@ fn all_case_route_reports_bind_exact_cohort_pins_and_profile() {
             let mut mutants = vec![];
             for (pointer, value) in [
                 ("/schema_version", json!("1")),
-                ("/schema_version", json!(2)),
+                ("/schema_version", json!(3)),
                 ("/command", json!("prepare")),
                 ("/mode", json!("preview")),
                 ("/status", json!("failed")),
@@ -139,6 +139,42 @@ fn all_case_route_reports_bind_exact_cohort_pins_and_profile() {
             }
             reordered["receivers"].as_array_mut().unwrap().pop();
             assert!(evidence(&reordered, &f, case, route).is_err());
+        }
+    }
+}
+
+#[test]
+fn schema_two_unconditional_profiles_require_new_options_retention_and_metadata_effects() {
+    let own = scratch();
+    let f = Fixture::fake(own.path(), control(own.path(), Path::new("/usr/bin/true")));
+    for route in Route::ALL {
+        let mut raw = complete(&f, Case::CleanN1, route);
+        raw["schema_version"] = json!(2);
+        raw["refresh_check"] = json!("mtime,size");
+        raw["postcheck"] = json!("none");
+        raw["receivers"][0]["native"]["manifest"]["retained"] = json!("0");
+        raw["receivers"][0]["native"]["retained_permissions_set"] = json!("0");
+        assert!(evidence(&raw, &f, Case::CleanN1, route).is_ok());
+        for pointer in [
+            "/refresh_check",
+            "/postcheck",
+            "/receivers/0/native/manifest/retained",
+            "/receivers/0/native/retained_permissions_set",
+        ] {
+            let mut bad = raw.clone();
+            *bad.pointer_mut(pointer).unwrap() = Value::Null;
+            assert!(evidence(&bad, &f, Case::CleanN1, route).is_err(), "accepted absent {pointer}");
+        }
+        for (pointer, value) in [
+            ("/refresh_check", json!("size")),
+            ("/postcheck", json!("mtime")),
+            ("/renewal_route", json!("refresh")),
+            ("/receivers/0/native/manifest/retained", json!("1")),
+            ("/receivers/0/native/retained_permissions_set", json!("1")),
+        ] {
+            let mut bad = raw.clone();
+            *bad.pointer_mut(pointer).unwrap() = value;
+            assert!(evidence(&bad, &f, Case::CleanN1, route).is_err(), "accepted changed profile {pointer}");
         }
     }
 }

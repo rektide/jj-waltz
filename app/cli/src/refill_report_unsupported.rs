@@ -1,4 +1,4 @@
-//! Refusal only: schema 1 has Unix path semantics. There is no non-Unix refill
+//! Refusal only: schema 2 has Unix path semantics. There is no non-Unix refill
 //! engine, path transcoding or ordinary-copy fallback.
 use jj_waltz_refill_engine::{PrepareRequest, RenewalRoute, ReseedRequest};
 use serde::Serialize;
@@ -21,11 +21,14 @@ fn unsupported(command: &'static str, preview: bool, request: Option<&ReseedRequ
     let started = Instant::now();
     let error = anyhow::anyhow!("refill requires Unix filesystem identity and CoW support");
     let route = request.map(|r| match r.renewal_route {
+        RenewalRoute::Refresh => "refresh",
         RenewalRoute::ClearThenPopulate => "clear-then-populate",
         RenewalRoute::ReplaceAuthorized => "replace-authorized",
     });
     let value = json!({
-        "schema_version": 1, "command": command, "mode": if preview { "preview" } else { "execute" },
+        "schema_version": 2, "command": command, "mode": if preview { "preview" } else { "execute" },
+        "refresh_check": request.map(|r| r.refresh_check.to_string()),
+        "postcheck": request.map(|r| match r.postcheck { jj_waltz_refill_engine::Postcheck::None => "none", jj_waltz_refill_engine::Postcheck::Mtime => "mtime" }),
         "status": if preview { "blocked" } else { "failed" }, "renewal_route": route, "native_profile": null,
         "selection": {"names": request.map_or_else(Vec::new, |r| r.names.clone()), "groups": request.map_or_else(Vec::new, |r| r.groups.clone()), "resolved": [], "skipped": []},
         "source": null, "desired": request.map(|r| json!({"kind": if r.at.is_some() { "revset" } else { "source" }, "revset": r.at, "commit_id": null, "state": "unresolved"})),

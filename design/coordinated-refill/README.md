@@ -5,8 +5,10 @@ description: Assessment and evidence for adopting diff-dirs source-to-many synch
 resource: /design/coordinated-refill/README.md
 status: implementation-in-progress
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
-updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
+updated: { by: "model:openai/gpt-6.1-sol#high", at: "2026-10-30" }
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Adds the implemented default seeded refresh, native metadata effect and schema-two verification account
   - resource: "opencode://ses_e74f4db73ffebUUrvE3MbpCHWY"
     title: Adds the policy investigation, live N4 route measurements and N1/N2 replacement scaling, with churn, shared-source work and launcher findings
   - resource: "opencode://ses_e7a559acfffeNLFScKfuc7htqW"
@@ -49,6 +51,10 @@ sources:
 
 ## Start here
 
+- **[Default seeded refresh](refresh0.sol61h.md):** JW0.12/provider0.9 cutover,
+  mtime+size heuristic with optional full mode, no default installer postcheck,
+  native in-place executable effects, schema2 and focused receiving verification.
+  The route measurements below remain predecessor evidence, not refresh timings.
 - **[Four live OpenCode receivers — measured routes](live-four0.gpt6a.md):**
   clean clear-first/replacement timings are effectively tied; replacement avoids
   3,656 tracked-directory recreations per command. Both churn tracked file inodes.

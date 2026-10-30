@@ -5,8 +5,12 @@ description: Native performance primitives, a bounded reused-fixture two-renewal
 resource: /tools/performance/README.md
 status: maintained-rust-only
 generated: { by: "model:openai/gpt-6-astra#high", at: 2026-10-17 }
-updated: { by: "model:openai/gpt-6.1-sol#xhigh", at: 2026-10-29 }
+updated: { by: "model:openai/gpt-6.1-sol#high", at: 2026-10-30 }
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Migrates the explicit unconditional-route parser to schemas1/2 without rewriting historical artifacts or claiming a refresh benchmark
+  - resource: /docs/schema/refill-v2.schema.json
+    title: Current explicit options, retained manifest coverage and listed-only metadata effects
   - resource: "opencode://ses_e77662b15ffe213doiBhCq3TnF"
     title: Binds actual schema one and live-asserted-source, corrects native reset/oracle assumptions with explicit rebind receipts, and completes eight acceptance cases, twelve native samples and six separate probes
   - resource: /design/coordinated-refill/evidence0.sol61x.md
@@ -53,7 +57,12 @@ comparison. It creates **one owned donor and two receiver roots once**, then
 reuses them sequentially. It imports no donor, creates no remote, and never copies
 `.jj`, uses `jj edit`, sets blanket `TMPDIR`, or runs a builder.
 
-**The adapter consumes the actual public schema 1.** `renewal accept` checks
+**The adapter consumes actual public schemas 1 and 2 for its two explicit
+unconditional routes.** Schema2 additionally requires `refresh_check=mtime,size`,
+`postcheck=none`, zero retained desired coverage and zero retained metadata effects.
+Default seeded refresh is intentionally **not** this profile; it requires a new
+acceptance/measurement design, not pretending retained leaves are seven clones.
+Historical raw outcomes and artifacts are unchanged. `renewal accept` checks
 `reseed --help`, then validates each real JSON outcome through
 [`report_evidence`](src/renewal/report.rs): reseed/execute/complete/error-null,
 exact route/native profile, ordered cohort/roots, S/D and child parent, full eight-leaf
@@ -154,7 +163,9 @@ passes eight acceptance cases, twelve native samples and six separate probes on
 one retained fixture/candidate. Its two adapter-invalid acceptance attempts and
 explicit rebinds remain preserved. Replacement was slower in both mirrored blocks
 of each tiny timed shape; these are controls, not representative speed results.
-Clear-first remains default; no additional campaign follows automatically.
+The preserved candidate used clear-first by default; current JW defaults to seeded
+refresh. This adapter always names its explicit old route. No additional campaign
+follows automatically. See [the cutover account](/design/coordinated-refill/refresh0.sol61h.md).
 
 The command vector is literal, with independently pinned exact commit revsets:
 

@@ -325,7 +325,7 @@ fn incomplete_manifest_returns_actual_progress_and_never_adopts_source_cache() {
     fs::remove_file(f.source.join("zz")).unwrap();
     let (value, _) = f.run("execute", &f.request(&["a"]), None);
     assert_eq!(value["ok"], false, "{value:#}");
-    assert_eq!(value["phase"], "full-S tracked installation");
+    assert_eq!(value["phase"], "full-S tracked satisfaction");
     assert_eq!(value["report"]["source"]["evidence"], "AssumedPrepared");
     assert_eq!(
         value["report"]["receivers"][0]["clones"], 0,
@@ -992,7 +992,7 @@ fn both_routes_missing_wrong_kind_and_wrong_executable_source_refuse_without_ado
             assert_eq!(value["ok"], false, "{mode} {damage}: {value:#}");
             assert_eq!(value["listed_cause"], true);
             let r = &value["report"]["receivers"][0];
-            assert_eq!(r["phase"], "full-S tracked installation");
+            assert_eq!(r["phase"], "full-S tracked satisfaction");
             assert_eq!(r["manifest"], false);
             assert_eq!(r["adopted"], false);
             assert_eq!(r["installed"], 0);
@@ -1083,7 +1083,7 @@ fn both_routes_matching_s_only_and_d_only_locals_are_obstructions_even_when_equa
                 if desired_only {
                     "D-addition namespace admission"
                 } else {
-                    "full-S tracked installation"
+                    "full-S tracked satisfaction"
                 }
             );
             assert_eq!(r["manifest"], desired_only);

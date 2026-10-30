@@ -100,8 +100,7 @@ pub(super) fn inputs(
     source: &PreparedSource,
     desired: &str,
     saved: &[SavedReceiver],
-    route: RenewalRoute,
-    replace_content: bool,
+    request: &ReseedRequest,
     capture: &mut CaptureCounts,
 ) -> Result<NativeInputs> {
     let source_tree = membership.get(&source.report.commit);
@@ -109,7 +108,7 @@ pub(super) fn inputs(
     let additions = desired_tree.leaves.iter().filter(|e| !source_tree.index.contains(&e.path)).cloned().collect();
     let donor_tree_state = read_tree_state(&source.binding.root)?;
     capture.donor_cache_reads = 1;
-    let tracked = TrackedPhase::prepare(membership, source, saved, route, replace_content)?;
+    let tracked = TrackedPhase::prepare(membership, source, saved, request)?;
     capture.desired_manifests = 1;
     capture.owned_manifests = tracked.owned_count();
     Ok(NativeInputs {
@@ -123,7 +122,7 @@ pub(super) fn inputs(
 }
 
 /// One complete native transition, called serially for a vector of receivers.
-/// Both routes use the provider's complete manifest executor. Native authority,
+/// All routes use the provider's complete manifest executor. Native authority,
 /// adoption and JJ convergence remain here; there is no JW filesystem copier.
 pub(super) fn establish(
     source: &PreparedSource,
@@ -187,7 +186,7 @@ pub(super) fn establish(
                 child.change_id != old.change_id && child.change_id != source.report.change,
                 "new receiving child reused a source/old change identity"
             );
-            if route == RenewalRoute::ReplaceAuthorized {
+            if route != RenewalRoute::ClearThenPopulate {
                 ensure!(
                     client
                         .resolve_one_at(&operation, format!("change_id({})", serde_json::to_string(&old.change_id)?))?
@@ -223,7 +222,7 @@ pub(super) fn establish(
                 Ok(())
             })?;
         }
-        if report.route == RenewalRoute::ReplaceAuthorized {
+        if report.route != RenewalRoute::ClearThenPopulate {
             measured(report, Phase::Reparent, |report| {
                 let operation = client.operation_id()?;
                 binding.verify_at(&operation)?;

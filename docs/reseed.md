@@ -8,9 +8,11 @@ generated:
   by: model:openai/gpt-6.1-sol
   at: 2026-10-15
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-29
+  by: model:openai/gpt-6.1-sol#high
+  at: 2026-10-30
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Documents delivered default seeded refresh, independent check/postcheck selection, native in-place executable correction and schema2
   - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
     title: Cuts both public commands over to the reviewed two-route cohort, schema 1 and read-only PLANNED previews; retires the old driver and migrates public verification
   - resource: /design/coordinated-refill/public-contract0.gpt6a.md
@@ -79,8 +81,8 @@ The update flow has three steps, in this order:
 1. **Update the seed** — `jw prepare` fetches and builds in the donor.
 2. **Sync a workspace to the seed** — `jw reseed NAME` makes the workspace's
    content be the donor's content: a fresh empty child of the donor's current
-   commit, the whole tracked tree reflinked from the donor, and selected ignored
-   payload copied. No feature logic runs inside reseed.
+    commit, the tracked tree satisfied by seeded retention or required reflinks,
+    and selected ignored payload reconciled. No feature logic runs inside reseed.
 3. **Layer the feature back** — in jj, after the sync: `jj duplicate -r
    <bookmark> --onto <base>` keeps the old feature line and its dated bookmarks
    while copying it onto the synced base, or `jj rebase` moves commits and drags
@@ -98,9 +100,27 @@ jw reseed worker-a worker-b --from /path/to/prepared-source --dry-run
 
 Remove `--dry-run` when you intend execution. Execution snapshots receiving work,
 not the plain donor, and syncs onto actual donor WC commit **S** (or exact desired
-parent **D** selected by `--at`). Every S tracked leaf is installed, including
-equal paths, before native state adoption. Selected ignored
-payload is reconciled incrementally; unchanged payload is not recopied.
+parent **D** selected by `--at`). Every S tracked leaf must be installed or retained
+under the selected checks before native state adoption. Default refresh assumes
+JW-seeded receivers: matching regular inode/mtime and literal-equal links survive.
+Selected ignored payload is reconciled incrementally too.
+
+```sh
+jw reseed worker                       # refresh; checks mtime,size; no postcheck
+jw reseed worker --refresh-check=mtime,size,mode --postcheck=mtime
+jw reseed worker --renewal-route=replace-authorized  # force all tracked installs
+```
+
+`--refresh-check` selects the **whole** nonempty set from `mtime,size,mode`;
+duplicate, empty and unknown entries refuse. Default is `mtime,size`. `mode`
+compares full Unix `07777` permissions/special bits and renews on mismatch. Links
+always compare literal text, independently. This accepted heuristic does not prove
+bytes or CoW sharing and performs no mandatory retained-file privacy/hardlink audit.
+Matching tracked executable state must still satisfy native S: only a mismatch
+sets/clears `0111` in place, keeping the inode and all other mode bits. Any existing
+execute bit suffices. Ordinary payload has no mandatory executable correction.
+`--postcheck=mtime` optionally reads back installed regular mtime on every route
+and both cohorts. Default `none` omits that read-back, not setting mtime/permissions.
 
 Donor precedence is CLI `--from` → primary-local `source` → verified primary
 checkout of the same JJ repository. CLI relative paths start at the caller;
@@ -160,9 +180,10 @@ These transfer exclusions do not change JJ's initial snapshot/auto-tracking
 policy: a nonignored local file that JJ records becomes tracked work saved in
 history, not an implicitly preserved untracked exception.
 
-Comparison uses file type, size and exact mtime, or literal symlink text, not
-content hashes. Clean payload preserves inode/mtime and requires no writes.
-Mode-only changes and byte edits retaining size/mtime are **not repaired**;
+Comparison uses compatible file type and the selected `--refresh-check` set, or
+literal symlink text, not content hashes. Clean payload preserves inode/mtime.
+Without optional `mode`, ordinary mode-only changes and byte edits retaining the
+selected stat keys are **not repaired**;
 this is not an archive-metadata/ownership/ACL/xattr sweep. Newly copied files
 preserve permissions and mtime. Absent roots and selected target file/link roots
 are supported; final target symlinks are replaced, never followed.
@@ -437,25 +458,29 @@ are tracked; automatic stale-tree updates are disabled.
 
 Execution is one shared forward pass: resolve, source handoff, preserve all O/history,
 capture shared S/D/O inputs, establish serial native receivers, run one ordinary
-cohort, then loaded-link/native-identity finish. Both native routes use the same
+cohort, then loaded-link/native-identity finish. All native routes use the same
 reviewed provider and require successful **complete full-S coverage before adoption**:
 
-- `--renewal-route=clear-then-populate` (default): sparse clear, unchanged-O and
+- `--renewal-route=refresh` (default): replacement's non-clearing lifecycle, retaining
+  owned compatible stat-equal/literal-equal S leaves, installing changed/missing
+  leaves and retiring obsolete ownership. Complete installed + retained coverage,
+  including any required native executable correction, gates adoption.
+- `--renewal-route=clear-then-populate`: sparse clear, unchanged-O and
   residual guards, new exact-D child, strict create-absent S install, D admission,
   captured-S state adoption, optional S→D restore and conformance.
 - `--renewal-route=replace-authorized`: new same-O child with its own change identity,
   owned O→S renewal, D admission, S adoption, optional D restore, then receiving-only
   reparent to exact D and conformance. No clear-first fallback.
 
-`--replace-content` independently authorizes broad non-admin clearing on either
+`--replace-content` independently authorizes broad non-admin clearing on any
 route; installation after that clear is strict create-absent. D≠S may remove S
 installs and materialize D leaves from the store. S install counters do **not**
 prove final-D donor sharing. Commit-ID checks remain in memory. There is no durable
 intermediate state and **jw never repairs a partial workspace**.
 
-Only captured S `tree_state` is adopted after full installation; receiving checkout,
+Only captured S `tree_state` is adopted after full satisfaction; receiving checkout,
 repository pointer, root and `.jj` identities are retained. Native clear/restore/
-reparent effects are unenumerated, not fabricated clone/remove counts. Both routes
+reparent effects are unenumerated, not fabricated clone/remove counts. All routes
 require the exact `jj 0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b` profile.
 
 Failures retain saved O/history/root, last entered phase and actual returned partial
@@ -484,18 +509,25 @@ Each new prepare/reseed resolves its own policy and source selection.
 
 ## Structured outcomes
 
-Both commands accept `--format=plain|json` (plain default). Schema 1 lives in
-[`schema/refill-v1.schema.json`](schema/refill-v1.schema.json); illustrative fixtures
-live in [`app/cli/tests/fixtures/refill`](../app/cli/tests/fixtures/refill/).
+Both commands accept `--format=plain|json` (plain default). Current schema 2 lives in
+[`schema/refill-v2.schema.json`](schema/refill-v2.schema.json). Historical
+[schema1](schema/refill-v1.schema.json) and its illustrative
+[fixtures](../app/cli/tests/fixtures/refill/) remain intact.
 Every normally returned parsed JSON command emits exactly one complete stdout
 document, including early resolution failure, then exits zero/nonzero. Diagnostics,
 builders and the original error chain go to stderr. Clap syntax/help and broken
 stdout/process termination are outside this outcome guarantee.
 
-- Dispatch on numeric `schema_version:1` and `command`; ignore additive fields.
+- Dispatch on numeric `schema_version:2` and `command`; ignore additive fields.
   All counts, durations (integer milliseconds) and step indexes are canonical
   decimal **strings**; parse checked u128, never JavaScript floating-point numbers.
   Unavailable/unstarted values are explicit null, not successful zero reports.
+- Reseed declares `renewal_route`, canonical `refresh_check` and `postcheck`;
+  prepare has all three null. `native.manifest` separates `installed` and `retained`;
+  complete coverage requires their sum equal `desired` and full owned retirement.
+  `native.retained_permissions_set` counts actual successful in-place executable
+  corrections, including a failed lane's prefix, separately from `renewal_effects`.
+  Null means no listed outcome returned. A retained leaf is never a new clone.
 - Paths contain `display` plus lowercase `unix_bytes_hex` of exact Unix bytes.
   Decode hex for identity. Display text and diagnostic messages are not reversible
   identifiers or machine classifiers.

@@ -113,6 +113,7 @@ impl Fixture {
     }
     fn request(&self, at: Option<&str>) -> ReseedRequest {
         ReseedRequest {
+            renewal_route: jj_waltz_refill_engine::RenewalRoute::ClearThenPopulate,
             names: vec!["target".into()],
             source: Some(self.source.clone()),
             at: at.map(str::to_owned),
@@ -150,13 +151,20 @@ fi\nexec '{}' \"$@\"\n",
         let trace = self.temp.path().join("trace");
         let mut cmd = self.command(env!("CARGO_BIN_EXE_jw"), &self.source);
         cmd.args(["reseed", "--format=json"]).args(&request.names);
-        cmd.args([
-            "--renewal-route",
-            match request.renewal_route {
-                jj_waltz_refill_engine::command::RenewalRoute::ClearThenPopulate => "clear-then-populate",
-                jj_waltz_refill_engine::command::RenewalRoute::ReplaceAuthorized => "replace-authorized",
-            },
-        ]);
+        if request.renewal_route != jj_waltz_refill_engine::RenewalRoute::Refresh {
+            cmd.args([
+                "--renewal-route",
+                match request.renewal_route {
+                    jj_waltz_refill_engine::command::RenewalRoute::Refresh => unreachable!(),
+                    jj_waltz_refill_engine::command::RenewalRoute::ClearThenPopulate => "clear-then-populate",
+                    jj_waltz_refill_engine::command::RenewalRoute::ReplaceAuthorized => "replace-authorized",
+                },
+            ]);
+        }
+        cmd.args(["--refresh-check", &request.refresh_check.to_string()]);
+        if request.postcheck == jj_waltz_refill_engine::Postcheck::Mtime {
+            cmd.arg("--postcheck=mtime");
+        }
         for group in &request.groups {
             cmd.args(["--group", group]);
         }
@@ -203,10 +211,10 @@ fi\nexec '{}' \"$@\"\n",
         let output = cmd.output().unwrap();
         let wire: Value = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|e| panic!("{e}: {} / {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)));
-        assert_eq!(wire["schema_version"], 1);
+        assert_eq!(wire["schema_version"], 2);
         static SCHEMA: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
         let schema = SCHEMA
-            .get_or_init(|| jsonschema::validator_for(&serde_json::from_str(include_str!("../../../docs/schema/refill-v1.schema.json")).unwrap()).unwrap());
+            .get_or_init(|| jsonschema::validator_for(&serde_json::from_str(include_str!("../../../docs/schema/refill-v2.schema.json")).unwrap()).unwrap());
         assert!(
             schema.is_valid(&wire),
             "schema rejected outcome: {:?}",
@@ -278,7 +286,7 @@ fn native_result(f: &Fixture, target: &Path, result: &Value, desired: &str) {
 }
 
 #[test]
-fn default_s_native_transfer_links_and_real_call_ledger() {
+fn explicit_clear_s_native_transfer_links_and_real_call_ledger() {
     let f = Fixture::with_colocation(true);
     let target = f.workspace("target", &f.s);
     fs::write(target.join("modified"), "old receiving edits\n").unwrap();
@@ -381,7 +389,7 @@ fn byte_and_stat_equal_s_only_local_is_refused_before_state_adoption() {
     assert_eq!(fs::metadata(&from).unwrap().modified().unwrap(), fs::metadata(&to).unwrap().modified().unwrap());
     let (result, _) = f.run(f.request(Some(&d)));
     assert_eq!(result["ok"], false);
-    assert!(result["error"].as_str().unwrap().contains("full-S tracked installation"), "{result:#}");
+    assert!(result["error"].as_str().unwrap().contains("full-S tracked satisfaction"), "{result:#}");
     assert_eq!(fs::read(to).unwrap(), b"source only\n");
     assert_eq!(f.jj(&target, &["--ignore-working-copy", "sparse", "list"]), "");
 }
@@ -566,8 +574,277 @@ fn public_schema_both_routes_n1_n2_and_omitted_default() {
             .unwrap(),
     ))
     .unwrap();
-    assert_eq!(wire["renewal_route"], "clear-then-populate");
-    assert_eq!(wire["receivers"][0]["renewal_route"], "clear-then-populate");
+    assert_eq!(wire["renewal_route"], "refresh");
+    assert_eq!(wire["receivers"][0]["renewal_route"], "refresh");
+    assert_eq!(wire["refresh_check"], "mtime,size");
+    assert_eq!(wire["postcheck"], "none");
+}
+
+fn refresh_request(f: &Fixture) -> ReseedRequest {
+    ReseedRequest {
+        renewal_route: jj_waltz_refill_engine::RenewalRoute::Refresh,
+        allow_unbookmarked: true,
+        ..f.request(None)
+    }
+}
+
+fn seed(f: &Fixture, request: &ReseedRequest) {
+    let (result, _) = f.run(ReseedRequest {
+        renewal_route: jj_waltz_refill_engine::RenewalRoute::ReplaceAuthorized,
+        ..request.clone()
+    });
+    assert_eq!(result["ok"], true, "{result:#}");
+}
+
+fn exact_native(f: &Fixture, target: &Path, result: &Value, desired: &str) {
+    assert_eq!(result["ok"], true, "{result:#}");
+    assert_eq!(result["wire"]["receivers"][0]["native"]["source_state_adopted"], true);
+    let client = JjClient::new(target);
+    let facts = client.commit_facts_at(&client.operation_id().unwrap(), "@").unwrap();
+    assert!(facts.ordinary_empty_child());
+    assert_eq!(facts.parents, [desired]);
+    assert_eq!(facts.change_id, result["change"].as_str().unwrap());
+    assert!(
+        f.jj(
+            target,
+            &[
+                "--config=snapshot.auto-track=none()",
+                "diff",
+                "--from",
+                "@",
+                "--to",
+                &commit_id_revset(desired).unwrap(),
+                "--summary"
+            ]
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn default_seeded_refresh_retains_older_inodes_ctimes_and_adopts_native_state_without_clone_effects() {
+    let f = Fixture::new();
+    let target = f.workspace("target", &f.s);
+    fs::create_dir_all(f.source.join("cache")).unwrap();
+    fs::write(f.source.join("cache/file"), "ordinary").unwrap();
+    let request = refresh_request(&f);
+    seed(&f, &request);
+    let paths = [
+        ".gitignore",
+        "shared",
+        "modified",
+        "source-only",
+        "collapse/old",
+        "mode",
+        "line\nbreak",
+        "link",
+        "cache/file",
+    ];
+    fs::set_permissions(target.join("cache/file"), fs::Permissions::from_mode(0o740)).unwrap();
+    let before = paths.map(|p| fs::symlink_metadata(target.join(p)).unwrap());
+    // No mandatory privacy audit: this seeded ordinary file intentionally has a
+    // second name outside Q. Refresh leaves both names and the inode untouched.
+    fs::hard_link(target.join("cache/file"), target.join(".env")).unwrap();
+    let before_cache = fs::metadata(target.join("cache/file")).unwrap();
+    // Source ctime is newer than the retained receiving inode's ctime, without
+    // changing mtime, bytes or native executable meaning. Adoption must still
+    // converge exactly; it cannot require donor/receiver inode or ctime equality.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let source_mode = fs::metadata(f.source.join("mode")).unwrap().permissions();
+    fs::set_permissions(f.source.join("mode"), source_mode).unwrap();
+    let source_ctime = fs::metadata(f.source.join("mode")).unwrap();
+    assert!((before[5].ctime(), before[5].ctime_nsec()) < (source_ctime.ctime(), source_ctime.ctime_nsec()));
+    for _ in 0..2 {
+        let (result, calls) = f.run(request.clone()); // route omitted: actual CLI default
+        let w = &result["wire"];
+        exact_native(&f, &target, &result, &f.s);
+        assert_eq!(w["renewal_route"], "refresh");
+        assert_eq!(w["refresh_check"], "mtime,size");
+        assert_eq!(w["postcheck"], "none");
+        let native = &w["receivers"][0]["native"];
+        assert_eq!(native["manifest"]["installed"], "0");
+        assert_eq!(native["manifest"]["retained"], "8");
+        assert_eq!(native["manifest"]["complete"], true);
+        assert_eq!(native["renewal_effects"]["files_reflinked"], "0");
+        assert_eq!(native["retained_permissions_set"], "0");
+        assert_eq!(w["receivers"][0]["ordinary"]["report"]["completed"]["files_reflinked"], "0");
+        for (p, old) in paths.iter().zip(&before) {
+            let now = fs::symlink_metadata(target.join(p)).unwrap();
+            assert_eq!((now.ino(), now.modified().unwrap()), (old.ino(), old.modified().unwrap()), "{p}");
+            if *p != "cache/file" {
+                assert_eq!((now.ctime(), now.ctime_nsec()), (old.ctime(), old.ctime_nsec()), "no metadata write: {p}");
+            }
+        }
+        let now = fs::metadata(target.join("cache/file")).unwrap();
+        assert_eq!(now.mode() & 0o7777, 0o740, "ordinary executable state is not normalized");
+        assert_eq!((now.ctime(), now.ctime_nsec()), (before_cache.ctime(), before_cache.ctime_nsec()));
+        assert_eq!(fs::metadata(target.join(".env")).unwrap().ino(), now.ino());
+        assert!(!calls.iter().any(|c| c.iter().any(|a| a == "--clear")));
+        assert!(native["steps"].as_array().unwrap().iter().any(|s| s["phase"] == "reparent"));
+        assert!(!native["steps"].as_array().unwrap().iter().any(|s| s["phase"] == "restore"));
+    }
+}
+
+#[test]
+fn refresh_native_executable_correction_is_in_place_preserves_other_bits_and_is_not_an_install() {
+    for executable in [false, true] {
+        let mut f = Fixture::new();
+        if executable {
+            fs::set_permissions(f.source.join("mode"), fs::Permissions::from_mode(0o755)).unwrap();
+            f.jj(&f.source, &["status"]);
+            f.s = JjClient::new(&f.source).resolve_one("@").unwrap().commit_id;
+        }
+        let target = f.workspace("target", &f.s);
+        let request = refresh_request(&f);
+        seed(&f, &request);
+        fs::set_permissions(target.join("mode"), fs::Permissions::from_mode(if executable { 0o2640 } else { 0o2751 })).unwrap();
+        let before = fs::metadata(target.join("mode")).unwrap();
+        let (result, _) = f.run(request.clone());
+        exact_native(&f, &target, &result, &f.s);
+        let after = fs::metadata(target.join("mode")).unwrap();
+        assert_eq!((after.ino(), after.modified().unwrap()), (before.ino(), before.modified().unwrap()));
+        assert_eq!(after.mode() & 0o7777, if executable { 0o2751 } else { 0o2640 });
+        let native = &result["wire"]["receivers"][0]["native"];
+        assert_eq!(native["renewal_effects"]["files_reflinked"], "0");
+        assert_eq!(native["retained_permissions_set"], "1");
+        assert_eq!(native["manifest"]["retained"], "8");
+        if executable {
+            fs::set_permissions(target.join("mode"), fs::Permissions::from_mode(0o2641)).unwrap();
+        }
+        let before_noop = fs::metadata(target.join("mode")).unwrap();
+        let (again, _) = f.run(request);
+        exact_native(&f, &target, &again, &f.s);
+        assert_eq!(again["wire"]["receivers"][0]["native"]["retained_permissions_set"], "0");
+        let after_noop = fs::metadata(target.join("mode")).unwrap();
+        assert_eq!((after_noop.ctime(), after_noop.ctime_nsec()), (before_noop.ctime(), before_noop.ctime_nsec()));
+    }
+}
+
+#[test]
+fn refresh_changed_missing_obsolete_types_links_and_exact_distinct_desired_tree() {
+    let f = Fixture::new();
+    let d = f.desired();
+    let target = f.workspace("target", &f.s);
+    let request = refresh_request(&f);
+    seed(&f, &request);
+    let shared = fs::metadata(target.join("shared")).unwrap();
+    fs::write(target.join("modified"), "changed receiving contents").unwrap();
+    fs::remove_file(target.join("source-only")).unwrap();
+    fs::remove_file(target.join("collapse/old")).unwrap();
+    fs::remove_dir(target.join("collapse")).unwrap();
+    fs::write(target.join("collapse"), "receiving leaf").unwrap();
+    fs::write(target.join("obsolete"), "owned old-only").unwrap();
+    fs::remove_file(target.join("link")).unwrap();
+    symlink("./shared", target.join("link")).unwrap();
+    let (result, _) = f.run(request.clone());
+    exact_native(&f, &target, &result, &f.s);
+    let native = &result["wire"]["receivers"][0]["native"];
+    assert_eq!(native["manifest"]["installed"], "4");
+    assert_eq!(native["manifest"]["retained"], "4");
+    assert_eq!(native["manifest"]["owned_obsolete"], "2");
+    assert_eq!(native["manifest"]["owned_retired"], "2");
+    assert_eq!(native["renewal_effects"]["files_reflinked"], "3");
+    assert_eq!(native["renewal_effects"]["symlinks_created"], "1");
+    assert!(!target.join("obsolete").exists());
+    assert_eq!(fs::read(target.join("collapse/old")).unwrap(), b"source descendant\n");
+    assert_eq!(fs::read_link(target.join("link")).unwrap().as_os_str(), Path::new("././shared").as_os_str());
+    assert_eq!(fs::metadata(target.join("shared")).unwrap().ino(), shared.ino());
+    let (distinct, _) = f.run(ReseedRequest {
+        at: Some(d.clone()),
+        ..request
+    });
+    exact_native(&f, &target, &distinct, &d);
+    assert_eq!(distinct["wire"]["receivers"][0]["native"]["manifest"]["retained"], "8");
+    assert_eq!(distinct["reflinks"], 0);
+    assert_eq!(fs::read(target.join("collapse")).unwrap(), b"desired leaf\n");
+    assert!(!target.join("source-only").exists());
+}
+
+#[test]
+fn refresh_check_selection_postcheck_and_explicit_replace_content_keep_their_independent_meaning() {
+    use jj_waltz_refill_engine::{Postcheck, RenewalRoute};
+    let f = Fixture::new();
+    let target = f.workspace("target", &f.s);
+    fs::create_dir_all(f.source.join("cache")).unwrap();
+    fs::write(f.source.join("cache/file"), "ordinary").unwrap();
+    let request = refresh_request(&f);
+    let (preview, _) = f.run(ReseedRequest {
+        dry_run: true,
+        refresh_check: "mode".parse().unwrap(),
+        postcheck: Postcheck::Mtime,
+        ..request.clone()
+    });
+    assert_eq!(preview["wire"]["status"], "planned");
+    assert_eq!(preview["wire"]["renewal_route"], "refresh");
+    assert_eq!(preview["wire"]["refresh_check"], "mode");
+    assert_eq!(preview["wire"]["postcheck"], "mtime");
+    assert!(preview["wire"]["receivers"][0]["native"]["manifest"].is_null());
+    assert!(preview["wire"]["receivers"][0]["native"]["retained_permissions_set"].is_null());
+    seed(&f, &request);
+    for (checks, renew) in [("size", false), ("mtime", true), ("mtime,size,mode", true)] {
+        for path in ["mode", "cache/file"] {
+            if checks.ends_with("mode") {
+                fs::set_permissions(target.join(path), fs::Permissions::from_mode(0o740)).unwrap();
+            } else {
+                fs::File::options()
+                    .write(true)
+                    .open(target.join(path))
+                    .unwrap()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10))
+                    .unwrap();
+            }
+        }
+        let before = ["mode", "cache/file"].map(|p| fs::metadata(target.join(p)).unwrap().ino());
+        let (result, _) = f.run(ReseedRequest {
+            refresh_check: checks.parse().unwrap(),
+            postcheck: Postcheck::Mtime,
+            ..request.clone()
+        });
+        exact_native(&f, &target, &result, &f.s);
+        assert_eq!(result["wire"]["refresh_check"], checks);
+        assert_eq!(result["wire"]["postcheck"], "mtime");
+        for (p, old) in ["mode", "cache/file"].iter().zip(before) {
+            assert_eq!(fs::metadata(target.join(p)).unwrap().ino() != old, renew, "{checks}/{p}");
+        }
+        assert_eq!(result["reflinks"], if renew { 1 } else { 0 });
+        assert_eq!(result["payload_reflinks"], if renew { 1 } else { 0 });
+        assert_eq!(result["wire"]["receivers"][0]["native"]["retained_permissions_set"], "0");
+    }
+    for route in [RenewalRoute::ClearThenPopulate, RenewalRoute::ReplaceAuthorized] {
+        fs::File::options()
+            .write(true)
+            .open(target.join("cache/file"))
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10))
+            .unwrap();
+        let ordinary_inode = fs::metadata(target.join("cache/file")).unwrap().ino();
+        let (result, _) = f.run(ReseedRequest {
+            renewal_route: route,
+            refresh_check: "size".parse().unwrap(),
+            postcheck: Postcheck::Mtime,
+            ..request.clone()
+        });
+        exact_native(&f, &target, &result, &f.s);
+        assert_eq!(result["reflinks"], 7, "old routes remain unconditional tracked installation");
+        assert_eq!(result["payload_reflinks"], 0, "old routes still use selected ordinary checks");
+        assert_eq!(fs::metadata(target.join("cache/file")).unwrap().ino(), ordinary_inode);
+    }
+    for route in [RenewalRoute::Refresh, RenewalRoute::ClearThenPopulate, RenewalRoute::ReplaceAuthorized] {
+        fs::write(target.join(".env"), "explicitly erase").unwrap();
+        let (result, _) = f.run(ReseedRequest {
+            renewal_route: route,
+            replace_content: true,
+            postcheck: Postcheck::Mtime,
+            ..request.clone()
+        });
+        exact_native(&f, &target, &result, &f.s);
+        let native = &result["wire"]["receivers"][0]["native"];
+        assert_eq!(native["manifest"]["installed"], "8");
+        assert_eq!(native["manifest"]["retained"], "0");
+        assert_eq!(result["reflinks"], 7);
+        assert!(!target.join(".env").exists());
+        assert_eq!(result["payload_reflinks"], 1);
+    }
 }
 
 #[test]

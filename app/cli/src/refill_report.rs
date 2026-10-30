@@ -1,4 +1,4 @@
-//! Application-owned schema 1. Projection is pure: never discover or refresh
+//! Application-owned schema 2. Projection is pure: never discover or refresh
 //! state while reporting an error. Native child facts are last observed facts.
 use anyhow::Result;
 use jj_waltz_refill_engine::{PrepareRequest, ReseedRequest, command::*};
@@ -52,6 +52,8 @@ pub struct Envelope {
     mode: &'static str,
     status: Status,
     renewal_route: Option<&'static str>,
+    refresh_check: Option<String>,
+    postcheck: Option<&'static str>,
     native_profile: Option<Profile>,
     selection: Selection,
     source: Option<Source>,
@@ -182,6 +184,7 @@ struct Native {
     state: &'static str,
     manifest: Option<Manifest>,
     renewal_effects: Option<Effects>,
+    retained_permissions_set: Option<Decimal>,
     explicit_clear_effects: Option<Effects>,
     source_state_adopted: Option<bool>,
     steps: Vec<NativeStep>,
@@ -192,6 +195,7 @@ struct Native {
 struct Manifest {
     desired: Decimal,
     installed: Decimal,
+    retained: Decimal,
     owned_obsolete: Decimal,
     owned_retired: Decimal,
     complete: bool,
@@ -340,6 +344,7 @@ effects!(
 
 pub fn route(r: RenewalRoute) -> &'static str {
     match r {
+        RenewalRoute::Refresh => "refresh",
         RenewalRoute::ClearThenPopulate => "clear-then-populate",
         RenewalRoute::ReplaceAuthorized => "replace-authorized",
     }
@@ -368,11 +373,16 @@ fn phase(p: Phase) -> &'static str {
 impl Envelope {
     fn new(command: &'static str, preview: bool, request: Option<&ReseedRequest>) -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             command,
             mode: if preview { "preview" } else { "execute" },
             status: Status::Failed,
             renewal_route: request.map(|r| route(r.renewal_route)),
+            refresh_check: request.map(|r| r.refresh_check.to_string()),
+            postcheck: request.map(|r| match r.postcheck {
+                jj_waltz_refill_engine::Postcheck::None => "none",
+                jj_waltz_refill_engine::Postcheck::Mtime => "mtime",
+            }),
             native_profile: None,
             selection: Selection {
                 names: request.map_or_else(Vec::new, |r| r.names.clone()),
@@ -557,16 +567,21 @@ impl Envelope {
                 .unwrap();
             }
         }
+        if let Some(checks) = &self.refresh_check {
+            writeln!(text, "refresh-check={checks} postcheck={}", self.postcheck.expect("reseed postcheck")).unwrap();
+        }
         for r in &self.receivers {
             let count = |n: Option<Decimal>| n.map(|n| n.0.to_string()).unwrap_or_else(|| "unknown".into());
             write!(
                 text,
-                "{} {}: route={} phase={} renewal={} ordinary={} links={}; root={} O={} history={}",
+                "{} {}: route={} phase={} renewal={} retained={} retained-chmod={} ordinary={} links={}; root={} O={} history={}",
                 r.status,
                 r.name,
                 r.renewal_route,
                 r.phase,
                 count(r.native.renewal_effects.as_ref().map(|e| e.files_reflinked)),
+                count(r.native.manifest.as_ref().map(|m| m.retained)),
+                count(r.native.retained_permissions_set),
                 count(r.ordinary.report.as_ref().map(|o| o.completed.files_reflinked)),
                 count(r.finish.links.as_ref().map(|l| l.linked)),
                 r.root.display,
@@ -717,6 +732,7 @@ impl Receiver {
                 state: "unstarted",
                 manifest: None,
                 renewal_effects: None,
+                retained_permissions_set: None,
                 explicit_clear_effects: None,
                 source_state_adopted: None,
                 steps: vec![],
@@ -764,11 +780,13 @@ impl Receiver {
             manifest: r.native.manifest.map(|m| Manifest {
                 desired: Decimal(m.desired as u128),
                 installed: Decimal(m.installed as u128),
+                retained: Decimal(m.retained as u128),
                 owned_obsolete: Decimal(m.owned_obsolete as u128),
                 owned_retired: Decimal(m.owned_retired as u128),
                 complete: m.complete,
             }),
             renewal_effects: r.native.completed.as_ref().map(Effects::from),
+            retained_permissions_set: r.native.retained_permissions_set.map(|n| Decimal(n as u128)),
             explicit_clear_effects: r.native.explicit_clear.as_ref().map(Effects::from),
             source_state_adopted: r.native.source_state_adopted,
             steps: r
@@ -1118,7 +1136,7 @@ mod tests {
         let plain = envelope.plain();
         assert!(plain.contains("root=/receiver O=saved-O history=covered bookmark=\"saved-work\""));
         assert!(plain.contains("work_tip=work-tip target=bookmark-target"));
-        assert_eq!(plain.lines().count(), 2);
+        assert_eq!(plain.lines().count(), 3);
         assert!(!plain.contains("NativeOutcome"));
     }
     #[test]
@@ -1201,6 +1219,45 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!(serde_json::to_value(Decimal(u128::MAX)).unwrap(), json!(u128::MAX.to_string()));
     }
+
+    #[test]
+    fn schema_two_requires_options_retained_coverage_and_separate_actual_metadata_availability() {
+        let schema: Value = serde_json::from_str(include_str!("../../../docs/schema/refill-v2.schema.json")).unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let mut value: Value = serde_json::from_str(include_str!("../tests/fixtures/refill/reseed-complete.json")).unwrap();
+        value["schema_version"] = json!(2);
+        value["renewal_route"] = json!("refresh");
+        value["refresh_check"] = json!("mtime,size");
+        value["postcheck"] = json!("none");
+        value["receivers"][0]["renewal_route"] = json!("refresh");
+        value["receivers"][0]["native"]["manifest"]["retained"] = json!("0");
+        value["receivers"][0]["native"]["retained_permissions_set"] = json!("0");
+        assert!(validator.is_valid(&value));
+        for pointer in [
+            "/refresh_check",
+            "/postcheck",
+            "/receivers/0/native/manifest/retained",
+            "/receivers/0/native/retained_permissions_set",
+        ] {
+            let mut invalid = value.clone();
+            *invalid.pointer_mut(pointer).unwrap() = Value::Null;
+            assert!(!validator.is_valid(&invalid), "accepted unavailable complete field {pointer}");
+        }
+        for invalid in ["size,size", "size,mtime", "", "hash", "mtime,"] {
+            value["refresh_check"] = json!(invalid);
+            assert!(!validator.is_valid(&value));
+        }
+        for fixture in [
+            include_str!("../tests/fixtures/refill/prepare-planned.json"),
+            include_str!("../tests/fixtures/refill/prepare-complete.json"),
+        ] {
+            let mut prepare: Value = serde_json::from_str(fixture).unwrap();
+            prepare["schema_version"] = json!(2);
+            prepare["refresh_check"] = Value::Null;
+            prepare["postcheck"] = Value::Null;
+            assert!(validator.is_valid(&prepare));
+        }
+    }
     #[test]
     fn provider_primary_secondary_and_original_io_causes_survive_projection() {
         use std::os::unix::ffi::OsStringExt;
@@ -1260,7 +1317,11 @@ mod tests {
             },
         );
         let mut actual = serde_json::to_value(e).unwrap();
-        let expected: Value = serde_json::from_str(include_str!("../tests/fixtures/refill/resolution-failed.json")).unwrap();
+        let mut expected: Value = serde_json::from_str(include_str!("../tests/fixtures/refill/resolution-failed.json")).unwrap();
+        expected["schema_version"] = json!(2);
+        expected["renewal_route"] = json!("refresh");
+        expected["refresh_check"] = json!("mtime,size");
+        expected["postcheck"] = json!("none");
         actual["timings"]["command_ms"] = json!("2");
         actual["error"]["causes"] = expected["error"]["causes"].clone();
         assert_eq!(actual, expected);

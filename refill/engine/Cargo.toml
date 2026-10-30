@@ -8,17 +8,17 @@ publish = false
 description = "Donor preparation and reseed request types, orchestration, and source freshening for jj-waltz"
 
 [dependencies]
-jj-waltz-native-jj = { version = "=0.11.0", path = "../../native/jj" }
-jj-waltz-workspace-state = { version = "=0.11.0", path = "../../workspace/state" }
-jj-waltz-transfer-workspace = { version = "=0.11.0", path = "../../transfer/workspace" }
+jj-waltz-native-jj = { version = "=0.12.0", path = "../../native/jj" }
+jj-waltz-workspace-state = { version = "=0.12.0", path = "../../workspace/state" }
+jj-waltz-transfer-workspace = { version = "=0.12.0", path = "../../transfer/workspace" }
 anyhow = "1.0.100"
 fs2 = "0.4.3"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 toml = "1.1.2"
-diff-dirs = { package = "diff-dirs-tree-api", version = "=0.7.0", path = "../../../diff-dirs/tree/api" }
-diff-dirs-inspect = { package = "diff-dirs-tree-inspect", version = "=0.7.0", path = "../../../diff-dirs/tree/inspect" }
-diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.7.0", path = "../../../diff-dirs/transfer/sync" }
+diff-dirs = { package = "diff-dirs-tree-api", version = "=0.9.0", path = "../../../diff-dirs/tree/api" }
+diff-dirs-inspect = { package = "diff-dirs-tree-inspect", version = "=0.9.0", path = "../../../diff-dirs/tree/inspect" }
+diff-dirs-sync = { package = "diff-dirs-transfer-sync", version = "=0.9.0", path = "../../../diff-dirs/transfer/sync" }
 
 [dev-dependencies]
 tempfile = "3.19.1"

@@ -5,7 +5,7 @@ use diff_dirs::{CheckError, Demand, EntryFacts, Kind, Side, SideDemands};
 use diff_dirs_inspect::DeclaredCandidate;
 use diff_dirs_sync::{
     CopyPolicy, DesiredLeaf, EffectBinding, LeafExpectation, LeafKind, ListedCandidate, ListedGuard, ListedIntent, ListedTarget, OwnedLeafSet,
-    PreparedLeafList, reconcile_listed,
+    PreparedLeafList, RetainedAttributes, reconcile_listed,
 };
 use std::os::unix::fs::MetadataExt;
 
@@ -20,7 +20,7 @@ pub(in crate::engine::command) struct TrackedPhase {
     pub source: diff_dirs::SourceSession,
 }
 impl TrackedPhase {
-    pub fn prepare(membership: &Membership, source: &PreparedSource, saved: &[SavedReceiver], route: RenewalRoute, replace_content: bool) -> Result<Self> {
+    pub fn prepare(membership: &Membership, source: &PreparedSource, saved: &[SavedReceiver], request: &ReseedRequest) -> Result<Self> {
         let desired = PreparedLeafList::from_specs(membership.get(&source.report.commit).leaves.iter().map(|e| DesiredLeaf {
             relative: e.path.clone(),
             expected: LeafExpectation::Exact {
@@ -28,8 +28,12 @@ impl TrackedPhase {
                 executable: (e.kind == "file").then_some(e.executable),
             },
         }))?;
-        let intent = if route == RenewalRoute::ReplaceAuthorized && !replace_content {
-            ListedIntent::RenewOwned
+        let intent = if request.renewal_route != RenewalRoute::ClearThenPopulate && !request.replace_content {
+            match request.renewal_route {
+                RenewalRoute::Refresh => ListedIntent::RefreshOwned(request.refresh_check),
+                RenewalRoute::ReplaceAuthorized => ListedIntent::RenewOwned,
+                RenewalRoute::ClearThenPopulate => unreachable!(),
+            }
         } else {
             ListedIntent::CreateAbsent
         };
@@ -38,7 +42,7 @@ impl TrackedPhase {
         let mut bindings = BTreeMap::new();
         let mut guards = BTreeMap::new();
         for saved in saved {
-            if intent == ListedIntent::RenewOwned {
+            if intent != ListedIntent::CreateAbsent {
                 let tree = membership.get(&saved.old_commit);
                 if !owned.contains_key(&tree.key) {
                     owned.insert(tree.key.clone(), OwnedLeafSet::new(tree.leaves.iter().map(|e| &e.path))?);
@@ -47,7 +51,7 @@ impl TrackedPhase {
             }
             bindings.insert(
                 saved.binding.name.clone(),
-                EffectBinding::new(&source.binding.root, &saved.binding.root, CopyPolicy::ReflinkRequired)?,
+                EffectBinding::new(&source.binding.root, &saved.binding.root, CopyPolicy::ReflinkRequired)?.with_postcheck(request.postcheck.into()),
             );
             guards.insert(
                 saved.binding.name.clone(),
@@ -76,7 +80,7 @@ impl TrackedPhase {
     }
     pub fn install(&self, saved: &SavedReceiver, report: &mut ReceiverReport) -> Result<()> {
         let id = diff_dirs::coordinated::TargetId(saved.binding.name.clone());
-        let owned = if self.intent == ListedIntent::RenewOwned {
+        let owned = if self.intent != ListedIntent::CreateAbsent {
             &self.owned[&self.owned_keys[&saved.old_commit]]
         } else {
             &self.empty
@@ -90,6 +94,7 @@ impl TrackedPhase {
                 owned,
                 intent: self.intent,
                 guard: &self.guards[&saved.binding.name],
+                retained_attributes: RetainedAttributes::ManifestExecutable,
             }],
         )?;
         let lane = result.outcomes.pop().context("provider returned no native lane")?;
@@ -102,6 +107,7 @@ impl TrackedPhase {
 /// can hide cleanup failure. No post-failure filesystem census is performed.
 fn accept_lane(lane: diff_dirs_sync::ListedOutcome, native: &mut NativeOutcome) -> Result<()> {
     native.manifest = Some(lane.coverage);
+    native.retained_permissions_set = Some(lane.retained_permissions_set);
     match lane.outcome {
         Ok(done) => {
             native.completed = Some(done.completed);
@@ -262,6 +268,7 @@ mod tests {
                     structural_root: false,
                 },
                 desired: None,
+                comparison: diff_dirs::Comparison::NotAssessed,
                 shape: Shape {
                     source,
                     target: Some(Kind::File),
@@ -281,6 +288,7 @@ mod tests {
         let coverage = ManifestCoverage {
             desired: 3,
             installed: 3,
+            retained: 0,
             owned_obsolete: 1,
             owned_retired: 1,
             complete: false,
@@ -296,6 +304,7 @@ mod tests {
             diff_dirs_sync::ListedOutcome {
                 id: "target".into(),
                 coverage,
+                retained_permissions_set: 0,
                 outcome: Ok(diff_dirs_sync::Report {
                     planned: 4,
                     completed: progress.clone(),
@@ -313,6 +322,7 @@ mod tests {
             diff_dirs_sync::ListedOutcome {
                 id: "target".into(),
                 coverage,
+                retained_permissions_set: 0,
                 outcome: Err(diff_dirs_sync::Failure {
                     planned: 4,
                     policy: Box::default(),
@@ -339,5 +349,85 @@ mod tests {
         assert_eq!(native.completed, Some(progress));
         assert!(native.attempted.is_empty());
         assert_eq!(native.state, Establishment::Unstarted);
+    }
+
+    #[test]
+    fn actual_retained_metadata_failure_prefix_cannot_reach_native_adoption() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Fault(PathBuf);
+        impl ListedGuard for Fault {
+            fn check(&self, at: ListedCandidate<'_>, _: EntryFacts<'_>) -> Result<(), CheckError> {
+                // Deliberately impure TEST fault after the provider acquired real
+                // attributes. Production NativeGuard remains strictly pure.
+                if let DeclaredCandidate::Entry(e) = at.observed
+                    && e.coordinate.to_path_buf() == Path::new("z/file")
+                {
+                    fs::remove_file(self.0.join("z/file")).unwrap();
+                }
+                Ok(())
+            }
+        }
+        let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.test-agent/native-attributes");
+        fs::create_dir_all(&scratch).unwrap();
+        let temp = tempfile::tempdir_in(scratch.canonicalize().unwrap()).unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        for root in [&source, &target] {
+            fs::create_dir_all(root.join("z")).unwrap();
+        }
+        for name in ["a", "z/file"] {
+            fs::write(source.join(name), "same").unwrap();
+            fs::write(target.join(name), "same").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(target.join(name))
+                .unwrap()
+                .set_modified(fs::metadata(source.join(name)).unwrap().modified().unwrap())
+                .unwrap();
+            fs::set_permissions(source.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(target.join(name), fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let desired = PreparedLeafList::from_specs(["a", "z/file"].map(|p| DesiredLeaf {
+            relative: p.into(),
+            expected: LeafExpectation::Exact {
+                kind: LeafKind::RegularFile,
+                executable: Some(true),
+            },
+        }))
+        .unwrap();
+        let owned = OwnedLeafSet::new(["a", "z/file"]).unwrap();
+        let binding = EffectBinding::new(&source, &target, CopyPolicy::ReflinkRequired).unwrap();
+        let id = "failure".into();
+        let guard = Fault(target);
+        let lane = reconcile_listed(
+            &diff_dirs::SourceSession::new(&source),
+            &desired,
+            &[ListedTarget {
+                id: &id,
+                binding: &binding,
+                owned: &owned,
+                intent: ListedIntent::RefreshOwned(Default::default()),
+                guard: &guard,
+                retained_attributes: RetainedAttributes::ManifestExecutable,
+            }],
+        )
+        .unwrap()
+        .outcomes
+        .remove(0);
+        let mut native = NativeOutcome {
+            state: Establishment::InProgress,
+            source_state_adopted: Some(false),
+            ..Default::default()
+        };
+        let error = accept_lane(lane, &mut native).unwrap_err();
+        let failure = error.downcast_ref::<diff_dirs_sync::Failure>().unwrap();
+        assert_eq!(failure.primary.operation, "conform retained executable");
+        assert_eq!(failure.completed.files_reflinked, 0);
+        assert_eq!(native.retained_permissions_set, Some(1));
+        let coverage = native.manifest.unwrap();
+        assert_eq!((coverage.installed, coverage.retained, coverage.complete), (0, 1, false));
+        assert_eq!(native.source_state_adopted, Some(false));
+        assert_eq!(native.state, Establishment::InProgress);
+        assert!(native.attempted.is_empty());
     }
 }

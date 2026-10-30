@@ -5,7 +5,7 @@ use crate::ignored::{Patterns, Prefix};
 use anyhow::{Context, Result, ensure};
 use diff_dirs::{
     Action, CheckError, Choices, Container, ContextSite, Demand, FileKind, Interior, InteriorInput, InteriorRole, Kind, Names, Policy, SemanticId,
-    ShapeChoices, SideDemands, SourceObservation, StatKey,
+    ShapeChoices, SideDemands, SourceObservation, StatComparator,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -472,10 +472,27 @@ pub fn sync_cohort_with_execution(
     resources: diff_dirs::ObservationResources,
     execution: &crate::transfer::Execution,
 ) -> std::result::Result<CohortReport, CohortFailure> {
+    sync_cohort_with_options(source, lanes, resources, execution, SyncOptions::default())
+}
+
+/// Cohort-wide typed comparison/effect interpretation, frozen once before work.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SyncOptions {
+    pub checks: diff_dirs::StatChecks,
+    pub postcheck: diff_dirs_sync::Postcheck,
+}
+
+pub fn sync_cohort_with_options(
+    source: &Path,
+    lanes: Vec<CohortLane>,
+    resources: diff_dirs::ObservationResources,
+    execution: &crate::transfer::Execution,
+    options: SyncOptions,
+) -> std::result::Result<CohortReport, CohortFailure> {
     if lanes.iter().all(|lane| lane.policy.source.patterns.is_empty()) {
         return Ok(CohortReport::default());
     }
-    execution.scope(|mode| sync_cohort_in(source, lanes, resources, mode))
+    execution.scope(|mode| sync_cohort_in(source, lanes, resources, mode, options))
 }
 
 fn sync_cohort_in(
@@ -483,11 +500,13 @@ fn sync_cohort_in(
     lanes: Vec<CohortLane>,
     resources: diff_dirs::ObservationResources,
     execution: diff_dirs::Execution,
+    options: SyncOptions,
 ) -> std::result::Result<CohortReport, CohortFailure> {
     use diff_dirs::Comparator;
     use diff_dirs::coordinated::{Bindings, Parts, TargetBinding, TargetId};
     use diff_dirs_sync::coordinated::{SyncCursor, SyncParts, SyncRuntime, SyncTarget};
     let target_ids = lanes.iter().map(|lane| TargetId(lane.name.clone())).collect::<Vec<_>>();
+    let comparator = StatComparator::new(options.checks);
     let bindings = Bindings {
         source: source.to_owned(),
         targets: lanes
@@ -498,7 +517,7 @@ fn sync_cohort_in(
                 policy: "jw-contextual-ordinary-v3".into(),
                 policy_id: lane.policy.identity().clone(),
                 context_schema: lane.policy.context_schema().clone(),
-                comparator: StatKey.identity().clone(),
+                comparator: comparator.identity().clone(),
                 initial_context: lane.policy.initial_context(),
             })
             .collect(),
@@ -511,9 +530,10 @@ fn sync_cohort_in(
     })?;
     let mut cursor = SyncCursor::from_parts(
         SyncParts {
-            version: 3,
+            version: 4,
             comparison,
             copy_policies: vec![diff_dirs_sync::CopyPolicy::ReflinkRequired; lanes.len()],
+            postchecks: vec![options.postcheck; lanes.len()],
             lanes: vec![Default::default(); lanes.len()],
             current: None,
         },
@@ -533,7 +553,14 @@ fn sync_cohort_in(
             targets.push(SyncTarget {
                 id: TargetId(lane.name),
                 descriptor: "jw-contextual-ordinary-v3".into(),
-                applier: diff_dirs_sync::Applier::new_policy(source, lane.target, diff_dirs_sync::CopyPolicy::ReflinkRequired, lane.policy, StatKey)?,
+                applier: diff_dirs_sync::Applier::new_policy(
+                    source,
+                    lane.target,
+                    diff_dirs_sync::CopyPolicy::ReflinkRequired,
+                    lane.policy,
+                    comparator.clone(),
+                )?
+                .with_postcheck(options.postcheck),
             });
         }
         Ok::<_, anyhow::Error>(SyncRuntime::new(targets))
@@ -609,6 +636,7 @@ pub fn sync_one(source: &Path, target: &Path, name: &str, policy: SourceQualifie
 #[cfg(test)]
 mod tests {
     use super::*;
+    use diff_dirs::StatKey;
     use std::ffi::OsString;
     use std::fs;
     use std::os::unix::ffi::OsStringExt;

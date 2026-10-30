@@ -71,6 +71,8 @@ pub struct OrdinaryFailure {
     pub source: anyhow::Error,
 }
 pub struct OrdinaryCohort {
+    pub refresh_check: diff_dirs::StatChecks,
+    pub postcheck: diff_dirs_sync::Postcheck,
     pub source: Arc<BoundWorkspace>,
     pub patterns: Arc<Patterns>,
     pub native: Arc<NativePathIndex>,
@@ -97,6 +99,8 @@ pub struct CommandPlan {
     pub source: SourcePlan,
     pub desired: DesiredPlan,
     pub route: RenewalRoute,
+    pub refresh_check: diff_dirs::StatChecks,
+    pub postcheck: crate::Postcheck,
     pub receivers: Vec<(String, PathBuf)>,
     pub patterns: Vec<String>,
     pub clone_capability_probed: bool,
@@ -247,6 +251,8 @@ impl ResolvedCommand {
             source,
             desired,
             route: self.request.renewal_route,
+            refresh_check: self.request.refresh_check,
+            postcheck: self.request.postcheck,
             receivers: self.receivers.iter().map(|b| (b.name.clone(), b.root.clone())).collect(),
             patterns: self.pattern_declarations.clone(),
             clone_capability_probed: false,
@@ -279,6 +285,8 @@ impl ResolvedCommand {
         let started = self.started;
         let mut setup_done = false;
         let mut report = CommandReport {
+            refresh_check: self.request.refresh_check,
+            postcheck: self.request.postcheck,
             profile: self.source.binding.repository.profile.clone(),
             source_context: self.source.context.clone(),
             desired: None,
@@ -423,15 +431,7 @@ impl ResolvedCommand {
                 indexes: membership.count(),
                 ..Default::default()
             });
-            let input = native::inputs(
-                &membership,
-                &source,
-                &desired,
-                &saved,
-                self.request.renewal_route,
-                self.request.replace_content,
-                capture,
-            )?;
+            let input = native::inputs(&membership, &source, &desired, &saved, &self.request, capture)?;
             report.tracked_source = Some(input.tracked.source.diagnostics());
             let native_paths = if Arc::ptr_eq(&input.source, &input.desired) {
                 Arc::clone(&input.source.index)
@@ -445,6 +445,8 @@ impl ResolvedCommand {
                 ignores.same_tree(commit, key);
             }
             let mut ordinary = OrdinaryCohort {
+                refresh_check: self.request.refresh_check,
+                postcheck: self.request.postcheck.into(),
                 source: Arc::clone(&source.binding),
                 patterns: Arc::clone(&self.patterns),
                 native: native_paths,

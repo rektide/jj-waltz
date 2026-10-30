@@ -9,8 +9,39 @@ use std::path::PathBuf;
 #[serde(rename_all = "kebab-case")]
 pub enum RenewalRoute {
     #[default]
+    Refresh,
     ClearThenPopulate,
     ReplaceAuthorized,
+}
+
+pub use diff_dirs::StatChecks;
+
+/// Optional regular-install read-back, independent of refresh comparison.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Postcheck {
+    #[default]
+    None,
+    Mtime,
+}
+impl From<Postcheck> for diff_dirs_sync::Postcheck {
+    fn from(value: Postcheck) -> Self {
+        match value {
+            Postcheck::None => Self::None,
+            Postcheck::Mtime => Self::Mtime,
+        }
+    }
+}
+
+mod stat_checks_serde {
+    use super::StatChecks;
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(checks: &StatChecks, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(checks)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<StatChecks, D::Error> {
+        String::deserialize(deserializer)?.parse().map_err(serde::de::Error::custom)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -25,6 +56,10 @@ pub enum UnmatchedPolicy {
 pub struct ReseedRequest {
     #[serde(default)]
     pub renewal_route: RenewalRoute,
+    #[serde(default, with = "stat_checks_serde")]
+    pub refresh_check: StatChecks,
+    #[serde(default)]
+    pub postcheck: Postcheck,
     /// Literal targets; empty names/groups select the current variant.
     pub names: Vec<String>,
     pub groups: Vec<String>,
@@ -78,3 +113,30 @@ mod engine;
 pub use engine::command;
 
 pub mod freshen;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn request_defaults_and_serialized_checks_select_the_same_public_contract() {
+        let request = ReseedRequest::default();
+        assert_eq!(request.renewal_route, RenewalRoute::Refresh);
+        assert_eq!(request.refresh_check.to_string(), "mtime,size");
+        assert_eq!(request.postcheck, Postcheck::None);
+        let mut value = serde_json::to_value(&request).unwrap();
+        value.as_object_mut().unwrap().remove("renewal_route");
+        value.as_object_mut().unwrap().remove("refresh_check");
+        value.as_object_mut().unwrap().remove("postcheck");
+        let decoded: ReseedRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(decoded.renewal_route, RenewalRoute::Refresh);
+        assert_eq!(decoded.refresh_check, request.refresh_check);
+        assert_eq!(decoded.postcheck, Postcheck::None);
+        value["refresh_check"] = serde_json::json!("mode,size");
+        let decoded: ReseedRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(decoded.refresh_check.to_string(), "size,mode");
+        for malformed in ["", "mtime,mtime", "unknown"] {
+            value["refresh_check"] = serde_json::json!(malformed);
+            assert!(serde_json::from_value::<ReseedRequest>(value.clone()).is_err());
+        }
+    }
+}

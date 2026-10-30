@@ -548,12 +548,11 @@ fn reseed_prepares_once_and_releases_lock_before_refill() {
         proxy.join("jj"),
         r#"#!/bin/sh
 set -eu
-case " $* " in
-  *' sparse set '*)
-    case " $* " in
-      *' --clear '*) JW_TEST_EXPECT_LOCK=free "$JW_TEST_EXE" --exact operation_lock_probe --nocapture >&2;;
-    esac;;
-esac
+if [ "$PWD" = "$JW_TEST_REFILL_TARGET" ]; then
+  case " $* " in
+    *' new '*) JW_TEST_EXPECT_LOCK=free "$JW_TEST_EXE" --exact operation_lock_probe --nocapture >&2;;
+  esac
+fi
 exec "$JW_REAL_JJ" "$@"
 "#,
     )
@@ -568,6 +567,7 @@ exec "$JW_REAL_JJ" "$@"
         .args(["reseed", "--prepare", "--copy-ignored", "node_modules"])
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("JW_REAL_JJ", real_jj)
+        .env("JW_TEST_REFILL_TARGET", &f.target)
         .env("JW_TEST_EXE", std::env::current_exe().unwrap())
         .env("JW_TEST_LOCK_PATH", f.lock_path())
         .env("JW_TEST_REFILL_PROBE", &marker)

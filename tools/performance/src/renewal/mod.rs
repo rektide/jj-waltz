@@ -318,7 +318,7 @@ fn invoke(ctx: &mut Context, control: &Control, fixture: &Fixture, case: Case, r
     // Preserve status and raw paths BEFORE parsing. Nonzero stdout may not be JSON.
     let observation = json!({"argv":args,"process":outcome,"stdout":stdout,"stderr":stdout.with_extension("stderr"),"artifact_guard_ns":guard_ns,
         "timing":timing,"trace":if timing == Timing::Instrumented { Some(&trace) } else { None },
-        "measurement_profile":PROFILE,"reported_fields":"schema 1; validated separately after process success"});
+        "measurement_profile":PROFILE,"reported_fields":"schema 1 or 2; explicit unconditional routes, validated separately after process success"});
     write_json(&stem.with_extension("command.json"), &observation)?;
     if outcome.code != Some(0) || outcome.timed_out {
         return Err(format!(

@@ -5,9 +5,11 @@ description: The canonical guide to creating and navigating JJ workspaces, renew
 resource: /README.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-29
+   by: model:openai/gpt-6.1-sol#high
+   at: 2026-10-30
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Documents default seeded refresh, selected stat checks, optional postcheck and distinct schema-two retained coverage and native metadata effects
   - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
     title: Documents public two-route refill, schema 1, actual S versus goal, final-only preparation and nonmutating PLANNED previews
   - resource: "opencode://ses_e7c8f24ebffelGRFC0RXsQvf61"
@@ -234,8 +236,9 @@ jj duplicate -r feature-bookmark --onto <sync base>   # 3. layer the feature bac
 Pause donor/target writers, then preview with `--dry-run` before steps 2 and 3.
 Reseed makes the workspace's content **be the donor's content**: it snapshots real
 receiving work (not the plain donor), starts a fresh empty child of actual donor WC commit S,
-reflinks the whole tracked tree from the donor, lets JJ materialize it, and copies
-selected ignored payload. The root, `.jj`, registration, bookmarks, and lifecycle
+satisfies the tracked tree from the donor, then reconciles selected ignored payload.
+Default seeded refresh retains compatible size/mtime-equal files and literal-equal
+links; new/changed regular files use required reflinks. The root, `.jj`, registration, bookmarks, and lifecycle
 identity remain, and it never fetches or builds. Tracked feature work stays safe
 in JJ history; it is not carried forward into the synced tree. `--at REVSET` is an
 optional explicit override of the sync target; `--source-at REVSET` stays an
@@ -263,20 +266,30 @@ Donor selection is CLI `--from` → local `source` → verified primary. The opt
 tree assertion is CLI `--source-at` → local `source_at`; the sync base is otherwise
 the donor's recorded prepared `@`, with no implicit live proof.
 
-Both native routes use the same public command/cohort:
-`--renewal-route=clear-then-populate` (default) or `replace-authorized`.
-The latter renews only recorded ownership, retaining unrelated locals; it does not
-fall back to clearing. `--replace-content` independently authorizes broad deletion.
-Full-S installation coverage gates captured-S state adoption. If `--at` chooses
+All native routes use the same public command/cohort:
+`--renewal-route=refresh` (default), `clear-then-populate` or `replace-authorized`.
+Refresh uses the non-clearing replacement lifecycle and exact recorded ownership.
+`--refresh-check=mtime,size` is the default heuristic; a supplied comma list selects
+the whole set from `mtime,size,mode` (full Unix `07777` mode). It also controls
+ordinary payload comparison on every route. Matching seeded inodes stay; no content
+hash, hardlink/privacy audit or storage-sharing proof is required. Native tracked
+executable mismatches are corrected in place, preserving other permission bits and
+reported separately; ordinary retention does not acquire this correction.
+The two explicit old routes still reinstall all tracked leaves.
+`--postcheck=mtime` optionally reads back installed regular mtime; default `none`
+still sets mtime/permissions without that read-back. `--replace-content` independently
+authorizes broad deletion, including matching candidates, on any selected route.
+Full-S installed **plus retained** coverage gates captured-S state adoption. If `--at` chooses
 D≠S, native convergence may materialize D from the store; S clone counts are not
 proof that every final D leaf shares donor storage. Refill requires exact native
 profile `0.45.1-33d3a595429b7e3b54a8ea769560247913bc8a1b`.
 
 `reseed` and `prepare` both accept `--format=plain|json`. JSON
-[schema 1](docs/schema/refill-v1.schema.json) emits one complete outcome document on
+[schema 2](docs/schema/refill-v2.schema.json) emits one complete outcome document on
 normally returned parsed success or failure, including early resolution errors.
 Counts/durations/indexes are checked-u128 decimal strings, unavailable facts null,
 and Unix paths carry lossless hex bytes. Builders/diagnostics use stderr.
+Schema1 and its historical fixtures remain available for older consumers.
 
 ### Layer features back after a sync
 

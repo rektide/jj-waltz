@@ -5,9 +5,11 @@ description: Workspace lifecycle vocabulary and safety contracts.
 resource: /CONTEXT.md
 status: maintained
 updated:
-  by: model:openai/gpt-6.1-sol#xhigh
-  at: 2026-10-29
+  by: model:openai/gpt-6.1-sol#high
+  at: 2026-10-30
 sources:
+  - resource: "opencode://ses_e74387c29ffep4tyaHAb72eQ86"
+    title: Distinguishes seeded refill refresh from native input refresh and records schema2 complete retained coverage and in-place executable effects
   - resource: "opencode://ses_e779f1a9affejTLMoRyE5Nv4xW"
     title: Replaces retired receipt/readiness vocabulary with public schema 1, accepted S/goal separation, both native routes and final-only source preparation
   - resource: "opencode://ses_eb75a514cffe7jUOMWNZAIm3fX"
@@ -100,6 +102,11 @@ by itself a claim that a command exposing that concept already exists.
   final operation ID is captured. Refresh changes the freshness of input facts;
   it is separate from pure in-memory status derivation. When refresh is skipped,
   possibly stale rows must say so.
+- **Seeded refill refresh** — the default reseed renewal route, distinct from input
+  refresh above. It retains owned compatible regulars under selected stat checks
+  (mtime,size by default) and literal-equal links. This heuristic is not a content,
+  privacy or storage-sharing proof. Native tracked executable mismatches are
+  corrected in place and reported as metadata work, not new installations.
 - **Creation workflow** — ordered policy, workspace creation, bookmark creation,
   link application, rollback, and switch-state recording.
 - **Removal plan** — workspace, directory action, and associated bookmarks known
@@ -224,13 +231,14 @@ by itself a claim that a command exposing that concept already exists.
   selection, no refill, no `--at`, and no worker-preservation bookmarks; it
   mutates only its selected donor — possibly the caller's own checkout — leaving
   other workspaces untouched. Completion reports the exact commit, including
-   `.source.source_commit_id` in schema 1, with upstream goal separate. Failure leaves progress in place; fix the donor and
+   `.source.source_commit_id` in schema 2, with upstream goal separate. Failure leaves progress in place; fix the donor and
   run prepare again. Every configured command may repeat and must tolerate retry.
 - Reseed requires actual CoW capability before clearing contents; it never falls
   back silently. Root and `.jj` survive failure, and partial prefill must not be
   snapshotted as user work. Default-on bookmark coverage is checked before mutation;
-  `--allow-unbookmarked` explicitly bypasses only coverage. Both selected native
-  routes require successful complete full-S coverage before state adoption. Failed
+  `--allow-unbookmarked` explicitly bypasses only coverage. All selected native
+  routes require successful complete full-S installed + retained coverage before
+  state adoption, including successful required executable correction. Failed
   outcomes retain O/history/root for deliberate out-of-band recovery; full sparse
   can still be incomplete after interrupted replacement. Sparse/mid-refill targets are refused
   before snapshots, never repaired. There are no progress journals, receipts,

@@ -1,7 +1,7 @@
 //! Downward adapter: command-owned bindings become transfer-owned policy inputs.
 //! Transfer does not depend on the engine's command/report types.
 use super::*;
-use cow::streaming::{CohortLane, OrdinarySource, SourceQualified, sync_cohort_with_execution};
+use cow::streaming::{CohortLane, OrdinarySource, SourceQualified, SyncOptions, sync_cohort_with_options};
 
 #[derive(Default)]
 pub struct ContextualOrdinary {
@@ -48,7 +48,16 @@ impl OrdinaryTransfer for ContextualOrdinary {
             diagnostics: None,
             source: anyhow::anyhow!("ordinary execution resources were not admitted before native work"),
         })?;
-        let result = sync_cohort_with_execution(&cohort.source.root, lanes, self.resources.clone(), execution);
+        let result = sync_cohort_with_options(
+            &cohort.source.root,
+            lanes,
+            self.resources.clone(),
+            execution,
+            SyncOptions {
+                checks: cohort.refresh_check,
+                postcheck: cohort.postcheck,
+            },
+        );
         let reports = match &result {
             Ok(report) => &report.reports,
             Err(failure) => &failure.reports,

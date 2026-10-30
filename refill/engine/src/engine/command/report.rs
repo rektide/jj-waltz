@@ -32,7 +32,7 @@ impl std::fmt::Display for Phase {
             Self::NativeClear => "clear tracked checkout",
             Self::NativeChild => "establish receiving child",
             Self::ExplicitClear => "explicit replace-content",
-            Self::Install => "full-S tracked installation",
+            Self::Install => "full-S tracked satisfaction",
             Self::AdmitDesired => "D-addition namespace admission",
             Self::Adopt => "adopt captured source tree_state",
             Self::Restore => "native S-to-D restore",
@@ -74,13 +74,17 @@ pub struct NativeOutcome {
     /// Actual provider-visible S installations, owned removals and directory
     /// scope effects. Not a final-D storage-sharing count or stock-JJ effects.
     pub completed: Option<diff_dirs_sync::Progress>,
+    /// Successful listed-only retained executable corrections. None before a
+    /// lane returns, including when no filesystem progress is available.
+    pub retained_permissions_set: Option<u64>,
     pub explicit_clear: Option<diff_dirs_sync::Progress>,
     /// Actual provider coverage, retained even on an unsuccessful lane. None
     /// means no lane returned coverage, not an empty complete manifest.
     pub manifest: Option<diff_dirs_sync::ManifestCoverage>,
     /// Actual distinct provider deviation/retention outcomes, not syscall counts.
     pub policy: Option<diff_dirs_sync::Policy>,
-    /// Whether S is only a temporary installation before native D convergence.
+    /// Whether S satisfaction is temporary before native D convergence. The
+    /// historical field name includes retained leaves on the refresh route.
     pub temporary_source_installation: bool,
     /// None before native entry; false until adoption returns successfully.
     /// True is not native conformance or command completion.
@@ -174,6 +178,8 @@ pub struct CaptureCounts {
 }
 #[derive(Debug)]
 pub struct CommandReport {
+    pub refresh_check: diff_dirs::StatChecks,
+    pub postcheck: crate::Postcheck,
     pub profile: NativeProfile,
     pub source_context: SourceContext,
     pub desired: Option<String>,
@@ -346,6 +352,8 @@ mod tests {
         earlier.finish.complete = true;
         CommandFailure {
             report: Box::new(CommandReport {
+                refresh_check: Default::default(),
+                postcheck: Default::default(),
                 profile: NativeProfile::classify(format!("jj {}", jj_waltz_native_jj::refill::TESTED_BUILD)).unwrap(),
                 source_context: SourceContext {
                     name: "source".into(),

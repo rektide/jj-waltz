@@ -1,4 +1,6 @@
-//! Schema-one consumer, not a second producer. Required facts fail closed;
+//! Schema-one/two consumer for explicit unconditional routes, not a producer.
+//! Seeded refresh needs its own measurement profile; this profile never counts
+//! retained leaves as installs. Required facts fail closed;
 //! optional measurements retain explicit null and are never zero-filled.
 use super::{Case, Fixture, PROFILE, Route, fixture};
 use diff_dirs_perf_runner::Result;
@@ -108,8 +110,14 @@ fn diagnostics(value: &Value) -> Result<()> {
 pub(super) fn evidence(raw: &Value, f: &Fixture, case: Case, route: Route) -> Result<Value> {
     f.check_profile()?;
     // schema_version is the sole JSON numeric value in this wire vocabulary.
-    if field(raw, "schema_version")?.as_u64() != Some(1) {
-        return Err("unsupported public refill schema_version (requires numeric 1)".into());
+    let schema = field(raw, "schema_version")?.as_u64().ok_or("public refill schema_version must be numeric")?;
+    match schema {
+        1 => {}
+        2 => {
+            eq(raw, "refresh_check", "mtime,size")?;
+            eq(raw, "postcheck", "none")?;
+        }
+        _ => return Err("unsupported public refill schema_version (requires numeric 1 or 2)".into()),
     }
     eq(raw, "command", "reseed")?;
     eq(raw, "mode", "execute")?;
@@ -190,6 +198,9 @@ pub(super) fn evidence(raw: &Value, f: &Fixture, case: Case, route: Route) -> Re
         eq(native, "explicit_clear_effects", Value::Null)?;
         let manifest = field(native, "manifest")?;
         eq(manifest, "complete", true)?;
+        if schema == 2 && count(manifest, "retained")? != 0 {
+            return Err("unconditional route profile cannot credit retained desired leaves".into());
+        }
         if count(manifest, "desired")? != 8 || count(manifest, "installed")? != 8 {
             return Err("public report manifest must completely install all eight S leaves".into());
         }
@@ -198,6 +209,9 @@ pub(super) fn evidence(raw: &Value, f: &Fixture, case: Case, route: Route) -> Re
         }
         let effects = field(native, "renewal_effects")?;
         counters(effects, &EFFECTS)?;
+        if schema == 2 && count(native, "retained_permissions_set")? != 0 {
+            return Err("unconditional route profile cannot credit retained metadata effects".into());
+        }
         if count(effects, "files_reflinked")? != 7 || count(effects, "symlinks_created")? != 1 {
             return Err("public report requires seven actual regular clones and one literal-link install per receiver".into());
         }
