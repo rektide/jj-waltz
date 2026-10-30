@@ -8,7 +8,7 @@ generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
   - resource: "opencode://ses_e74f4db73ffebUUrvE3MbpCHWY"
-    title: Adds the policy investigation and completed four-live-receiver route measurements, churn evidence and traversal/launcher findings
+    title: Adds the policy investigation, live N4 route measurements and N1/N2 replacement scaling, with churn, shared-source work and launcher findings
   - resource: "opencode://ses_e7a559acfffeNLFScKfuc7htqW"
     title: Connects the assessment commissioned to integrate trajectory1 and local architectural steering into present construction
   - resource: "file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md"
@@ -54,6 +54,9 @@ sources:
   3,656 tracked-directory recreations per command. Both churn tracked file inodes.
   Clean ordinary traversal takes 89–95 seconds. Includes all samples, the sparse
   slowdown, +16 JJ-call N4 delta, mise launcher discovery and final preservation.
+  Its [replacement scaling follow-up](live-four0.gpt6a.md#replacement-scaling-follow-up-one-and-two-receivers)
+  adds N1/N2 measurements: ordinary source acquisitions are largely shared even
+  while per-destination elapsed work grows; native phase spikes remain explicit.
 - **[Policies and representative OpenCode measurement](policy-scale0.gpt6a.md):**
   explains the final tiny control's four-call delta, distinguishes tracked route,
   ordinary comparison and inode publication, and records the current read-only

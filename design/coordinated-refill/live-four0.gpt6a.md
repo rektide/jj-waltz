@@ -7,7 +7,7 @@ status: measured-live-n4
 generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-30" }
 sources:
   - resource: "opencode://ses_e74f4db73ffebUUrvE3MbpCHWY"
-    title: Human selects four older checked-in receivers and authorizes execution; session performs initial reseed, balanced route measurements, count probes and final verification
+    title: Human authorizes four live receivers and subsequent N1/N2 scaling; session measures both routes, churn, process counts and replacement scaling with preserved source and feature histories
   - resource: "opencode://ses_e74de64f4ffeWvWy0dGBaxfHlv"
     title: F discovers older managed receivers with covered work and records the limits of read-only cleanliness spot checks
   - resource: /design/coordinated-refill/policy-scale0.gpt6a.md
@@ -24,6 +24,8 @@ sources:
     title: Independent final recorded emptiness, conflict, parent, full-sparse, source and feature-bookmark checks
   - resource: /.test-agent/policy-scale/live-four/native-resolution.trace
     title: Post-campaign read-only exec trace identifies mise and rustup overhead before the same native JJ executable
+  - resource: /.test-agent/policy-scale/live-four/scaling/summary.json
+    title: Subsequent N1/N2 replacement commands, phase times, resources and source work beside the original clean N4 controls
 verification:
   method: Actual public reseed commands, checked schema-one completion and coverage, metadata/inode inventories, sparse-byte restoration checks, separate native-call wrappers and final snapshot-free JJ queries
   scope: Four authorized live Linux Btrfs workspaces, default serial release build, warm sequential D=S repetitions; no fresh-donor performance extrapolation
@@ -189,6 +191,47 @@ instead exec that native JJ directly. Both report the same
 timings are not a clean instrumentation-only comparison: they change launcher
 behavior too. No precise shim-time saving is claimed from the probe wall times.
 Resolving the native executable once is an additional concrete optimization lead.
+
+## Replacement scaling follow-up: one and two receivers
+
+At the human's request, four additional clean replacement commands ran in fixed
+**N1, N2, N2, N1** order. N1 selects watchignore; N2 adds cache-ttl. They reuse
+the exact candidate, S/D/assertion, normal mise-containing PATH and existing
+clean receivers. PATH equality with the prior campaign is checked before running.
+There are no new fixtures, payload changes, builds, count wrappers or source
+preparation. All four commands completed with full tracked coverage, zero ordinary
+effects and finished receivers. No concurrent parent inventory analysis ran during
+this follow-up.
+
+| Receivers | Whole-command seconds, both runs | Ordinary payload seconds, both runs | Pre-native seconds, both runs |
+| --- | --- | --- | --- |
+| 1 | 68.107 / 48.149 | 35.147 / 24.531 | 11.804 / 13.039 |
+| 2 | 161.411 / 87.313 | 66.307 / 49.776 | 12.038 / 14.023 |
+| 4, earlier controls | 134.614 / 137.573 | 90.357 / 90.657 | 14.489 / 15.066 |
+
+N2's first run includes **66.665 seconds in cache-ttl's reparent phase**, versus
+0.937 seconds there on the second N2 run. That phase contains checks and native
+rebase; the exact cause of the spike is not established. N1's first tracked
+installation also took 16.891 seconds versus 5.069 on its second run. Keep both
+runs rather than deriving a latency curve by discarding or subtracting slow phases.
+N4 controls preceded this follow-up, not an interleaved N1/N2/N4 experiment.
+
+The source-work counters give a clearer scaling observation than noisy wall time:
+
+| Receivers | Ordinary source listings, paired + opaque | Ordinary source metadata acquisitions | Native source metadata acquisitions |
+| --- | ---: | ---: | ---: |
+| 1 | 28,018 | 259,222 | 9,895 |
+| 2 | 28,663 | 268,652 | 19,790 |
+| 4 | 29,943 | 275,480 | 39,580 |
+
+Both repetitions at each size have identical counters. Ordinary source metadata
+acquisition grows only **6.3% from N1 to N4**, and source link acquisitions remain
+10,383: source sharing is real. Native source metadata acquisition grows exactly
+linearly with receiver count under the serial transition / bounded-cache behavior.
+Ordinary elapsed time still grows substantially with destinations; target-side
+observation and per-lane processing remain. These counts do not identify which
+part of that processing dominates CPU or I/O. The data support profiling it,
+not an assertion that the source is independently walked four complete times.
 
 ## Landing and next decision
 
