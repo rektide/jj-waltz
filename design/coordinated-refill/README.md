@@ -8,7 +8,7 @@ generated: { by: "model:openai/gpt-6-astra#high", at: "2026-10-28" }
 updated: { by: "model:openai/gpt-6-astra#xhigh", at: "2026-10-29" }
 sources:
   - resource: "opencode://ses_e74f4db73ffebUUrvE3MbpCHWY"
-    title: Adds the policy and scale investigation with current OpenCode census and a representative route-measurement proposal
+    title: Adds the policy investigation and completed four-live-receiver route measurements, churn evidence and traversal/launcher findings
   - resource: "opencode://ses_e7a559acfffeNLFScKfuc7htqW"
     title: Connects the assessment commissioned to integrate trajectory1 and local architectural steering into present construction
   - resource: "file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md"
@@ -49,11 +49,17 @@ sources:
 
 ## Start here
 
+- **[Four live OpenCode receivers — measured routes](live-four0.gpt6a.md):**
+  clean clear-first/replacement timings are effectively tied; replacement avoids
+  3,656 tracked-directory recreations per command. Both churn tracked file inodes.
+  Clean ordinary traversal takes 89–95 seconds. Includes all samples, the sparse
+  slowdown, +16 JJ-call N4 delta, mise launcher discovery and final preservation.
 - **[Policies and representative OpenCode measurement](policy-scale0.gpt6a.md):**
   explains the final tiny control's four-call delta, distinguishes tracked route,
   ordinary comparison and inode publication, and records the current read-only
   8,935-tracked-path / 201,221-payload-regular census. Proposes a full-scale reused
-  fixture comparison; current full-scale route performance is still unmeasured.
+  fixture comparison; the live-four receipt above supplies the subsequent actual
+  workload measurements.
 - **[Architectural integration assessment](file:///home/rektide/src/diff-dirs/design/architecture/annealing0.gpt6ax.md):**
   latest response to the human's request to anneal the architecture during the next
   build. Read with trajectory1 and the work map: it proposes bringing inherited

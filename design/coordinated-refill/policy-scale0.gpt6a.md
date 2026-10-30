@@ -38,6 +38,10 @@ sources:
 
 # What the current result establishes
 
+**Follow-up:** [four actual OpenCode receiver measurements](live-four0.gpt6a.md)
+now supply clean/small-change timings, inode churn and native counts. The user
+selected existing receivers instead of the isolated-fixture proposal below.
+
 The final [route evidence](evidence0.sol61x.md) used seven tracked regulars
 totaling **104 bytes**, one tracked symlink, and a largest aggregate fixture bound
 of **84 entries / 1,018 bytes** including staging reserve. Listed installation
